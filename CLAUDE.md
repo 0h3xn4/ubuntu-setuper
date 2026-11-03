@@ -25,7 +25,9 @@ conversation; this file carries that context over.
    own server, an explicit `podman pull`); not allowed is anything automatic
    or in the background (telemetry, update checks, crash reports, sync,
    accounts, recommendations, automatic lookups, implicit downloads).
-2. **Don't break Ubuntu.** apt always with --no-remove; never edit
+2. **Don't break Ubuntu.** apt install always with --no-remove --no-upgrade;
+   NEVER run `apt upgrade`/`full-upgrade` (the user rejected a system upgrade
+   step: updating the system is Ubuntu's business, not this setup's); never edit
    package-owned config files (conffile prompts block unattended security
    updates); only NEW drop-in files in /etc (never overwrite an existing
    one: install_system_file); disable (never mask) services; no changes to
@@ -158,7 +160,7 @@ Done and checked in a sandbox (Ubuntu 24.04, no package archive, no network):
   refuses hostile udev strings, LibreOffice settings helper (create, merge,
   idempotent), install_* helpers and the desktop settings flow with a fake
   HOME/sudo.
-Review fixes already applied: apt-get upgrade now uses --no-remove;
+Review fixes already applied: the system-upgrade step was removed entirely (apt install uses --no-remove --no-upgrade);
 INSTALL_FRAMA_C handled consistently (needs INSTALL_VERIFICATION);
 ws-devname validates vendor/product/serial/interface before writing a root
 udev rule; OpenOCD example binds to 127.0.0.1.

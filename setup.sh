@@ -45,7 +45,8 @@
 #    (browser, mail) only do what you direct them to do.
 #
 #  SAFETY POLICY (fixed, every profile)
-#    Never removes packages (apt --no-remove), never edits package-owned
+#    Never removes packages (apt --no-remove), never upgrades installed ones
+#    (no 'apt upgrade'; apt --no-upgrade), never edits package-owned
 #    config files, never touches kernel, boot, coreutils or APT sources.
 #    Every change is recorded in ~/workstation-undo-<timestamp>.sh.
 #
@@ -186,6 +187,8 @@ apt_candidates() {
 
 # Install apt packages, skipping (and recording) any that don't exist.
 # --no-remove: abort rather than uninstall anything to resolve a conflict.
+# --no-upgrade: do not upgrade packages that are already installed; this
+# script never upgrades the system (updates are Ubuntu's own business).
 apt_install() {
   local available=() pkg ver
   local -A cand=()
@@ -199,10 +202,10 @@ apt_install() {
     fi
   done
   (( ${#available[@]} )) || return 0
-  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "${available[@]}"; then
+  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade "${available[@]}"; then
     warn "Batch install failed; retrying one package at a time"
     for pkg in "${available[@]}"; do
-      sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" \
+      sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade "$pkg" \
         || { warn "Skipped (conflict or error): $pkg"; echo "$pkg (not installed: conflict or error)" >> "$MISSING_FILE"; }
     done
   fi
@@ -573,13 +576,7 @@ preflight() {
 
   log "Updating package lists"
   sudo apt-get update || die "apt-get update failed. Check network / proxy settings."
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates gnupg distro-info
-}
-
-system_update() {
-  # Plain 'upgrade' never removes packages (unlike full-upgrade); --no-remove
-  # makes that explicit, as for every other apt call in this script.
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-remove
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade curl ca-certificates gnupg distro-info
 }
 
 system_tuning() {
@@ -1032,7 +1029,7 @@ check_mode() {
   log "$n_have installed, $n_new to install, $n_missing not available"
   if (( ${#to_install[@]} )); then
     local sim
-    if sim="$(apt-get install -s --no-remove "${to_install[@]}" 2>&1)"; then
+    if sim="$(apt-get install -s --no-remove --no-upgrade "${to_install[@]}" 2>&1)"; then
       ok "Simulation: $(grep -c '^Inst ' <<<"$sim" || true) packages incl. dependencies would be installed, none removed"
     else
       warn "Simulation found a conflict. Setup would skip the affected packages:"
@@ -1740,7 +1737,6 @@ main() {
   preflight
   remember_profile
 
-  step "System update"                 system_update
   step "System tuning"                 system_tuning
   if on "$HARDEN_PRIVACY";       then step "Privacy hardening"         privacy_hardening; fi
   step "Base CLI tools"                base_cli

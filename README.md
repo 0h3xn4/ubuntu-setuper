@@ -18,7 +18,7 @@ itself after installation.**
 
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
-- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 upgrade, A5 tuning, A6 privacy
+- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning, A6 privacy
 - [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
@@ -39,8 +39,11 @@ machine ends up in the same state.
    destination *you* chose is fine; anything automatic or in the background
    is not.
 2. **Don't break Ubuntu.**
-   - Every `apt-get install`/`upgrade` uses `--no-remove`: if APT wants to
-     uninstall something to resolve a conflict, it aborts instead.
+   - Every `apt-get install` uses `--no-remove` (if APT wants to uninstall
+     something to resolve a conflict, it aborts instead) and `--no-upgrade`
+     (packages that are already installed are not upgraded). This guide
+     never runs `apt upgrade`: keeping the system up to date is Ubuntu's own
+     business (Software Updater, unattended-upgrades), not part of this setup.
    - Never edit a file that belongs to a package (it would cause conffile
      prompts that block unattended security updates). Add *new* files
      (drop-ins) instead, and never overwrite an existing one.
@@ -130,7 +133,7 @@ apt_install() {
     else echo "not in archive, skipping: $p"; fi
   done
   if [ "${#ok[@]}" -gt 0 ]; then
-    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "${ok[@]}"
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade "${ok[@]}"
   fi
 }
 
@@ -173,7 +176,8 @@ export WS="$PWD"
 Notes:
 
 - `apt_install` is the only way this guide installs from APT. `--no-remove`
-  means APT may never uninstall anything.
+  means APT may never uninstall anything, `--no-upgrade` means it does not
+  upgrade packages you already have.
 - `put` never overwrites. If you already have, say, a `~/.inputrc`, you keep
   it and `put` tells you; merge by hand if you want the new settings.
 - `download` records the SHA-256 of what you downloaded. Compare it with the
@@ -193,16 +197,19 @@ apt_install curl ca-certificates gnupg distro-info
 
 Undo: nothing (these are tiny and usually present already).
 
-## A4. Upgrade installed packages
+## A4. System upgrade: deliberately not part of this guide
 
-*Mirrors `step "System update"`, function `system_update`.*
+Nothing to do here. An earlier version of the script ran `apt-get upgrade`
+at this point; it no longer does, because upgrading every installed package
+changes the machine far beyond "install what I asked for". Keep the system
+current the way you normally do (Software Updater, `unattended-upgrades`,
+or `sudo apt upgrade` when *you* decide to).
 
-```bash
-sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-remove
-```
-
-Plain `upgrade` never removes packages (unlike `full-upgrade`), and
-`--no-remove` makes that explicit.
+Installing the packages below may still pull in newer versions of libraries
+they depend on; that is how APT resolves dependencies and cannot be avoided.
+`apt_install` only prevents upgrades of packages that are already installed
+and merely named. To see what an install would change before doing it:
+`apt-get install -s --no-remove --no-upgrade <packages>`.
 
 ## A5. System tuning
 

@@ -120,7 +120,9 @@ recommendations, automatic lookups (album art, website icons, metadata),
 implicit downloads. Consequence in Firefox: Safe Browsing (which polls Google)
 is switched off by the policy file.
 
-**Don't break Ubuntu.** No package is ever removed (`apt --no-remove`), no
+**Don't break Ubuntu.** No package is ever removed (`apt --no-remove`) and
+no installed package is upgraded (the setup never runs `apt upgrade`; installs
+use `--no-upgrade`), no
 package-owned config file is edited, and kernel, boot, coreutils and APT
 sources are untouched. Only new files are added in `/etc`, existing ones are
 never overwritten. Every change is recorded in
