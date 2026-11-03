@@ -926,6 +926,13 @@ It is not in the Ubuntu archive, so it comes from the project's GitHub
 release. It is installed for **your user only** (no system font directory).
 The script runs this right after B1; the order does not matter.
 
+**File icons in `ls`/`ll`.** `10-workstation.sh` gives `eza` (installed in B1) file
+icons (`--icons=auto`) whenever this font's directory exists, so `ll` looks like
+a long listing with a folder/file-type icon per entry. The icons only render if your
+**terminal** uses the font: GNOME Terminal > Preferences > your profile > Custom font >
+*JetBrainsMono Nerd Font Mono* (or `SET_GNOME_FONT=1`, B13). If you see empty boxes,
+set `WS_ICONS=0` (e.g. in `~/.bashrc.d/30-local.sh`) to switch the icons off; `WS_ICONS=1` forces them on.
+
 Find the newest **stable** tag on `https://github.com/ryanoasis/nerd-fonts/releases`
 (the one marked "Latest") and use it as `VERSION`:
 

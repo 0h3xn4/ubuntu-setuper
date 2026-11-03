@@ -19,6 +19,10 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Added (icons)
+- `ls`/`ll`/`la`/`tree` (eza) show file icons when the JetBrains Mono Nerd Font is installed; `ll` is now a plain
+  long listing like `ls -l` (use `la` for hidden files). `WS_ICONS=0` switches icons off, `WS_ICONS=1` forces them on.
+
 ### Added (end-to-end test)
 - `tools/e2e.sh` and `.github/workflows/e2e.yml`: the full life cycle of a profile (full install,
   self-test, ws-doctor, idempotent re-install, manifest, lock, undo, leftovers) on GitHub runner VMs
