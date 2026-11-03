@@ -229,7 +229,12 @@ ph_leftovers() {
            "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$HOME/WORKSTATION-CHEATSHEET.md" \
            "$HOME/.inputrc" "$HOME/.cargo/bin/rustup" "$HOME/.rustup" /etc/sysctl.d/60-dev-inotify.conf \
            /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json; do
-    [[ -e $p ]] && found+=("$p")
+    if [[ -d $p ]]; then
+      # an empty directory is not a leftover (undo removes the files it created, not the folders)
+      [[ -n "$(find "$p" -type f -print -quit 2>/dev/null)" ]] && found+=("$p")
+    elif [[ -e $p ]]; then
+      found+=("$p")
+    fi
   done
   compgen -G "$HOME/.bashrc.d/*.sh" >/dev/null && found+=("$(compgen -G "$HOME/.bashrc.d/*.sh" | paste -sd' ')")
   grep -q 'workstation-setup: load' "$HOME/.bashrc" 2>/dev/null && found+=("loader block in ~/.bashrc")
