@@ -23,7 +23,7 @@ New to the terminal? Do these, in this order, and you know the basics:
 
 1. `ws-help` (this page). Press `q` to leave, `/` to search.
 2. `hx --tutor` (30 minutes): the built-in Helix tutorial. Helix selects first, then acts.
-3. `cd`, `ls`, `ll` (long listing), `z <part-of-dir>` (jump), `Ctrl-R` (search history), `Ctrl-T` (pick a file).
+3. `cd`, `ls`, `ll` (long listing with icons), `la` (also hidden files), `z <part-of-dir>` (jump), `Ctrl-R` (search history), `Ctrl-T` (pick a file).
 4. `tldr <command>`: short examples for any command, offline (`tldr tar`).
 5. `lg` for visual git. Make a throw-away project: `mkdir play && cd play && git init && ws-init`.
 6. `ws-doctor` any time something feels off.
@@ -149,6 +149,9 @@ fc-list : family | grep 'JetBrainsMono Nerd Font'      # is it installed?
 starship preset nerd-font-symbols -o ~/.config/starship.toml    # icon prompt (after the font works)
 starship preset plain-text-symbols -o ~/.config/starship.toml   # no special font needed
 ```
+
+`ls`, `ll`, `la` and `tree` are `eza` with file icons, which need this font in the terminal.
+Boxes instead of icons? The terminal still uses another font: pick the Nerd Font, or `export WS_ICONS=0`.
 
 Prompt: starship by default. If Oh My Bash is enabled (`INSTALL_OH_MY_BASH=1`)
 it owns the prompt instead: edit the theme and plugins in

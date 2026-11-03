@@ -1,7 +1,8 @@
 # Changelog
 
-All notable changes to this repository. Newest first. The setup has not yet been
-run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
+All notable changes to this repository. Newest first. The full life cycle of both profiles
+has been run end to end in CI on Ubuntu 26.04.1 LTS (a VM and a container); it has not yet
+been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
@@ -18,6 +19,10 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
 - `tools/check-all.sh`, `tools/manifest-diff.sh`, `tools/install-hooks.sh` (pre-commit hook) and a
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
+
+### Added (icons)
+- `ls`/`ll`/`la`/`tree` (eza) show file icons when the JetBrains Mono Nerd Font is installed; `ll` is now a plain
+  long listing like `ls -l` (use `la` for hidden files). `WS_ICONS=0` switches icons off, `WS_ICONS=1` forces them on.
 
 ### Added (end-to-end test)
 - `tools/e2e.sh` and `.github/workflows/e2e.yml`: the full life cycle of a profile (full install,
