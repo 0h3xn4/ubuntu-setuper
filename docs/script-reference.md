@@ -32,7 +32,7 @@ runs (`--check`, `--self-test`, `--manifest`, `--lock`, `--upgrade`) need no
 
 | | What it is |
 |---|---|
-| **core** | Always installed, on every profile: bash setup, Helix + language servers, git tooling, Python/C/C++/Rust, offline docs, privacy hardening, offline caches, and the check / self-test / manifest / lock / undo machinery |
+| **core** | Always installed, on every profile: bash setup, Helix + language servers, git tooling, Python/C/C++/Rust, offline docs, privacy hardening (opt-in, runs after all package installs), offline caches, and the check / self-test / manifest / lock / undo machinery |
 | **embedded** | Cross compilers (ARM, RISC-V), QEMU, OpenOCD and probes, serial/CAN tools, Wireshark, verification tools (CBMC, AFL++, ...), optional SPICE kernels, embedded Rust targets and cargo tools, `ws-devname`, cross-build starter files |
 | **desktop** | LibreOffice, KeePassXC, VLC, GIMP, Inkscape, Déjà Dup, Firefox/Thunderbird policy files, spell-check languages. Each app has its background network features switched off |
 
@@ -141,7 +141,9 @@ is installed but inactive (the summary prints the line to add yourself).
 for your user in `~/.local/share/fonts` (one checksum-verified download from
 the project's GitHub release; the version is pinned by the lock). With
 `SET_GNOME_FONT=1` GNOME's monospace font becomes `JetBrainsMono Nerd Font Mono 11`
-and starship uses its icon preset; otherwise plain-text symbols.
+and starship uses its icon preset; otherwise plain-text symbols. `ls`, `ll`, `la` and
+`tree` (eza) show file icons whenever the font is installed; they only render if your
+terminal uses it. `WS_ICONS=0` switches the icons off, `WS_ICONS=1` forces them on.
 
 **Don't break Ubuntu.** No package is ever removed (`apt --no-remove`) and
 no installed package is upgraded (the setup never runs `apt upgrade`; installs
@@ -158,14 +160,12 @@ software with an LTS line, the newest LTS; otherwise the newest stable
 release. Never betas, release candidates or nightlies. A lock file is a
 deliberate snapshot of "newest at that time"; `--upgrade` moves forward.
 
-**Checksums.** Files downloaded outside APT (installers, Helix, SPICE
-kernels) are verified against SHA-256 values in the lock file. Without a
-lock, checksums are recorded on first download (trust on first use) and
-pinned by `--lock`. Compare them with the publisher's values if your process
-requires it. Package managers (APT, cargo, uv/pip, npm) verify their own
-downloads. Note: a pinned checksum of a *mutable* URL (e.g. the `rustup`
-installer script) will refuse a later upstream change until you run
-`--upgrade` and re-lock; that is the intended trade-off.
+**Checksums.** Where the project publishes a checksum (uv, rustup-init, starship, lazygit,
+probe-rs, the Nerd Font), the download is compared with *that* and a mismatch is refused. Other
+downloads outside APT (the Helix tarball, SPICE kernels) are verified against SHA-256 values in the
+lock file; without a lock their checksum is recorded on first download (trust on first use) and pinned
+by `--lock`. Compare them with the publisher's values if your process requires it. Package managers
+(APT, cargo, uv/pip, npm) verify their own downloads. See "Downloads and checksums" below.
 
 ## Switching profiles on one machine
 
@@ -193,6 +193,14 @@ desktop module only places policy files for Firefox and Thunderbird.
 
 CI (`.github/workflows/ci.yml`): `check-all.sh` on every push and PR, then for each profile a
 `--check` against the real archive of the newest Ubuntu LTS and a reduced real install in a container.
+The E2E workflow (`.github/workflows/e2e.yml`, ~15 minutes, manually or on a PR titled with `[e2e]`)
+runs `tools/e2e.sh` for both profiles on a GitHub runner VM and in an `ubuntu:latest` container. It
+purges the runner's preinstalled `gh` first and removes the container image's dpkg excludes, so the
+machine looks like a normal Ubuntu install. Results of the latest runs: README, "How well tested is this?".
+
+Health check: `ws-doctor` (installed in `~/.local/bin`, read-only, offline, no repository needed)
+reports missing tools, editor and shell setup, and the no-cloud settings in seconds; `--self-test` is
+the full verification.
 
 ## Downloads and checksums
 

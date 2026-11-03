@@ -48,7 +48,7 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   (opt-in) shell loader is off.
 - The ARM/RISC-V QEMU self-tests now capture stdout and stderr together and log QEMU's exit status
   and version. Cause of the CI failure: QEMU 10.2 prints the program's semihosting output on
-  stderr (exit status was 0); the test only read stdout. Not yet confirmed by a CI run.
+  stderr (exit status was 0); the test only read stdout. Confirmed by the following CI runs.
 - README: new "How well tested is this?" section, Troubleshooting in the contents, `ws-doctor` as
   the quick check in Part E, and the QEMU check in Part E redirects both streams.
 
@@ -57,7 +57,8 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   probe-rs and lazygit: the download is compared with the checksum the project itself publishes and a
   mismatch is refused. The installer scripts for uv, rustup and starship are no longer used.
 - Release tags are read from the redirect of a `latest/download` URL, so no GitHub API call is needed.
-- All package names checked against the real Ubuntu 24.04 archive (only `lazygit` is missing there).
+- All package names checked against the real Ubuntu 24.04 archive (only `lazygit` is missing there);
+  the end-to-end runs then checked them on 26.04 (see the "Fixed" section above).
 
 ## 2026-11-03 — `--full`, Nerd Font, Oh My Bash (PR #4)
 - `./setup.sh --full`: switch on every opt-in system change at once.

@@ -71,9 +71,9 @@ only if you want it. The script lists them with their state:
 | Switch | What it does | Where this guide covers it | Undo |
 |---|---|---|---|
 | `TUNE_INOTIFY` | New file `/etc/sysctl.d/60-dev-inotify.conf`: more file watches, so language servers cope with big source trees | [A5](#a5-system-tuning) | delete the file |
-| `DISABLE_REPORTING_SERVICES` | Disables crash and problem reporting: `apport`, `whoopsie`, `kerneloops` | [A6](#a6-privacy-hardening-at-os-level) | `systemctl enable --now` |
-| `DISABLE_MOTD_NEWS` | Disables `motd-news.timer` (news fetched at login) | A6 | `systemctl enable --now` |
-| `DISABLE_FWUPD_REFRESH` | Disables `fwupd-refresh.timer` (firmware metadata refresh) | A6 | `systemctl enable --now` |
+| `DISABLE_REPORTING_SERVICES` | Disables crash and problem reporting: `apport`, `whoopsie`, `kerneloops` | [A6](#a6-privacy-hardening-at-os-level) | `systemctl enable` |
+| `DISABLE_MOTD_NEWS` | Disables `motd-news.timer` (news fetched at login) | A6 | `systemctl enable` |
+| `DISABLE_FWUPD_REFRESH` | Disables `fwupd-refresh.timer` (firmware metadata refresh) | A6 | `systemctl enable` |
 | `DISABLE_APT_NEWS` | `pro config set apt_news=false` (messages apt fetches from Canonical) | A6 | `pro config set apt_news=true` |
 | `DISABLE_NM_CONNECTIVITY_CHECK` | New file in `/etc/NetworkManager/conf.d/`: no periodic connectivity probe | A6 | delete the file |
 | `SET_GNOME_FONT` | GNOME monospace font: JetBrainsMono Nerd Font Mono 11 (JetBrains Mono 11 without B14) | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
@@ -85,6 +85,9 @@ only if you want it. The script lists them with their state:
 | `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-profile) | `gpasswd -d` |
 | `JOIN_WIRESHARK_GROUP` | *(embedded)* lets group `wireshark` capture without root (debconf answer, group) | C1 | `dpkg-reconfigure`, `gpasswd -d` |
 | `DESKTOP_BROWSER_POLICIES` | *(desktop)* new policy files below `/etc/firefox` and `/etc/thunderbird` | [C2](#c2-desktop-part-personal-profile) | delete the files |
+
+In the script, the privacy changes (A6) run *after* all package installs, because installing a
+package can switch its timer back on; the guide lists A6 early only to keep the opt-in sections together.
 
 **The full setup.** To do all of them: in this guide, do every section marked
 **[opt-in]** (A5, all five blocks of A6, the Docker group in B9, the loader in
@@ -181,9 +184,11 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   as expected). The test now reads both streams (confirmed later by the full
   run above). The same run confirmed that `ws-doctor` finds the tools installed in
   `~/.local/bin` without the shell loader.
-- **Package names:** all checked against the real Ubuntu 24.04 archive; only
-  `lazygit`, `zellij` and `difftastic` are missing there (the guide and script
-  have a fallback for lazygit and skip the others).
+- **Package names:** all checked against the real Ubuntu 24.04 and 26.04
+  archives. Only `lazygit` (24.04 only), `zellij` and `difftastic` are missing
+  (the guide and script have a fallback for lazygit and skip the others).
+  26.04 renamed two packages, which the lists now use: `7zip` (was
+  `p7zip-full`) and `qemu-user` + `qemu-user-binfmt` (was `qemu-user-static`).
 - **Downloads:** the checksum checks for uv, rustup, starship, lazygit, probe-rs
   and the Nerd Font were run against the real files, including a deliberately
   wrong checksum, which is refused.
@@ -453,20 +458,23 @@ are your choice.
 for u in apport.service apport-autoreport.path apport-autoreport.timer \
          whoopsie.service whoopsie.path kerneloops.service; do
   if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-    sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+    sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
+    sudo systemctl stop "$u" || true     # best effort: a container has no running systemd
   fi
 done
 
 # DISABLE_MOTD_NEWS: news fetched at login
 u=motd-news.timer
 if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-  sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+  sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
+  sudo systemctl stop "$u" || true
 fi
 
 # DISABLE_FWUPD_REFRESH: periodic firmware metadata refresh
 u=fwupd-refresh.timer
 if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-  sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+  sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
+  sudo systemctl stop "$u" || true
 fi
 
 # DISABLE_APT_NEWS: messages fetched from Canonical when you run apt
@@ -615,7 +623,7 @@ server, pre-commit and its hooks, CMake language server):
 
 ```bash
 for t in ruff basedpyright pre-commit pre-commit-hooks cmake-language-server; do
-  uv tool install "$t"
+  uv tool list | grep -q "^$t " || { uv tool install "$t" && record_undo "uv tool uninstall $t"; }
 done
 ```
 
@@ -642,6 +650,11 @@ command -v rustup || {
   record_undo "rustup self uninstall -y"
 }
 
+# What we add to ~/.rustup is undone too (the archive's rustup has no "self uninstall"). Decide
+# this BEFORE 'rustup set ...', which already creates ~/.rustup/settings.toml:
+[ -e ~/.rustup ] || record_undo "rm -rf ~/.rustup"
+rustup toolchain list | grep -q '^stable' || record_undo "rustup toolchain uninstall stable"
+
 # no automatic self-update of rustup
 rustup set auto-self-update disable && record_undo "rustup set auto-self-update enable"
 
@@ -656,13 +669,17 @@ take several minutes. They need a few development libraries:
 
 ```bash
 apt_install libssl-dev pkg-config
+for c in taplo-cli cargo-nextest; do
+  cargo install --list | grep -q "^$c v" || record_undo "cargo uninstall $c"
+done
 cargo install --locked taplo-cli cargo-nextest
 ```
 
 `--locked` makes cargo use the exact dependency versions the tool's authors
 tested. Pin a tool with `cargo install --locked taplo-cli@X.Y.Z`.
 
-Undo: `cargo uninstall <name>`; `rustup self uninstall`.
+Undo: `cargo uninstall <name>`; `rustup toolchain uninstall stable`; `rustup self uninstall`
+if you installed rustup with `rustup-init` (the archive's rustup has no such command).
 
 ## B6. Offline documentation *(optional: `INSTALL_OFFLINE_DOCS`)*
 
@@ -692,6 +709,7 @@ npm config set update-notifier false
 npm config set fund false
 npm config set audit false
 record_undo "npm config delete prefix; npm config delete update-notifier; npm config delete fund; npm config delete audit"
+[ -e ~/.local/lib/node_modules/bash-language-server ] || record_undo "npm uninstall -g bash-language-server"
 npm install -g bash-language-server
 ```
 
@@ -743,6 +761,20 @@ hx --health            # shows which language servers are found
 
 ```bash
 apt_install podman distrobox
+```
+
+Whenever podman is installed, it must never pull images by itself. (The script does
+this here, in the "Containers" step; the same file is also used by D3.) The guard
+removes the file again only if podman worked before it and fails after it; a plain
+container where podman cannot run at all says nothing about the file.
+
+```bash
+f=~/.config/containers/containers.conf
+ok=0; podman info >/dev/null 2>&1 && ok=1
+put "$WS/files/home/.config/containers/containers.conf" "$f"
+if [ "$ok" = 1 ] && ! podman info >/dev/null 2>&1; then
+  echo "podman rejects the file: removing it again"; rm -f "$f"
+fi
 ```
 
 *(optional, off by default: `INSTALL_DOCKER`)* Docker Engine rewrites
@@ -1326,16 +1358,11 @@ podman pull docker.io/library/ubuntu:latest
 record_undo "if podman image exists docker.io/library/ubuntu:latest; then podman rmi docker.io/library/ubuntu:latest; fi"
 ```
 
-Whenever podman is installed (the script does this in the "Containers" step, even if you cache no images), never pull images implicitly (a `podman run`/`distrobox create`
-that names a missing image fails instead of downloading; an explicit
-`podman pull` still works):
-
-```bash
-put "$WS/files/home/.config/containers/containers.conf" ~/.config/containers/containers.conf
-# If podman ran fine before and now fails, it rejects the file: remove it again.
-# (If podman cannot run here at all, e.g. in a container, that says nothing about the file.)
-podman info >/dev/null 2>&1 || echo "podman does not run (or rejects the file): check 'podman info' with and without the file"
-```
+The "never pull images implicitly" file (`containers.conf`) is installed in
+[B9](#b9-containers-optional-install_podman-install_docker), whenever podman is, not only
+when you cache images. A `podman run`/`distrobox create` that names a missing image then
+fails instead of downloading; an explicit `podman pull` (as above) still works. If you
+skipped B9, run its `containers.conf` block now.
 
 ## D4. Enforce the offline environment
 
@@ -1555,7 +1582,9 @@ Each section above ended with its undo. In general:
   then `sudo apt history-undo <ID>`); with older APT, read
   `/var/log/apt/history.log` for what was installed.
 - **Tools in your home directory**: `uv tool uninstall <name>`,
-  `cargo uninstall <name>`, `npm rm -g <name>`, `rustup self uninstall`.
+  `cargo uninstall <name>`, `npm rm -g <name>`, `rustup toolchain uninstall <name>`
+  (and `rustup self uninstall` if you installed rustup with `rustup-init`). The blocks
+  above record these for you; the script's `--undo` replays them.
 - **Cache folders**: `rm -rf ~/.local/share/workstation` (templates,
   wheelhouse, crate cache, hashes) and `~/.cargo/registry` for downloaded crates.
 - **Switch the offline lock off** without uninstalling anything:
@@ -1570,10 +1599,11 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` and `zellij` on 24.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
+| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` on 24.04, and `zellij` and `difftastic` on both 24.04 and 26.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
 | `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
-| Prompt shows boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml`. |
+| `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
+| `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
 | Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-profile)), or you have not logged out and in since joining. |

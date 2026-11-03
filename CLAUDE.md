@@ -137,6 +137,11 @@ belong only inside the embedded module.
 - GNOME Online Accounts: leave unconfigured; the self-test WARNS (status 78,
   not a failure) if an account exists.
 
+### Terminal look
+`ls`/`ll`/`la`/`tree` are eza; icons (`--icons=auto`) are on when ~/.local/share/fonts/JetBrainsMonoNerdFont
+exists, `WS_ICONS=0|1` overrides. The user likes this look (long listing, folder/file icons, starship `❯`
+prompt) and uses JetBrains Mono Nerd Font in their terminal.
+
 ### Open questions for the user
 - Confirm the "no cloud" definition above.
 - Which everyday apps (defaults: LibreOffice, KeePassXC, VLC, GIMP, Inkscape,
@@ -150,8 +155,9 @@ belong only inside the embedded module.
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
   `tools/install-hooks.sh`). CI (.github/workflows/ci.yml) runs it, then per profile
   `--check` against the real archive of `ubuntu:latest` and a reduced real install. It ran
-  green (PR #5, #6); its self-test step is still non-blocking ("|| true") because the QEMU
-  test failed (see Status): make it blocking once a CI run shows that test passing.
+  green (PR #5, #6, #8); its self-test step is still non-blocking ("|| true"). The QEMU test that
+  made it flaky passes now (0 failures in the last runs), so it can be made blocking when the user
+  agrees; the E2E workflow is the one that blocks.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
   `./setup.sh --profile X --check` verifies package names for real (only `lazygit` was
   missing on 24.04). It is NOT the latest LTS (26.04), so names may differ there.
@@ -162,8 +168,11 @@ belong only inside the embedded module.
 
 - `tools/e2e.sh` = the full end-to-end test (see docs/script-reference.md); the "E2E" workflow
   runs it on GitHub runner VMs and a newest-LTS container, only manually or for a PR whose title
-  contains "[e2e]". It is the ONLY way to test a real full install (the sandbox cannot). Fetch its
-  logs with get_job_logs; the summary table is at the end of each job's log.
+  contains "[e2e]" (a push to such a PR cancels its running E2E: batch pushes). It is the ONLY way to
+  test a real full install (the sandbox cannot). It took ~15 min per run. get_job_logs shows the
+  summary table at the end of a FAILED job's log only; for green jobs download the artifact
+  (api.github.com/repos/OWNER/REPO/actions/artifacts/ID/zip with $GITHUB_TOKEN) and read summary.md.
+  A docs-only change does not need an E2E: leave "[e2e]" out of its PR title.
 
 ## Making the setup understandable
 - Every step has a plain-language `STEP_WHY[title]` and `STEP_TOUCHES[title]`
@@ -197,6 +206,13 @@ belong only inside the embedded module.
   install_system_file / install_templates / record_undo / fetch_verified
   (SHA-256 TOFU, then pinned via lock) / add_to_groups / disable_units / gset.
 - Use `if ...; then ...; fi`, not `cmd && cmd`, in functions run under set -e.
+- Never pipe into `grep -q` under pipefail (SIGPIPE makes the pipeline fail): capture into a variable
+  first. This bit three times (ws-init test, check-all, the E2E lock phase).
+- Order matters for services: anything that disables a unit (privacy_hardening) runs AFTER all package
+  installs, because a dependency can switch its timer back on. Every `record_undo` must be recorded
+  BEFORE the thing that can fail, and only for what THIS run created (check "did it exist?" first).
+- Containers: no running systemd (`systemctl disable`, never `--now`), no podman (`podman info` fails
+  whatever the config says: judge a config by before/after, not by one failing call).
 - NEVER locate code in setup.sh with a text search for "main() {": it also
   occurs inside self-test heredocs (C/C++ sources).
 - Downloads outside APT: prefer `fetch_published URL DEST SUMS_URL [NAME]` (checks the
