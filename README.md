@@ -425,6 +425,11 @@ Undo: `sudo rm -f /etc/sysctl.d/60-dev-inotify.conf`.
 
 *Mirrors `step "Privacy hardening"`, function `privacy_hardening`.*
 
+> **Order matters:** the script runs this step *after* all package installs (end of
+> Part C), because installing a package can switch its timer back on (a dependency
+> pulled in `motd-news.timer` in the end-to-end test). In this manual, do A6 after
+> Parts B and C, or re-check with `systemctl is-enabled` afterwards.
+
 Only services are **disabled** (not masked, not removed) and new drop-in
 files are added, so updates keep working. These are Ubuntu's own background
 features (reports, news, probes), not tools of this setup, which is why they
@@ -480,7 +485,7 @@ Undo: the `record_undo` lines above; the commands are in `~/workstation-undo.sh`
 
 ```bash
 apt_install \
-  git git-lfs wget unzip zip p7zip-full xz-utils zstd rsync tree file \
+  git git-lfs wget unzip zip 7zip xz-utils zstd rsync tree file \
   distro-info htop btop jq yq ripgrep fd-find bat eza zoxide fzf direnv \
   tealdeer hyperfine entr just tmux bash-completion shellcheck shfmt \
   yamllint git-delta lazygit moreutils pv ncdu libxml2-utils \
@@ -1031,7 +1036,7 @@ apt_install \
   libstdc++-arm-none-eabi-newlib gcc-riscv64-unknown-elf \
   picolibc-riscv64-unknown-elf gdb-multiarch openocd stlink-tools \
   dfu-util srecord can-utils sigrok-cli qemu-system-arm qemu-system-misc \
-  qemu-system-sparc qemu-user-static qemu-utils tio picocom minicom \
+  qemu-system-sparc qemu-user qemu-user-binfmt qemu-utils tio picocom minicom \
   libudev-dev
 ```
 
@@ -1298,16 +1303,18 @@ only as deliberate exceptions.
 
 ```bash
 podman pull docker.io/library/ubuntu:latest
-record_undo "podman rmi docker.io/library/ubuntu:latest"
+record_undo "if podman image exists docker.io/library/ubuntu:latest; then podman rmi docker.io/library/ubuntu:latest; fi"
 ```
 
-From now on, never pull images implicitly (a `podman run`/`distrobox create`
+Whenever podman is installed (the script does this in the "Containers" step, even if you cache no images), never pull images implicitly (a `podman run`/`distrobox create`
 that names a missing image fails instead of downloading; an explicit
 `podman pull` still works):
 
 ```bash
 put "$WS/files/home/.config/containers/containers.conf" ~/.config/containers/containers.conf
-podman info >/dev/null || { echo "podman rejects the file: remove it again"; rm -f ~/.config/containers/containers.conf; }
+# If podman ran fine before and now fails, it rejects the file: remove it again.
+# (If podman cannot run here at all, e.g. in a container, that says nothing about the file.)
+podman info >/dev/null 2>&1 || echo "podman does not run (or rejects the file): check 'podman info' with and without the file"
 ```
 
 ## D4. Enforce the offline environment
@@ -1575,7 +1582,12 @@ go (lint, parsing, README sync, and functional tests in a throw-away home
 directory; `--quick` for the static ones, which the git hook from
 `tools/install-hooks.sh` runs on every commit), and the GitHub workflow in
 `.github/workflows` runs them, plus a real install on the newest Ubuntu LTS,
-for every change. What changed and when is in `CHANGELOG.md`. If you find a difference between this guide and the script,
+for every change. For the complete life cycle, `tools/e2e.sh --profile work
+--i-know-this-machine-is-disposable` does a **full** install (every opt-in on),
+self-test, health check, a second install, manifest, lock, then `--undo` and a
+check that nothing is left behind. Run it in a throw-away VM only (it refuses
+to run as root or without that flag); the "E2E" workflow does it on GitHub
+runners (manually, or on a pull request whose title contains `[e2e]`). What changed and when is in `CHANGELOG.md`. If you find a difference between this guide and the script,
 the script's behaviour is the reference and the guide has a bug; please
 report it.
 

@@ -101,6 +101,7 @@ explain_all() {
 mkdir -p "$TMP/h-explain"
 check "--explain, --full --explain and --check run for every profile" explain_all
 check "--list-profiles" ./setup.sh --list-profiles
+check "tools/e2e.sh --plan (and it refuses without the disposable flag)" bash -c 'tools/e2e.sh --profile work --plan >/dev/null && ! tools/e2e.sh --profile work >/dev/null 2>&1'
 
 if (( QUICK )); then
   printf '\n%s%d passed, %d failed%s (quick mode: functional checks skipped)\n' "$B" "$PASS" "$FAIL" "$O"

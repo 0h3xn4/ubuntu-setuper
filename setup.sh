@@ -502,7 +502,7 @@ home_files() {
   if on "$INSTALL_CPP"; then echo .gdbinit; fi
   if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
   if on "$INSTALL_HELIX"; then echo .config/helix/config.toml; echo .config/helix/languages.toml; fi
-  if on "$CACHE_CONTAINER_IMAGES"; then echo .config/containers/containers.conf; fi
+  if on "$INSTALL_PODMAN" || on "$CACHE_CONTAINER_IMAGES"; then echo .config/containers/containers.conf; fi
   module_collect home_files
 }
 
@@ -712,9 +712,9 @@ system_tuning() {
   if [[ ! -e $f ]]; then
     printf 'fs.inotify.max_user_watches = 524288\nfs.inotify.max_user_instances = 1024\n' \
       | sudo tee "$f" >/dev/null
-    sudo sysctl -p "$f" >/dev/null
-    record_undo "sudo rm -f $f"
-    ok "Raised inotify limits"
+    record_undo "sudo rm -f $f"       # recorded as soon as the file exists, whatever sysctl does next
+    if sudo sysctl -p "$f" >/dev/null 2>&1; then ok "Raised inotify limits"
+    else warn "Wrote $f but could not apply it now (a container?); it takes effect at the next boot"; fi
   else
     ok "Unchanged: $f"
   fi
@@ -726,8 +726,10 @@ disable_units() {
   for u in "$@"; do
     state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
     if [[ $state == enabled ]]; then
-      sudo systemctl disable --now "$u" >/dev/null 2>&1 || { warn "Could not disable $u"; continue; }
-      record_undo "sudo systemctl enable --now $u"
+      # 'disable' is what matters; stopping is best effort (no running systemd in a container)
+      sudo systemctl disable "$u" >/dev/null 2>&1 || { warn "Could not disable $u"; continue; }
+      sudo systemctl stop "$u" >/dev/null 2>&1 || true
+      record_undo "sudo systemctl enable $u"
       ok "Disabled $u"
     fi
   done
@@ -833,9 +835,11 @@ uv_tool_install() {
     if [[ -n $current ]] && on "$UPGRADE"; then uv tool upgrade "$t"; return; fi
     if [[ -n $current ]]; then ok "$t $current (already installed)"; return 0; fi
     uv tool install "$t"
+    record_undo "uv tool uninstall $t"
   else
     if [[ $current == "$pin" ]]; then ok "$t $pin (pinned, already installed)"; return 0; fi
     uv tool install --reinstall "$t==$pin"
+    if [[ -z $current ]]; then record_undo "uv tool uninstall $t"; fi
   fi
 }
 
@@ -863,8 +867,15 @@ rust_toolchain() {
     "$STATE_DIR/rustup-init" -y --no-modify-path --default-toolchain none
     record_undo "rustup self uninstall -y"
   fi
+  # The archive's rustup has no self-uninstall, so undo what we add: the toolchain (with its
+  # components and targets) and, if this run creates it, the ~/.rustup directory itself.
+  # (Decided before 'rustup set ...' below, which already creates ~/.rustup/settings.toml.)
+  if [[ ! -e $HOME/.rustup ]]; then record_undo "rm -rf ~/.rustup"; fi
   if rustup set auto-self-update disable >/dev/null 2>&1; then
     record_undo "rustup set auto-self-update enable"
+  fi
+  if ! rustup toolchain list 2>/dev/null | grep -q "^$RUST_TOOLCHAIN"; then
+    record_undo "rustup toolchain uninstall $RUST_TOOLCHAIN"
   fi
   rustup toolchain install "$RUST_TOOLCHAIN" --profile default
   rustup default "$RUST_TOOLCHAIN"
@@ -880,6 +891,10 @@ rust_toolchain() {
     for c in "${cargo_tools[@]}"; do
       pin="${CARGO_PINS[$c]:-}"
       if [[ -n $pin ]]; then specs+=("$c@$pin"); else specs+=("$c"); fi
+    done
+    local installed_before; installed_before="$(cargo install --list 2>/dev/null || true)"
+    for c in "${cargo_tools[@]}"; do
+      if ! grep -q "^$c v" <<<"$installed_before"; then record_undo "cargo uninstall $c"; fi
     done
     log "Compiling cargo tools (this can take 10+ minutes)"
     cargo install --locked "${specs[@]}"
@@ -899,6 +914,9 @@ bash_lsp() {
   for t in "${NPM_TOOLS[@]}"; do
     pin="${NPM_PINS[$t]:-}"
     if [[ -n $pin ]]; then specs+=("$t@$pin"); else specs+=("$t"); fi
+  done
+  for t in "${NPM_TOOLS[@]}"; do
+    if [[ ! -e $HOME/.local/lib/node_modules/$t ]]; then record_undo "npm uninstall -g $t"; fi
   done
   npm install -g "${specs[@]}"
 }
@@ -943,8 +961,27 @@ helix_setup() {
   install_file .config/helix/languages.toml
 }
 
+# Install containers.conf (pull_policy = "never"). Guard against a podman that rejects it: if podman
+# worked before the file and fails after it, remove the file again. If podman does not work at all
+# here (a container without user namespaces), that says nothing about the file, so it stays.
+install_podman_conf() {
+  local conf="$HOME/.config/containers/containers.conf" existed=0 worked=0
+  if [[ -e $conf ]]; then existed=1; fi
+  if podman info >/dev/null 2>&1; then worked=1; fi
+  install_file .config/containers/containers.conf
+  if (( worked )) && ! podman info >/dev/null 2>&1; then
+    if (( existed == 0 )); then rm -f "$conf"; fi
+    warn "podman did not accept containers.conf (pull_policy); left it out"
+    return 1
+  fi
+}
+
 containers() {
-  if on "$INSTALL_PODMAN"; then apt_install "${PKGS_PODMAN[@]}"; fi
+  if on "$INSTALL_PODMAN"; then
+    apt_install "${PKGS_PODMAN[@]}"
+    # Whenever podman is installed, it must never pull images by itself.
+    if have podman; then install_podman_conf || true; fi
+  fi
   if on "$INSTALL_DOCKER"; then
     apt_install "${PKGS_DOCKER[@]}"
     if on "$JOIN_DOCKER_GROUP"; then add_to_groups docker; fi
@@ -1210,19 +1247,11 @@ cache_images() {
       if podman pull "$img"; then ok "Pulled $img"
       else warn "Could not pull $img"; echo "$img (container image)" >> "$MISSING_FILE"; continue; fi
     fi
-    record_undo "podman rmi $img"
+    record_undo "if podman image exists $img; then podman rmi $img; fi"
   done
 
-  # From now on, never pull images implicitly. Guard against an incompatible
-  # podman version: if podman rejects the file, remove it again.
-  local conf="$HOME/.config/containers/containers.conf" existed=0
-  [[ -e $conf ]] && existed=1
-  install_file .config/containers/containers.conf
-  if ! podman info >/dev/null 2>&1; then
-    if (( existed == 0 )); then rm -f "$conf"; fi
-    warn "podman did not accept containers.conf (pull_policy); left it out"
-    return 1
-  fi
+  # From now on, never pull images implicitly.
+  install_podman_conf
 }
 
 # ============================================================================
@@ -1661,7 +1690,7 @@ langs = {l["name"]: l for l in tomllib.load(open(sys.argv[1], "rb")).get("langua
 sys.exit(0 if all(langs.get(n, {}).get("language-servers") == [] for n in ("json", "yaml")) else 1)
 EOF
   fi
-  if on "$CACHE_CONTAINER_IMAGES" && have podman \
+  if have podman \
      && ! grep -q 'pull_policy = "never"' "$HOME/.config/containers/containers.conf" 2>/dev/null; then
     problems+=("podman may pull images implicitly"); fi
   if on "$ENFORCE_OFFLINE_ENV" && [[ ! -f "$HOME/.bashrc.d/20-offline.sh" ]]; then
@@ -2130,7 +2159,7 @@ show_opt_in() {
 STEP_WHY["System tuning"]="(Only with TUNE_INOTIFY=1.) Raises the inotify limits so language servers and file watchers can watch large source trees."
 STEP_TOUCHES["System tuning"]="system: one NEW file /etc/sysctl.d/60-dev-inotify.conf (sudo)."
 
-STEP_WHY["Privacy hardening"]="(Only with the DISABLE_* switches.) Stops Ubuntu's own background reporting, one switch each: crash reports, MOTD news, the firmware-refresh timer, APT news, the network connectivity probe. Services are disabled, never masked or removed."
+STEP_WHY["Privacy hardening"]="(Only with the DISABLE_* switches.) Stops Ubuntu's own background reporting, one switch each: crash reports, MOTD news, the firmware-refresh timer, APT news, the network connectivity probe. Services are disabled, never masked or removed. It runs after all installs, because installing packages can switch such timers back on."
 STEP_TOUCHES["Privacy hardening"]="system, only for the switches that are on: disables services, a NEW file /etc/NetworkManager/conf.d/99-no-connectivity-check.conf, 'pro config set apt_news=false' (sudo)."
 
 STEP_WHY["Base CLI tools"]="Everyday command-line tools (git, ripgrep, fzf, jq, tmux, ...) and the tldr example pages."
@@ -2169,8 +2198,8 @@ STEP_TOUCHES["Bash language server"]="apt packages (nodejs, npm); ~/.local (npm 
 STEP_WHY["Helix editor"]="The Helix terminal editor, from the Ubuntu archive or the official release tarball (never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
 STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/*; network: GitHub release only if Helix is not in the archive."
 
-STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on)."
-STEP_TOUCHES["Containers"]="apt packages; with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
+STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on). With podman, a small config file makes it never pull images by itself."
+STEP_TOUCHES["Containers"]="apt packages; ~/.config/containers/containers.conf (with podman); with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
 
 STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
 STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball only if not in the archive (checked against its published checksum)."
@@ -2196,10 +2225,6 @@ STEP_TOUCHES["Offline cache: container images"]="podman image storage in your ho
 # The ordered list of install steps. Used by the real run and by --explain.
 run_steps() {
   if on "$TUNE_INOTIFY"; then step "System tuning"   system_tuning; fi
-  if any_on "$DISABLE_REPORTING_SERVICES" "$DISABLE_MOTD_NEWS" "$DISABLE_FWUPD_REFRESH" \
-            "$DISABLE_APT_NEWS" "$DISABLE_NM_CONNECTIVITY_CHECK"; then
-    step "Privacy hardening"           privacy_hardening
-  fi
   step "Base CLI tools"                base_cli
   if on "$INSTALL_NERD_FONT";    then step "JetBrains Mono Nerd Font"  nerd_font; fi
   if on "$INSTALL_CPP";          then step "C/C++ toolchain"           cpp_toolchain; fi
@@ -2218,6 +2243,12 @@ run_steps() {
   step "Project templates"             project_templates
   if any_on "$SET_GNOME_FONT" "$SET_GNOME_PRIVACY"; then step "Desktop settings" desktop_tweaks; fi
   module_collect steps
+  # After every package install: installing packages can switch their timers on (a dependency
+  # pulls in motd-news.timer, fwupd-refresh.timer, apport ...), so disabling them earlier did not stick.
+  if any_on "$DISABLE_REPORTING_SERVICES" "$DISABLE_MOTD_NEWS" "$DISABLE_FWUPD_REFRESH" \
+            "$DISABLE_APT_NEWS" "$DISABLE_NM_CONNECTIVITY_CHECK"; then
+    step "Privacy hardening"           privacy_hardening
+  fi
   if on "$CACHE_PYTHON";           then step "Offline cache: Python wheels"     cache_python; fi
   if on "$CACHE_RUST";             then step "Offline cache: Rust crates"       cache_rust; fi
   if on "$CACHE_CONTAINER_IMAGES"; then step "Offline cache: container images" cache_images; fi
@@ -2281,7 +2312,8 @@ undo_mode() {
   for (( i = ${#cmds[@]} - 1; i >= 0; i-- )); do
     n=$((n + 1))
     printf '%s[%d/%d]%s %s\n' "$c_blue" "$n" "${#cmds[@]}" "$c_off" "${cmds[i]}"
-    if ! bash -c "${cmds[i]}"; then failed=$((failed + 1)); failures+=("${cmds[i]}"); warn "That command failed; continuing"; fi
+    # tools we installed live in ~/.local/bin and ~/.cargo/bin, which a plain shell may not have on PATH
+    if ! PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" bash -c "${cmds[i]}"; then failed=$((failed + 1)); failures+=("${cmds[i]}"); warn "That command failed; continuing"; fi
   done
   if (( failed )); then
     warn "$failed command(s) failed; the undo file is kept: $file"

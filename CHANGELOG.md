@@ -19,6 +19,25 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Added (end-to-end test)
+- `tools/e2e.sh` and `.github/workflows/e2e.yml`: the full life cycle of a profile (full install,
+  self-test, ws-doctor, idempotent re-install, manifest, lock, undo, leftovers) on GitHub runner VMs
+  and in a newest-LTS container; manual, or on a PR titled with `[e2e]`.
+- Fix found by reading the code for it: the sysctl drop-in is now recorded for undo as soon as it is
+  written, and failing to apply it (container) only warns.
+
+### Fixed (found by the first end-to-end run on Ubuntu 26.04 LTS)
+- Package names that changed: `p7zip-full` is now `7zip`; `qemu-user-static` is now `qemu-user` + `qemu-user-binfmt`
+  (both names also exist on 24.04).
+- `containers.conf` (podman never pulls implicitly) is installed whenever podman is, not only with the image cache.
+- Disabling a service no longer uses `--now` (fails without a running systemd, e.g. in a container): it disables,
+  then stops on a best-effort basis. Its undo is `systemctl enable`.
+- Undo now covers what was missing: Rust toolchains (and `~/.rustup` when this run created it), cargo tools, uv tools,
+  global npm tools; the `podman rmi` undo no longer fails when the image is gone; undo commands find `~/.local/bin` and `~/.cargo/bin`.
+- Privacy hardening now runs after all installs (a dependency re-enabled `motd-news.timer`); `containers.conf` is installed in the Containers step; `~/.rustup` ownership is decided before `rustup set` creates it.
+- The `containers.conf` guard no longer removes the file when podman cannot run at all (a container): it only removes it if podman worked before the file and fails after.
+- E2E test itself: lock phase SIGPIPE, runner images that already ship rustup/`gh`, container images that strip `/usr/share/doc`.
+
 ### Fixed (found by the first CI run on the newest LTS)
 - `ws-doctor` no longer reports tools in `~/.local/bin` / `~/.cargo/bin` as missing when the
   (opt-in) shell loader is off.
