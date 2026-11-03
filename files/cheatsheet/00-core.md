@@ -119,6 +119,24 @@ Images are never pulled implicitly. An explicit `podman pull` still works.
 Images for other or older systems (e.g. a project's legacy build
 environment) are added deliberately in OFFLINE_CONTAINER_IMAGES.
 
+## Fonts and prompt
+
+The setup installs **JetBrains Mono Nerd Font** (JetBrains Mono plus icon
+glyphs) for your user. To see icons in the prompt, set your terminal font to
+**JetBrainsMono Nerd Font Mono**: GNOME Terminal > Preferences > your profile >
+Custom font (or let the setup do it system-wide: `SET_GNOME_FONT=1`).
+
+```bash
+fc-list : family | grep 'JetBrainsMono Nerd Font'      # is it installed?
+starship preset nerd-font-symbols -o ~/.config/starship.toml    # icon prompt (after the font works)
+starship preset plain-text-symbols -o ~/.config/starship.toml   # no special font needed
+```
+
+Prompt: starship by default. If Oh My Bash is enabled (`INSTALL_OH_MY_BASH=1`)
+it owns the prompt instead: edit the theme and plugins in
+`~/.bashrc.d/15-oh-my-bash.sh` (`ls ~/.local/share/oh-my-bash/themes`). Its
+GitHub update check is off; update on purpose with `./setup.sh --upgrade`.
+
 ## Git
 
 ```bash
