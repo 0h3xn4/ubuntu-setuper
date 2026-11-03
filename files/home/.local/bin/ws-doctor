@@ -20,6 +20,11 @@ case "${1:-}" in
   *) echo "ws-doctor: unknown option $1" >&2; exit 2 ;;
 esac
 
+# Tools installed for your user live in ~/.local/bin and ~/.cargo/bin. They are only on PATH
+# in shells that load ~/.bashrc.d (an opt-in), so look there too, and judge PATH separately.
+ORIG_PATH="$PATH"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
 if [[ -t 1 ]]; then G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; B=$'\e[1m'; O=$'\e[0m'; else G=; Y=; R=; B=; O=; fi
 PASS=0 WARN=0 FAIL=0
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -67,9 +72,9 @@ else warn "no clipboard tool: Helix 'Space y' / 'Space p' cannot reach the syste
 head1 "Shell setup"
 if grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then pass "~/.bashrc loads ~/.bashrc.d"
 else warn "~/.bashrc does not load ~/.bashrc.d: aliases, prompt, PATH additions and the offline lock are not active"; fi
-case ":$PATH:" in *":$HOME/.local/bin:"*) pass "~/.local/bin is on PATH" ;; *) warn "~/.local/bin is not on PATH" ;; esac
+case ":$ORIG_PATH:" in *":$HOME/.local/bin:"*) pass "~/.local/bin is on PATH" ;; *) warn "~/.local/bin is not on PATH in this shell (the shell loader adds it)" ;; esac
 if have cargo; then
-  case ":$PATH:" in *":$HOME/.cargo/bin:"*) pass "~/.cargo/bin is on PATH" ;; *) warn "~/.cargo/bin is not on PATH" ;; esac
+  case ":$ORIG_PATH:" in *":$HOME/.cargo/bin:"*) pass "~/.cargo/bin is on PATH" ;; *) warn "~/.cargo/bin is not on PATH in this shell (the shell loader adds it)" ;; esac
 fi
 
 head1 "No-cloud settings"

@@ -19,6 +19,12 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Fixed (found by the first CI run on the newest LTS)
+- `ws-doctor` no longer reports tools in `~/.local/bin` / `~/.cargo/bin` as missing when the
+  (opt-in) shell loader is off.
+- The ARM/RISC-V QEMU self-tests now log QEMU's exit status, stderr and version (the ARM test
+  failed in CI although the program printed its OK message; cause still to be confirmed).
+
 ### Changed
 - **Publisher checksums instead of trust-on-first-use** for uv, rustup, starship, the Nerd Font,
   probe-rs and lazygit: the download is compared with the checksum the project itself publishes and a

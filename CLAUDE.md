@@ -149,9 +149,9 @@ belong only inside the embedded module.
 ## Checks you can run (and CI)
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
   `tools/install-hooks.sh`). CI (.github/workflows/ci.yml) runs it, then per profile
-  `--check` against the real archive of `ubuntu:latest` and a reduced real install. The CI
-  workflow has NOT been run yet (GitHub Actions cannot be triggered from the sandbox); its
-  self-test step is non-blocking until it has been seen green.
+  `--check` against the real archive of `ubuntu:latest` and a reduced real install. It ran
+  green once (PR #5); its self-test step is still non-blocking ("|| true") because one test
+  failed (see Status): make it blocking once the QEMU test is fixed.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
   `./setup.sh --profile X --check` verifies package names for real (only `lazygit` was
   missing on 24.04). It is NOT the latest LTS (26.04), so names may differ there.
@@ -213,8 +213,20 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-NOT run: any apt install, the Helix install, Kate, the self-test on an installed machine,
-the CI workflow, anything on the newest LTS (26.04).
+FIRST REAL CI RUN (PR #5, `ubuntu:latest` = newest LTS, both profiles; jobs green): `--explain`,
+`--check` against the real archive, and a reduced REAL INSTALL as a normal user all worked.
+The self-test on that install (work profile): 20 passed, 1 failed, 1 warning (shell loader
+off, expected), 12 skipped. Passed for real: gcc/clang++/sanitizers, CMake+GoogleTest,
+presets, ws-init, clangd, ruff+basedpyright (uv from the checksum-verified tarball), Helix
+(tarball install, config loads), pre-commit offline, ccache, ws-doctor, ARM cross builds,
+gdb-multiarch, OpenOCD configs, ws-devname. FAILED: `[embedded] ARM Cortex-M program runs in
+QEMU`: the program printed its OK message but the test failed; QEMU's source says SYS_EXIT with
+0x20026 exits 0, so the cause is unknown. run_qemu_semihost now logs QEMU's exit status, stderr
+and version; read it in the next CI run's log. ws-doctor wrongly reported tools in ~/.local/bin as
+missing when the shell loader is off (fixed: it searches ~/.local/bin and ~/.cargo/bin itself).
+NOT run: Kate, the Nerd Font and Oh My Bash steps in the installer (switched off in CI), the
+RISC-V QEMU test (qemu-system-misc not installed there), Rust, anything on a desktop.
+Fetch CI logs with the github get_job_logs tool (job ids from the PR's check runs).
 
 Also done and checked in the sandbox:
 - shellcheck is clean on all shell files; bash -n; JSON/YAML/TOML parse.
