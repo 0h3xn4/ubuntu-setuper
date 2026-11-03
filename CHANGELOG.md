@@ -20,6 +20,11 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Verified
+- End-to-end run on Ubuntu 26.04.1 LTS (GitHub runner VM and `ubuntu:latest` container, `work` and `personal`):
+  all ten phases pass in all four jobs; self-test 33/36 (VM) and 32/35 (container) passed, 0 failed; Node.js 26
+  from nodejs.org in every job; the RISC-V QEMU test passes.
+
 ### Fixed (found by the fifth end-to-end run)
 - 26.04 moved RISC-V emulation out of `qemu-system-misc` into its own package: `qemu-system-riscv` is now in the
   embedded package list (before, no RISC-V emulator was installed on 26.04 and its self-test was skipped).

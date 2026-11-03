@@ -246,16 +246,18 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-FULL E2E RUN 5 (manual dispatch on the branch, head 8fb892a): GREEN in all four jobs with the NEW Node.js path
-(node_install: v26.13.0 from nodejs.org in every job, bash-language-server installed with its npm) and the NEW
-personal profile (core + embedded + desktop). Self-test: vm-work 32/0, vm-personal 35/0, container-work 31/0,
-container-personal 34/0 (passed/failed). install 10-19 min per job. Reading selftest.log (not just the green
-summary!) showed `SKIP [embedded] RISC-V program runs in QEMU (qemu-system-riscv64 not installed)`: 26.04 split
-RISC-V out of qemu-system-misc into `qemu-system-riscv` (found by reading the real 26.04 package index at
-archive.ubuntu.com/ubuntu/dists/resolute/{main,universe}/binary-amd64/Packages.gz, which the sandbox can
-download). Fixed in c9f4669 (package added; e2e.sh now FAILS on a RISC-V skip, also checks the lock pins
-NODE_LTS_VERSION and that undo removes ~/.local/opt and the node/npm/npx links). E2E RUN 6 confirms it (see
-the next paragraph if present). LESSON: green is not enough, grep the logs for SKIP and WARN.
+FULL E2E, LATEST (GitHub run #7, workflow_dispatch on the branch, head c9f4669): GREEN in all four jobs, nothing
+hidden: self-test vm-work 33/0, vm-personal 36/0, container-work 32/0, container-personal 35/0 (passed/failed),
+install 9-11 min, ws-doctor 0 failed, RISC-V QEMU test PASSES, lock pins NODE_LTS_VERSION, leftovers clean (incl.
+~/.local/opt and node/npm/npx). Node.js v26.13.0 from nodejs.org (node_install) in every job, bash-language-server
+installed with its npm; personal = core + embedded + desktop. Remaining skips are expected (SPICE kernels off by
+default; container images off in the container jobs). The run before it (#6, head 8fb892a) was green too but its
+selftest.log showed `SKIP RISC-V program runs in QEMU (qemu-system-riscv64 not installed)`: 26.04 split RISC-V out of
+qemu-system-misc into `qemu-system-riscv` (found by reading the real 26.04 package index at
+archive.ubuntu.com/ubuntu/dists/resolute/{main,universe}/binary-amd64/Packages.gz, which the sandbox can download).
+Fixed in c9f4669; e2e.sh now FAILS on a RISC-V skip and checks the Node lock pin and its undo.
+LESSON: green is not enough, grep the logs for SKIP and WARN. Six E2E runs actually executed (4 on PR #8, then 2
+manual dispatches); GitHub's run numbers count one more, a PR-event run whose jobs were skipped (no "[e2e]" in the title).
 FULL E2E on Ubuntu 26.04.1 (PR #8, `tools/e2e.sh`): GREEN in all four jobs (VM and `ubuntu:latest` container,
 work and personal), all 10 phases: --check, --full install, self-test (32 passed/0 failed on VM work, 31/0 in
 the container work job), ws-doctor, idempotent re-run, manifest, lock, --undo of every undo file, leftovers.
@@ -317,7 +319,7 @@ run of each app) and anything needing a desktop session.
    - `clangd --check` returns non-zero when the file has errors.
    - QEMU semihosting tests: ARM verified in CI (QEMU 10.2.1: SYS_EXIT 0x20026 -> exit status 0;
      semihosting output on stderr, hence 2>&1). RISC-V (t_emb_riscv_qemu: RV64 SYS_EXIT with a
-     2-word block) was SKIPPED in E2E run 5 (package split, fixed in c9f4669); passes only if E2E run 6 says so.
+     2-word block) VERIFIED in CI since c9f4669 (needs the qemu-system-riscv package on 26.04).
    - Doc paths: cppreference under /usr/share/cppreference/doc/html/,
      POSIX man pages as section 3posix.
    - udev properties ID_VENDOR_ID / ID_MODEL_ID / ID_SERIAL_SHORT /
@@ -339,7 +341,7 @@ run of each app) and anything needing a desktop session.
    - OpenOCD `-c "bindto 127.0.0.1"` is accepted (cheat sheet example).
 4. When the VM runs are clean: `./setup.sh --profile work --lock` and the
    same for personal, review, commit locks/. (The lock now also pins NODE_LTS_VERSION.)
-5. (DONE: E2E run 5 covered Node.js upstream LTS and personal = core+embedded+desktop, see Status.)
+5. (DONE: the E2E covered Node.js upstream LTS and personal = core+embedded+desktop, see Status.)
    An E2E can be started WITHOUT a PR: actions_run_trigger(run_workflow, workflow_id e2e.yml, ref = the branch);
    a docs push to that branch then does not cancel it (only pull_request runs share the cancel group per ref).
 

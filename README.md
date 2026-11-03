@@ -163,24 +163,24 @@ Be skeptical, and check for yourself; this is what has and has not been verified
 (newest facts first; the details and dates are in `CHANGELOG.md` and `CLAUDE.md`).
 
 - **Full end-to-end test on Ubuntu 26.04.1 LTS (in CI, `tools/e2e.sh`):** the
-  *whole* life cycle of both profiles passed in all four jobs (a GitHub runner VM
-  and an `ubuntu:latest` container, each for `work` and `personal`; `personal` now
+  *whole* life cycle of both profiles passes in all four jobs (a GitHub runner VM
+  and an `ubuntu:latest` container, each for `work` and `personal`; `personal`
   includes the embedded part): `--check` against the real archive, a full `--full`
-  install as a normal user with `sudo` (10 to 19 minutes), the self-test (32 and 35
-  checks passed, 0 failed, on the VM for `work` and `personal`; 31 and 34 in the
+  install as a normal user with `sudo` (9 to 11 minutes), the self-test (33 and 36
+  checks passed, 0 failed, on the VM for `work` and `personal`; 32 and 35 in the
   container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
-  lock, `--undo` of every undo file, and a check that nothing the setup created is
-  left behind (APT packages stay by design). **Node.js 26 (the newest LTS) from
-  nodejs.org was installed and used in all four jobs.** It took four fix rounds to
-  get the first green run; the bugs it found are listed in `CHANGELOG.md` (package
-  names that changed on 26.04, undo gaps, service handling in containers, an ordering
-  problem in the privacy step). Reading the self-test log of the last run also showed
-  one test that had been **skipped**, not passed: the RISC-V QEMU test, because 26.04
-  moved RISC-V emulation into its own package (`qemu-system-riscv`, now in the list).
-  The E2E test now fails on that skip; the run that confirms the fix is in the
-  changelog and `CLAUDE.md`. Limits: a container has no running systemd and cannot
-  run podman, so image caching is switched off there (the VM run covers it); no
-  desktop session was involved.
+  lock (it pins Node.js too), `--undo` of every undo file, and a check that
+  nothing the setup created is left behind (APT packages stay by design).
+  **Node.js 26 (the newest LTS) from nodejs.org is installed and used in all four
+  jobs**, and the ARM and RISC-V programs run in QEMU. The checks that are skipped
+  are skipped on purpose (SPICE kernels are off by default; image caching is off in
+  a container, which cannot run podman; the VM run covers the rest). It took six
+  runs to get here: the bugs found are in `CHANGELOG.md` (package names that
+  changed on 26.04, undo gaps, service handling in containers, an ordering problem
+  in the privacy step), and one was only visible by reading a green run's log: a
+  RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation into its
+  own package (`qemu-system-riscv`). The E2E test now fails on such a skip. No
+  desktop session was involved in any of this.
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
