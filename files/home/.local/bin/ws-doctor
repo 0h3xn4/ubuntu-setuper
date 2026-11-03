@@ -55,7 +55,7 @@ for t in kate lazygit starship zoxide fzf ccache node npm; do tool "$t" optional
 
 if [[ -x $HOME/.local/bin/ws-devname ]]; then
   head1 "Embedded tools (the embedded part is installed)"
-  for t in arm-none-eabi-gcc riscv64-unknown-elf-gcc qemu-system-arm openocd gdb-multiarch probe-rs; do tool "$t"; done
+  for t in arm-none-eabi-gcc riscv64-unknown-elf-gcc qemu-system-arm qemu-system-riscv64 openocd gdb-multiarch probe-rs; do tool "$t"; done
 fi
 
 head1 "Editor and language servers"

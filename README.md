@@ -164,20 +164,23 @@ Be skeptical, and check for yourself; this is what has and has not been verified
 
 - **Full end-to-end test on Ubuntu 26.04.1 LTS (in CI, `tools/e2e.sh`):** the
   *whole* life cycle of both profiles passed in all four jobs (a GitHub runner VM
-  and an `ubuntu:latest` container, each for `work` and `personal`): `--check`
-  against the real archive, a full `--full` install as a normal user with `sudo`,
-  the self-test (32 passed, 0 failed on the VM `work` run; 31 passed, 0 failed in
-  the container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
+  and an `ubuntu:latest` container, each for `work` and `personal`; `personal` now
+  includes the embedded part): `--check` against the real archive, a full `--full`
+  install as a normal user with `sudo` (10 to 19 minutes), the self-test (32 and 35
+  checks passed, 0 failed, on the VM for `work` and `personal`; 31 and 34 in the
+  container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
   lock, `--undo` of every undo file, and a check that nothing the setup created is
-  left behind (APT packages stay by design). It took three fix rounds to get
-  there; the bugs it found are listed in `CHANGELOG.md` (two package names that
-  changed on 26.04, undo gaps, service handling in containers, an ordering
-  problem in the privacy step). Limits: a container has no running systemd and
-  cannot run podman, so image caching is switched off there; the VM run covers
-  that. No desktop session was involved.
-  **Since that run** two things changed that no CI run has exercised yet: Node.js now comes
-  from nodejs.org (newest LTS) instead of the archive, and the `personal` profile now
-  includes the embedded part (the green runs above were `personal` = core + desktop only).
+  left behind (APT packages stay by design). **Node.js 26 (the newest LTS) from
+  nodejs.org was installed and used in all four jobs.** It took four fix rounds to
+  get the first green run; the bugs it found are listed in `CHANGELOG.md` (package
+  names that changed on 26.04, undo gaps, service handling in containers, an ordering
+  problem in the privacy step). Reading the self-test log of the last run also showed
+  one test that had been **skipped**, not passed: the RISC-V QEMU test, because 26.04
+  moved RISC-V emulation into its own package (`qemu-system-riscv`, now in the list).
+  The E2E test now fails on that skip; the run that confirms the fix is in the
+  changelog and `CLAUDE.md`. Limits: a container has no running systemd and cannot
+  run podman, so image caching is switched off there (the VM run covers it); no
+  desktop session was involved.
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
@@ -191,8 +194,10 @@ Be skeptical, and check for yourself; this is what has and has not been verified
 - **Package names:** all checked against the real Ubuntu 24.04 and 26.04
   archives. Only `lazygit` (24.04 only), `zellij` and `difftastic` are missing
   (the guide and script have a fallback for lazygit and skip the others).
-  26.04 renamed two packages, which the lists now use: `7zip` (was
-  `p7zip-full`) and `qemu-user` + `qemu-user-binfmt` (was `qemu-user-static`).
+  26.04 renamed or split three packages, which the lists now use: `7zip` (was
+  `p7zip-full`), `qemu-user` + `qemu-user-binfmt` (was `qemu-user-static`) and
+  `qemu-system-riscv` (split from `qemu-system-misc`; on 24.04 it does not exist and
+  the setup just reports it as not available, because `qemu-system-misc` still has RISC-V there).
 - **Downloads:** the checksum checks for uv, rustup, starship, lazygit, probe-rs
   and the Nerd Font were run against the real files, including a deliberately
   wrong checksum, which is refused.
@@ -200,7 +205,9 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   from documentation, not from running each app), the Firefox/Thunderbird policy
   files (do they apply to the snaps? check `about:policies`), the GNOME
   settings (`SET_GNOME_FONT`, `SET_GNOME_PRIVACY`) and how the icons look in a
-  real terminal, and the RISC-V QEMU test if it was skipped. Everything on a real desktop.
+  real terminal, and everything on a real desktop. Also not run yet: the lock files
+(`locks/`) are not committed, so version pinning has been tested (the lock phase of
+the E2E test) but no real pins exist.
 
 ## Rules this guide follows
 
@@ -1644,6 +1651,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
+| `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
 | Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |

@@ -194,13 +194,13 @@ desktop module only places policy files for Firefox and Thunderbird.
 |---|---|
 | `tools/check-all.sh [--quick]` | Every check of this repository: `shellcheck`/`bash -n`, JSON/TOML/YAML parsing, README sync, the README's code blocks, `--explain`/`--check` for every profile; without `--quick` also functional tests in a throw-away `HOME` (`ws-init`, `ws-doctor`, `--undo`, manifest diff, the checksum-verified download helper incl. a tamper test, the LibreOffice helper) |
 | `tools/check-readme-sync.sh` | Fails if the README misses a package, tool, home file, step, switch, option or privacy service the script knows about |
-| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine: explain/check, full install, self-test, `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock, `--undo`, leftovers. Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
+| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine: explain/check, full install, self-test (a skipped RISC-V QEMU test counts as a failure), `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock (must pin the Rust toolchain and, when installed, Node.js), `--undo`, leftovers (incl. `~/.local/opt` and the node/npm/npx links). Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
 | `tools/manifest-diff.sh A B` | Compare two manifests (two machines, or manual vs scripted setup), ignoring host, user, CPU, kernel, hashes and dates |
 | `tools/install-hooks.sh` | Enable the git pre-commit hook (`check-all.sh --quick`) in this clone |
 
 CI (`.github/workflows/ci.yml`): `check-all.sh` on every push and PR, then for each profile a
 `--check` against the real archive of the newest Ubuntu LTS and a reduced real install in a container.
-The E2E workflow (`.github/workflows/e2e.yml`, ~15 minutes, manually or on a PR titled with `[e2e]`)
+The E2E workflow (`.github/workflows/e2e.yml`, 10 to 20 minutes per job, started manually (Actions > E2E > Run workflow, or the API's workflow_dispatch on any branch, no pull request needed) or by a PR titled with `[e2e]`)
 runs `tools/e2e.sh` for both profiles on a GitHub runner VM and in an `ubuntu:latest` container. It
 purges the runner's preinstalled `gh` first and removes the container image's dpkg excludes, so the
 machine looks like a normal Ubuntu install. Results of the latest runs: README, "How well tested is this?".
