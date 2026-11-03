@@ -268,16 +268,16 @@ EOT
   arm-none-eabi-size c.elf cpp.elf
 }
 
-# Run a bare-metal ELF under QEMU with semihosting and keep everything visible:
-# stdout in qemu.txt, stderr, the exit status (QEMU_RC) and the QEMU version in the log.
+# Run a bare-metal ELF under QEMU with semihosting. The guest's semihosting output goes
+# to QEMU's STDERR (seen on QEMU 10.2 in CI), so stdout and stderr are captured together
+# in qemu.txt. The exit status (QEMU_RC) and the QEMU version are printed to the log.
 # (Not piped through tee: with pipefail a failure there hides the real cause.)
 run_qemu_semihost() {
   local elf="$1" qemu="$2"; shift 2
   QEMU_RC=0
   timeout 30 "$qemu" "$@" -nographic -monitor none -serial none \
-    -semihosting-config enable=on,target=native -kernel "$elf" < /dev/null > qemu.txt 2> qemu.err || QEMU_RC=$?
+    -semihosting-config enable=on,target=native -kernel "$elf" < /dev/null > qemu.txt 2>&1 || QEMU_RC=$?
   cat qemu.txt
-  if [[ -s qemu.err ]]; then echo "--- qemu stderr:"; cat qemu.err; fi
   echo "--- $("$qemu" --version | head -n1); exit status $QEMU_RC"
 }
 

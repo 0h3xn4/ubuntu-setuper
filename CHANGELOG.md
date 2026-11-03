@@ -22,8 +22,11 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
 ### Fixed (found by the first CI run on the newest LTS)
 - `ws-doctor` no longer reports tools in `~/.local/bin` / `~/.cargo/bin` as missing when the
   (opt-in) shell loader is off.
-- The ARM/RISC-V QEMU self-tests now log QEMU's exit status, stderr and version (the ARM test
-  failed in CI although the program printed its OK message; cause still to be confirmed).
+- The ARM/RISC-V QEMU self-tests now capture stdout and stderr together and log QEMU's exit status
+  and version. Cause of the CI failure: QEMU 10.2 prints the program's semihosting output on
+  stderr (exit status was 0); the test only read stdout. Not yet confirmed by a CI run.
+- README: new "How well tested is this?" section, Troubleshooting in the contents, `ws-doctor` as
+  the quick check in Part E, and the QEMU check in Part E redirects both streams.
 
 ### Changed
 - **Publisher checksums instead of trust-on-first-use** for uv, rustup, starship, the Nerd Font,
