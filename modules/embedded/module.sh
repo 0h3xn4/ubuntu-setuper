@@ -268,13 +268,26 @@ EOT
   arm-none-eabi-size c.elf cpp.elf
 }
 
+# Run a bare-metal ELF under QEMU with semihosting and keep everything visible:
+# stdout in qemu.txt, stderr, the exit status (QEMU_RC) and the QEMU version in the log.
+# (Not piped through tee: with pipefail a failure there hides the real cause.)
+run_qemu_semihost() {
+  local elf="$1" qemu="$2"; shift 2
+  QEMU_RC=0
+  timeout 30 "$qemu" "$@" -nographic -monitor none -serial none \
+    -semihosting-config enable=on,target=native -kernel "$elf" < /dev/null > qemu.txt 2> qemu.err || QEMU_RC=$?
+  cat qemu.txt
+  if [[ -s qemu.err ]]; then echo "--- qemu stderr:"; cat qemu.err; fi
+  echo "--- $("$qemu" --version | head -n1); exit status $QEMU_RC"
+}
+
 t_emb_arm_qemu() {
   needs arm-none-eabi-gcc qemu-system-arm
   arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -O1 -ffreestanding -nostdlib \
     -T "$EMBEDDED_DIR/files/selftest/arm/lm3s6965.ld" "$EMBEDDED_DIR/files/selftest/arm/semihost.c" -o arm.elf
-  timeout 30 qemu-system-arm -M lm3s6965evb -nographic -monitor none -serial none \
-    -semihosting-config enable=on,target=native -kernel arm.elf < /dev/null | tee qemu.txt
+  run_qemu_semihost arm.elf qemu-system-arm -M lm3s6965evb
   grep -q "ARM Cortex-M self-test OK" qemu.txt
+  (( QEMU_RC == 0 )) || { echo "QEMU exited with status $QEMU_RC (0 expected after SYS_EXIT with ApplicationExit)"; return 1; }
 }
 
 t_emb_riscv_qemu() {
@@ -282,9 +295,9 @@ t_emb_riscv_qemu() {
   riscv64-unknown-elf-gcc -march=rv64imac -mabi=lp64 -mcmodel=medany -mno-relax -O1 \
     -ffreestanding -nostdlib -T "$EMBEDDED_DIR/files/selftest/riscv/virt.ld" \
     "$EMBEDDED_DIR/files/selftest/riscv/semihost.c" -o riscv.elf
-  timeout 30 qemu-system-riscv64 -M virt -bios none -nographic -monitor none -serial none \
-    -semihosting-config enable=on,target=native -kernel riscv.elf < /dev/null | tee qemu.txt
+  run_qemu_semihost riscv.elf qemu-system-riscv64 -M virt -bios none
   grep -q "RISC-V self-test OK" qemu.txt
+  (( QEMU_RC == 0 )) || { echo "QEMU exited with status $QEMU_RC (0 expected after SYS_EXIT with ApplicationExit)"; return 1; }
 }
 
 t_emb_gdb() {
