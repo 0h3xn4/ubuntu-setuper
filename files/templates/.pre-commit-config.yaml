@@ -1,0 +1,85 @@
+# Enable once per clone:   pre-commit install
+#
+# OFFLINE BY DESIGN: only 'repo: local' hooks are used, so pre-commit never
+# fetches anything from the internet. All tools run from this machine
+# (pre-commit-hooks is installed via 'uv tool install pre-commit-hooks').
+# If pre-commit warns that 'language: system' is deprecated, rename it to
+# 'language: unsupported'.
+repos:
+  - repo: local
+    hooks:
+      - id: trailing-whitespace
+        name: trim trailing whitespace
+        entry: trailing-whitespace-fixer
+        language: system
+        types: [text]
+      - id: end-of-file-fixer
+        name: fix end of files
+        entry: end-of-file-fixer
+        language: system
+        types: [text]
+      - id: mixed-line-ending
+        name: mixed line endings
+        entry: mixed-line-ending --fix=lf
+        language: system
+        types: [text]
+      - id: check-merge-conflict
+        name: check for merge conflict markers
+        entry: check-merge-conflict
+        language: system
+        types: [text]
+      - id: check-added-large-files
+        name: check for large files
+        entry: check-added-large-files
+        language: system
+      - id: detect-private-key
+        name: detect private keys
+        entry: detect-private-key
+        language: system
+        types: [text]
+      - id: check-yaml
+        name: check yaml
+        entry: check-yaml
+        language: system
+        types: [yaml]
+      - id: check-json
+        name: check json
+        entry: check-json
+        language: system
+        types: [json]
+      - id: check-toml
+        name: check toml
+        entry: check-toml
+        language: system
+        types: [toml]
+      - id: check-xml
+        name: check xml
+        entry: check-xml
+        language: system
+        types: [xml]
+      - id: clang-format
+        name: clang-format
+        entry: clang-format -i
+        language: system
+        types_or: [c, c++]
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        types: [python]
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]

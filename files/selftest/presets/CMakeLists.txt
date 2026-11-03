@@ -1,0 +1,11 @@
+# Uses the CMakePresets.json and cmake/ toolchain files from the templates.
+cmake_minimum_required(VERSION 3.25)
+project(presets_selftest C)
+add_library(crc16 STATIC crc16.c)
+target_include_directories(crc16 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if(NOT CMAKE_CROSSCOMPILING)
+  enable_testing()
+  add_executable(test_crc16 test_crc16.c)
+  target_link_libraries(test_crc16 PRIVATE crc16)
+  add_test(NAME test_crc16 COMMAND test_crc16)
+endif()

@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# ws-devname — give USB serial adapters stable, readable names.
+# Installed by workstation-setup (embedded module).
+#
+# /dev/ttyUSB0 and /dev/ttyUSB1 swap depending on plug-in order. This tool
+# writes a udev rule that matches an adapter by vendor, product, serial number
+# and (for multi-port adapters) interface number, and creates a fixed link:
+#
+#   ws-devname add /dev/ttyUSB0 obc-console   ->  /dev/ws/obc-console
+#
+# Linux also provides stable but long names in /dev/serial/by-id/.
+set -euo pipefail
+
+RULES=/etc/udev/rules.d/70-workstation-devices.rules
+NAME_RE='^[A-Za-z0-9_-]+$'
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ws-devname list                Show connected USB serial devices and names
+  ws-devname add <dev> <name>    Name a device, e.g.:
+                                    ws-devname add /dev/ttyUSB0 obc-console
+                                  It then always appears as /dev/ws/obc-console
+  ws-devname remove <name>       Remove a name
+  ws-devname rules               Show the udev rules file
+
+Names may contain letters, digits, '-' and '_'.
+To remove all names:  sudo rm /etc/udev/rules.d/70-workstation-devices.rules
+EOF
+}
+
+command -v udevadm >/dev/null || { echo "udevadm not found"; exit 1; }
+
+prop() { udevadm info -q property -n "$1" 2>/dev/null | sed -n "s/^$2=//p"; }
+
+reload() {
+  # Re-evaluate only serial (tty) devices, nothing else on the system.
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger --subsystem-match=tty
+  sudo udevadm settle --timeout=5 || true
+}
+
+has_name() { [[ -f $RULES ]] && grep -qF "SYMLINK+=\"ws/$1\"" "$RULES"; }
+
+cmd_list() {
+  local d found=0
+  printf '%-14s %-6s %-6s %-20s %-5s %s\n' DEVICE VENDOR PROD SERIAL IFACE MODEL
+  for d in /dev/ttyUSB* /dev/ttyACM*; do
+    [[ -e $d ]] || continue
+    found=1
+    printf '%-14s %-6s %-6s %-20s %-5s %s\n' "$d" \
+      "$(prop "$d" ID_VENDOR_ID)" "$(prop "$d" ID_MODEL_ID)" \
+      "$(prop "$d" ID_SERIAL_SHORT)" "$(prop "$d" ID_USB_INTERFACE_NUM)" \
+      "$(prop "$d" ID_MODEL)"
+  done
+  (( found )) || echo "(no USB serial devices connected)"
+  if [[ -d /dev/ws ]]; then
+    echo; echo "Named devices:"
+    find /dev/ws -maxdepth 1 -type l -printf '  %f -> %l\n' | sort
+  fi
+}
+
+cmd_add() {
+  local dev="${1:-}" name="${2:-}"
+  [[ -n $dev && -n $name ]] || { usage; exit 2; }
+  [[ $name =~ $NAME_RE ]] || { echo "Invalid name '$name' (letters, digits, - and _ only)"; exit 2; }
+  [[ -e $dev ]] || { echo "No such device: $dev"; exit 1; }
+  has_name "$name" && { echo "Name '$name' exists already. Remove it first: ws-devname remove $name"; exit 1; }
+
+  local vid pid serial iface rule
+  vid="$(prop "$dev" ID_VENDOR_ID)"
+  pid="$(prop "$dev" ID_MODEL_ID)"
+  serial="$(prop "$dev" ID_SERIAL_SHORT)"
+  iface="$(prop "$dev" ID_USB_INTERFACE_NUM)"
+  [[ -n $vid && -n $pid ]] || { echo "$dev does not look like a USB serial device"; exit 1; }
+  # These strings come from the USB device and end up in a root-owned udev
+  # rules file. A hostile device could report quotes or commas to inject its
+  # own rules (RUN+=...), so accept only plain characters.
+  [[ $vid =~ ^[0-9a-fA-F]{4}$ && $pid =~ ^[0-9a-fA-F]{4}$ ]] \
+    || { echo "Refusing: unexpected vendor/product id ('$vid:$pid')"; exit 1; }
+  [[ -z $serial || $serial =~ ^[A-Za-z0-9._:-]+$ ]] \
+    || { echo "Refusing: the adapter reports a serial number with unusual characters; not writing it into a udev rule."; exit 1; }
+  [[ -z $iface || $iface =~ ^[0-9a-fA-F]{1,2}$ ]] \
+    || { echo "Refusing: unexpected interface number ('$iface')"; exit 1; }
+
+  rule="SUBSYSTEM==\"tty\", ENV{ID_VENDOR_ID}==\"$vid\", ENV{ID_MODEL_ID}==\"$pid\""
+  if [[ -n $serial ]]; then
+    rule+=", ENV{ID_SERIAL_SHORT}==\"$serial\""
+  else
+    echo "WARNING: this adapter reports no serial number, so the name will match"
+    echo "         ANY adapter of the same type ($vid:$pid)."
+  fi
+  [[ -n $iface ]] && rule+=", ENV{ID_USB_INTERFACE_NUM}==\"$iface\""
+  rule+=", SYMLINK+=\"ws/$name\""
+
+  if [[ ! -f $RULES ]]; then
+    printf '# Stable names for USB serial devices. Managed by ws-devname.\n' \
+      | sudo tee "$RULES" >/dev/null
+  fi
+  printf '%s\n' "$rule" | sudo tee -a "$RULES" >/dev/null
+  reload
+  if [[ -e /dev/ws/$name ]]; then
+    echo "OK: /dev/ws/$name -> $(readlink -f "/dev/ws/$name")"
+  else
+    echo "Rule added. If /dev/ws/$name doesn't appear, unplug and replug the adapter."
+  fi
+}
+
+cmd_remove() {
+  local name="${1:-}"
+  [[ $name =~ $NAME_RE ]] || { usage; exit 2; }
+  has_name "$name" || { echo "No device named '$name'"; exit 1; }
+  # Names are restricted to [A-Za-z0-9_-], so they are safe in this pattern.
+  sudo sed -i "/SYMLINK+=\"ws\/$name\"/d" "$RULES"
+  reload
+  echo "Removed '$name'"
+}
+
+case "${1:-}" in
+  list|"") cmd_list ;;
+  add)     shift; cmd_add "$@" ;;
+  remove)  shift; cmd_remove "$@" ;;
+  rules)   if [[ -f $RULES ]]; then cat "$RULES"; else echo "(no rules yet)"; fi ;;
+  -h|--help|help) usage ;;
+  *) usage; exit 2 ;;
+esac

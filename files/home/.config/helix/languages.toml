@@ -1,0 +1,71 @@
+# ~/.config/helix/languages.toml — installed by workstation-setup
+# Check status with:  hx --health <language>
+
+# ---------- Language servers ----------
+[language-server.clangd]
+command = "clangd"
+args = [
+  "--background-index",
+  "--clang-tidy",
+  "--header-insertion=never",
+  "--completion-style=detailed",
+  # Allow clangd to ask GCC (including cross compilers such as
+  # arm-none-eabi-gcc) for its own system headers. Without this, code built
+  # with a non-default compiler shows bogus errors.
+  "--query-driver=/usr/bin/*-gcc*,/usr/bin/*-g++*,/usr/bin/gcc*,/usr/bin/g++*",
+]
+
+[language-server.basedpyright]
+command = "basedpyright-langserver"
+args = ["--stdio"]
+
+[language-server.ruff]
+command = "ruff"
+args = ["server"]
+
+[language-server.rust-analyzer.config.check]
+command = "clippy"
+
+# ---------- Languages ----------
+# C/C++: NOT auto-formatted on save. Reformatting existing (legacy) code creates
+# huge diffs that obscure real changes in review. Format explicitly with
+# :format, or let pre-commit handle it once a project has a .clang-format.
+[[language]]
+name = "c"
+auto-format = false
+
+[[language]]
+name = "cpp"
+auto-format = false
+
+[[language]]
+name = "python"
+language-servers = ["basedpyright", "ruff"]
+auto-format = true
+
+[[language]]
+name = "rust"
+auto-format = true
+
+[[language]]
+name = "toml"
+auto-format = true
+
+[[language]]
+name = "xml"
+formatter = { command = "xmllint", args = ["--format", "-"] }
+auto-format = false
+
+# JSON/YAML: language servers explicitly disabled. Helix's defaults
+# (vscode-json-language-server, yaml-language-server) download schemas from
+# the internet. Syntax highlighting still works; validate with jq / yamllint.
+[[language]]
+name = "json"
+language-servers = []
+formatter = { command = "jq", args = ["--indent", "2", "."] }
+auto-format = false
+
+[[language]]
+name = "yaml"
+language-servers = []
+auto-format = false

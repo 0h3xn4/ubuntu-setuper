@@ -1,0 +1,1769 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  setup.sh — workstation setup for software development on the latest
+#             Ubuntu LTS release
+#
+#  USAGE
+#    ./setup.sh --profile NAME     Choose the profile (work, personal, or your
+#                                  own file in profiles/). Remembered in
+#                                  ~/.config/workstation/profile afterwards.
+#    ./setup.sh --check            Dry run: shows what would be installed and
+#                                  changed, finds missing packages and
+#                                  conflicts. Changes nothing. Start here.
+#    ./setup.sh                    Install and configure everything, then write
+#                                  a manifest and run the self-test.
+#    ./setup.sh --self-test        Only run the self-test (any time later, too).
+#    ./setup.sh --manifest         Only write a manifest of the installed software.
+#    ./setup.sh --lock             Pin the exact versions now installed into
+#                                  locks/<profile>.lock. Commit it: every machine
+#                                  with this profile then gets identical tools.
+#    ./setup.sh --upgrade          Ignore the pins: install the newest stable
+#                                  versions, run the self-test. Then review and
+#                                  re-pin with --lock.
+#    ./setup.sh --list-profiles    Show the available profiles and modules.
+#    ./setup.sh --help
+#
+#  Options combine, e.g.:  ./setup.sh --profile personal --check
+#
+#  STRUCTURE
+#    core                 always installed: bash, Helix + language servers, git
+#                         tooling, Python/C/C++/Rust, offline docs, privacy
+#                         hardening, offline caches
+#    modules/<name>/      optional parts (embedded, desktop, ...)
+#    profiles/<name>.conf chooses the modules of a machine
+#
+#  Settings and package lists live in workstation.conf, modules/*/module.conf
+#  and the profile. Environment variables override switches for one run,
+#  e.g.:  INSTALL_DOCKER=1 ./setup.sh
+#  Run as your normal user, NOT with sudo.
+#
+#  NO-CLOUD POLICY (fixed, every profile)
+#    Downloading during installation is allowed. Afterwards, no installed
+#    tool contacts external services: no cloud-connected tools, update
+#    checks and telemetry are disabled, and uv/pip/cargo/podman work only
+#    from local caches that are filled during installation. Networked apps
+#    (browser, mail) only do what you direct them to do.
+#
+#  SAFETY POLICY (fixed, every profile)
+#    Never removes packages (apt --no-remove), never edits package-owned
+#    config files, never touches kernel, boot, coreutils or APT sources.
+#    Every change is recorded in ~/workstation-undo-<timestamp>.sh.
+#
+#  VERSIONS
+#    Always the latest Ubuntu LTS release (detected, never hardcoded). For
+#    software with an LTS line, the newest LTS; otherwise the newest stable
+#    release, never betas, release candidates or nightlies.
+#
+#  REPRODUCIBILITY
+#    Versions of tools outside APT are pinned per profile in
+#    locks/<profile>.lock; downloads are verified against SHA-256 checksums;
+#    each run writes a manifest listing every installed package and tool version.
+# =============================================================================
+set -Eeuo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+FILES="$SCRIPT_DIR/files"
+MODULES_DIR="$SCRIPT_DIR/modules"
+PROFILES_DIR="$SCRIPT_DIR/profiles"
+LOCKS_DIR="$SCRIPT_DIR/locks"
+CONF_FILE="${WORKSTATION_CONF:-$SCRIPT_DIR/workstation.conf}"
+PROFILE_STATE="$HOME/.config/workstation/profile"
+
+MODE=install
+UPGRADE=0
+PROFILE="${WORKSTATION_PROFILE:-}"
+LIST_PROFILES=0
+while (( $# )); do
+  case "$1" in
+    --upgrade)     UPGRADE=1 ;;
+    --check)       MODE=check ;;
+    --self-test)   MODE=selftest ;;
+    --manifest)    MODE=manifest ;;
+    --lock)        MODE=lock ;;
+    --list-profiles) LIST_PROFILES=1 ;;
+    --profile)     [[ $# -ge 2 ]] || { echo "--profile needs a name" >&2; exit 2; }; PROFILE="$2"; shift ;;
+    --profile=*)   PROFILE="${1#--profile=}" ;;
+    -h|--help)     sed -n '2,/^# =====/p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)             echo "Unknown option: $1   (see ./setup.sh --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# The shell configuration installed by this script sets these variables to
+# enforce offline operation at runtime. Installation is allowed to download,
+# so clear them for this script only.
+unset UV_OFFLINE PIP_NO_INDEX CARGO_NET_OFFLINE UV_FIND_LINKS PIP_FIND_LINKS
+
+# ----------------------------------------------------------------------------
+# Internals
+# ----------------------------------------------------------------------------
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+DATA_DIR="$HOME/.local/share/workstation"
+TEMPLATE_DIR="$DATA_DIR/templates"
+WHEELHOUSE="$DATA_DIR/wheelhouse"
+RUST_CACHE_DIR="$DATA_DIR/rust-offline-cache"
+HASH_DB="$DATA_DIR/download-hashes.txt"
+SELFTEST_DIR="$DATA_DIR/selftest"
+SELFTEST_FILE="$DATA_DIR/selftest-results.txt"
+LOG_FILE="$HOME/workstation-setup-$TIMESTAMP.log"
+UNDO_FILE="$HOME/workstation-undo-$TIMESTAMP.sh"
+MANIFEST_FILE=""
+STATE_DIR="$(mktemp -d)"
+MISSING_FILE="$STATE_DIR/missing"
+GROUPS_FILE="$STATE_DIR/groups"
+FAILED_STEPS=()
+FIRST_RUN_DATA=0
+T_PASS=0; T_FAIL=0; T_SKIP=0; T_WARN=0
+MODULES=()                 # enabled modules, set by load_config
+MODULE_DIR=""               # module being sourced (modules read it at load time)
+LOCK_FILE=""                # locks/<profile>.lock, set by load_config
+CARGO_LOCK_FILE=""
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+USER="${USER:-$(id -un)}"
+trap 'rm -rf "$STATE_DIR"' EXIT
+
+c_blue=$'\e[1;34m'; c_green=$'\e[1;32m'; c_yellow=$'\e[1;33m'; c_red=$'\e[1;31m'; c_off=$'\e[0m'
+section() { printf '\n%s==== %s ====%s\n' "$c_blue" "$*" "$c_off"; }
+log()     { printf '%s==>%s %s\n' "$c_blue" "$c_off" "$*"; }
+ok()      { printf '%s ✓%s %s\n' "$c_green" "$c_off" "$*"; }
+warn()    { printf '%s !%s %s\n' "$c_yellow" "$c_off" "$*" >&2; }
+die()     { printf '%s ✗%s %s\n' "$c_red" "$c_off" "$*" >&2; exit 1; }
+have()    { command -v "$1" >/dev/null 2>&1; }
+on()      { [[ "$1" == 1 ]]; }
+
+# Print the elements of the array whose name is given, one per line.
+array_items() { local -n _arr="$1"; if (( ${#_arr[@]} )); then printf '%s\n' "${_arr[@]}"; fi; }
+
+# First line of a command's output, never failing (for version reports).
+first_line() { timeout 15 "$@" 2>&1 | head -n1 || true; }
+
+record_undo() { printf '%s\n' "$*" >> "$UNDO_FILE"; }
+
+init_undo_file() {
+  cat > "$UNDO_FILE" <<EOF
+#!/usr/bin/env bash
+# Undo script for workstation-setup, run at $TIMESTAMP
+#
+# REVIEW BEFORE RUNNING. You can also copy individual lines instead of
+# running the whole file. Lines are in the order the changes were made.
+#
+# Installed APT packages are NOT removed here. To revert them, use APT's
+# history (APT 3 and later):  apt history-list   then   sudo apt history-undo <ID>
+# With older APT, see /var/log/apt/history.log for what was installed.
+# Tools in your home directory can be removed with:
+#   uv tool uninstall <name> / cargo uninstall <name> / npm rm -g <name>
+set -x
+EOF
+  chmod +x "$UNDO_FILE"
+}
+
+# Run a setup step in a subshell with strict error handling. A failing step is
+# recorded and reported at the end, but does not abort the remaining steps.
+step() {
+  local name="$1"; shift
+  section "$name"
+  set +e
+  ( set -Eeuo pipefail; "$@" )
+  local rc=$?
+  set -e
+  if (( rc != 0 )); then
+    FAILED_STEPS+=("$name")
+    warn "Step '$name' did not complete (exit $rc). Continuing; see log."
+  fi
+}
+
+apt_has() { apt-cache show "$1" >/dev/null 2>&1; }
+
+# Print "<package> <candidate-version>" for every given package that has an
+# installable candidate. One apt-cache call for all packages: fast.
+apt_candidates() {
+  (( $# )) || return 0
+  apt-cache policy "$@" 2>/dev/null | awk '
+    /^[^ ].*:$/     { pkg = substr($0, 1, length($0) - 1); next }
+    /^  Candidate:/ { if ($2 != "(none)") print pkg, $2 }'
+}
+
+# Install apt packages, skipping (and recording) any that don't exist.
+# --no-remove: abort rather than uninstall anything to resolve a conflict.
+apt_install() {
+  local available=() pkg ver
+  local -A cand=()
+  while read -r pkg ver; do cand[$pkg]=$ver; done < <(apt_candidates "$@")
+  for pkg in "$@"; do
+    if [[ -n ${cand[$pkg]:-} ]]; then
+      available+=("$pkg")
+    else
+      warn "Not in archive, skipping: $pkg"
+      echo "$pkg (not found)" >> "$MISSING_FILE"
+    fi
+  done
+  (( ${#available[@]} )) || return 0
+  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "${available[@]}"; then
+    warn "Batch install failed; retrying one package at a time"
+    for pkg in "${available[@]}"; do
+      sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove "$pkg" \
+        || { warn "Skipped (conflict or error): $pkg"; echo "$pkg (not installed: conflict or error)" >> "$MISSING_FILE"; }
+    done
+  fi
+  return 0
+}
+
+# Write a config file from stdin. Existing files are kept unless FORCE_CONFIG=1,
+# in which case they're backed up first. Identical files are left alone.
+write_config() {
+  local path="$1" tmp
+  tmp="$(mktemp)"
+  cat > "$tmp"
+  mkdir -p "$(dirname "$path")"
+  if [[ -e "$path" ]]; then
+    if cmp -s "$tmp" "$path"; then
+      rm -f "$tmp"; ok "Unchanged: $path"; return 0
+    fi
+    if ! on "$FORCE_CONFIG"; then
+      rm -f "$tmp"; warn "Exists, left untouched (FORCE_CONFIG=1 to replace): $path"; return 0
+    fi
+    cp -a "$path" "$path.bak.$TIMESTAMP"
+    warn "Backed up $path -> $path.bak.$TIMESTAMP"
+    record_undo "mv -f $(printf %q "$path.bak.$TIMESTAMP") $(printf %q "$path")"
+  else
+    record_undo "rm -f $(printf %q "$path")"
+  fi
+  mv "$tmp" "$path"
+  chmod 644 "$path"
+  ok "Wrote $path"
+}
+
+# Source of a file for ~/<rel>: files/home (core) or a module's files/home.
+home_src() {
+  local rel="$1" m
+  if [[ -f $FILES/home/$rel ]]; then echo "$FILES/home/$rel"; return 0; fi
+  for m in "${MODULES[@]}"; do
+    if [[ -f $MODULES_DIR/$m/files/home/$rel ]]; then echo "$MODULES_DIR/$m/files/home/$rel"; return 0; fi
+  done
+  return 1
+}
+
+# Install the file for ~/<rel> (see home_src) to ~/<rel>.
+install_file() {
+  local rel="$1" mode="${2:-644}" src
+  src="$(home_src "$rel")" || { warn "No source file for ~/$rel"; return 1; }
+  write_config "$HOME/$rel" < "$src"
+  if [[ $mode != 644 ]]; then chmod "$mode" "$HOME/$rel"; fi
+}
+
+# Install a NEW file below /etc (or elsewhere in the system) from $1 to $2.
+# An existing file is never overwritten: package-owned or administrator files
+# stay as they are.
+install_system_file() {
+  local src="$1" dest="$2"
+  if [[ -e $dest ]]; then
+    if cmp -s "$src" "$dest"; then ok "Unchanged: $dest"
+    else warn "Exists, left untouched (not ours to overwrite): $dest"; fi
+    return 0
+  fi
+  sudo install -D -m 644 "$src" "$dest"
+  record_undo "sudo rm -f $(printf %q "$dest") && sudo rmdir --ignore-fail-on-non-empty $(printf %q "$(dirname "$dest")")"
+  ok "Installed $dest"
+}
+
+# Copy a directory of project starter files to the template store as
+# templates/<name>/ (used by ws-init). Templates are reference copies:
+# refreshed on every run (backups are kept).
+install_templates() {
+  local src="$1" name="$2" FORCE_CONFIG=1 f rel
+  while IFS= read -r -d '' f; do
+    rel="${f#"$src/"}"
+    write_config "$TEMPLATE_DIR/$name/$rel" < "$f"
+  done < <(find "$src" -type f -print0)
+}
+
+# True when a GNOME desktop session (dbus) is available for gsettings.
+have_desktop_session() { have gsettings && [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; }
+
+# Set a GNOME setting, recording the old value for the undo script.
+gset() {
+  local schema="$1" key="$2" value="$3" old
+  old="$(gsettings get "$schema" "$key" 2>/dev/null)" || { warn "Unknown setting: $schema $key"; return 0; }
+  if [[ "$old" == "$value" || "$old" == "'$value'" ]]; then ok "Unchanged: $schema $key"; return 0; fi
+  gsettings set "$schema" "$key" "$value"
+  record_undo "gsettings set $schema $key $(printf %q "$old")"
+  ok "Set $schema $key = $value"
+}
+
+add_to_groups() {
+  local g
+  for g in "$@"; do
+    getent group "$g" >/dev/null || continue
+    if id -nG "$USER" | grep -qw "$g"; then continue; fi
+    sudo usermod -aG "$g" "$USER"
+    echo "$g" >> "$GROUPS_FILE"
+    record_undo "sudo gpasswd -d $(printf %q "$USER") $g"
+    ok "Added $USER to group '$g'"
+  done
+}
+
+# Download a file and verify its SHA-256 against the lock file. Without a pin
+# the checksum is recorded (trust on first use) so --lock can pin it.
+fetch_verified() {
+  local url="$1" dest="$2" tmp sum pinned
+  tmp="$(mktemp)"
+  if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$tmp"; then
+    rm -f "$tmp"; warn "Download failed: $url"; return 1
+  fi
+  sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
+  pinned="${DOWNLOAD_SHA256[$url]:-}"
+  if [[ -n $pinned && $sum != "$pinned" ]]; then
+    rm -f "$tmp"
+    warn "CHECKSUM MISMATCH: $url"
+    warn "  expected (lock file):  $pinned"
+    warn "  received:             $sum"
+    warn "  The file changed upstream. Verify the new file, then re-pin with --lock."
+    return 1
+  elif [[ -n $pinned ]]; then
+    ok "Checksum verified: ${url##*/}"
+  else
+    warn "First download of ${url##*/}: SHA-256 $sum recorded (trust on first use)."
+    warn "  Compare it with the publisher if required; './setup.sh --lock' pins it."
+  fi
+  mkdir -p "$(dirname "$HASH_DB")" "$(dirname "$dest")"
+  printf '%s %s\n' "$url" "$sum" >> "$HASH_DB"
+  mv "$tmp" "$dest"
+}
+
+uv_installer_url() {
+  if [[ -n ${UV_VERSION:-} ]]; then echo "https://astral.sh/uv/$UV_VERSION/install.sh"
+  else echo "https://astral.sh/uv/install.sh"; fi
+}
+helix_url() {  # $1 = version
+  echo "https://github.com/helix-editor/helix/releases/download/$1/helix-$1-x86_64-linux.tar.xz"
+}
+# Pinned version, or the newest stable release (GitHub's "latest" excludes
+# pre-releases and drafts). Network access here happens at install time only.
+helix_version() {
+  if [[ -n ${HELIX_VERSION:-} ]]; then echo "$HELIX_VERSION"; return 0; fi
+  curl -fsSL https://api.github.com/repos/helix-editor/helix/releases/latest \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])'
+}
+
+# ----------------------------------------------------------------------------
+# Modules and the lists they extend
+#
+# A module offers hooks named mod_<module>_<hook> (see modules/embedded/
+# module.sh). module_collect calls one hook of every enabled module and
+# concatenates their output (one item per line).
+# ----------------------------------------------------------------------------
+module_collect() {
+  local m
+  for m in "${MODULES[@]}"; do
+    if declare -F "mod_${m}_$1" >/dev/null; then "mod_${m}_$1"; fi
+  done
+}
+
+# Names of the package arrays (from the config files) enabled by the switches.
+pkg_groups() {
+  echo PKGS_BASE
+  if on "$INSTALL_CPP"; then echo PKGS_CPP; fi
+  if on "$INSTALL_GUI_TOOLS"; then echo PKGS_GUI; fi
+  if on "$INSTALL_OFFLINE_DOCS"; then echo PKGS_DOCS; fi
+  if on "$INSTALL_PYTHON"; then echo PKGS_PYTHON; fi
+  if on "$INSTALL_RUST" && on "$INSTALL_CARGO_TOOLS"; then echo PKGS_RUST_BUILD; fi
+  if on "$INSTALL_BASH_LSP"; then echo PKGS_NODE; fi
+  if on "$INSTALL_PODMAN"; then echo PKGS_PODMAN; fi
+  if on "$INSTALL_DOCKER"; then echo PKGS_DOCKER; fi
+  module_collect pkg_groups
+  echo PKGS_EXTRA
+}
+
+# Files from files/home (core) and the modules' files/home that the enabled
+# features install. The cheat sheet is generated, see install_cheatsheet.
+home_files() {
+  echo .bashrc.d/10-workstation.sh
+  echo .inputrc
+  echo .local/bin/ws-init
+  echo .config/lazygit/config.yml
+  echo .config/tealdeer/config.toml
+  if on "$ENFORCE_OFFLINE_ENV"; then echo .bashrc.d/20-offline.sh; fi
+  if on "$INSTALL_CPP"; then echo .gdbinit; fi
+  if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
+  if on "$INSTALL_HELIX"; then echo .config/helix/config.toml; echo .config/helix/languages.toml; fi
+  if on "$CACHE_CONTAINER_IMAGES"; then echo .config/containers/containers.conf; fi
+  module_collect home_files
+}
+
+# User groups the enabled features need (one per line, unique).
+needed_groups() {
+  {
+    if on "$INSTALL_DOCKER"; then echo docker; fi
+    module_collect groups
+  } | awk '!seen[$0]++'
+}
+
+uv_tool_list() {
+  if on "$INSTALL_PYTHON"; then printf '%s\n' "${UV_TOOLS[@]}"; module_collect uv_tools; fi
+}
+cargo_tool_list() {
+  if on "$INSTALL_RUST" && on "$INSTALL_CARGO_TOOLS"; then
+    printf '%s\n' "${CARGO_TOOLS[@]}"; module_collect cargo_tools
+  fi
+}
+rust_target_list() {
+  if (( ${#RUST_TARGETS[@]} )); then printf '%s\n' "${RUST_TARGETS[@]}"; fi
+  module_collect rust_targets
+}
+py_package_list() {
+  # shellcheck disable=SC2086  # the setting is a space-separated word list
+  printf '%s\n' $OFFLINE_PY_PACKAGES
+  module_collect py_packages
+}
+rust_crate_list() {
+  # shellcheck disable=SC2086
+  printf '%s\n' $OFFLINE_RUST_CRATES
+  module_collect rust_crates
+}
+
+# The cheat sheet is assembled from the core part, one part per module and
+# the maintenance part. It is generated, so it is refreshed on every run
+# (a backup is kept if you changed it).
+cheatsheet_content() {
+  local m f
+  cat "$FILES/cheatsheet/00-core.md"
+  for m in "${MODULES[@]}"; do
+    f="$MODULES_DIR/$m/files/cheatsheet.md"
+    if [[ -r $f ]]; then echo; cat "$f"; fi
+  done
+  echo
+  cat "$FILES/cheatsheet/99-maintenance.md"
+}
+install_cheatsheet() {
+  local FORCE_CONFIG=1
+  cheatsheet_content | write_config "$HOME/WORKSTATION-CHEATSHEET.md"
+}
+
+# ----------------------------------------------------------------------------
+# Profiles
+# ----------------------------------------------------------------------------
+profile_names() {
+  local f
+  for f in "$PROFILES_DIR"/*.conf; do
+    [[ -e $f ]] || continue
+    f="${f##*/}"; printf '%s\n' "${f%.conf}"
+  done
+}
+
+list_profiles() {
+  local p desc
+  echo "Profiles (./setup.sh --profile NAME):"
+  while IFS= read -r p; do
+    desc="$(sed -n 's/^PROFILE_DESCRIPTION="\(.*\)"$/\1/p' "$PROFILES_DIR/$p.conf" | head -n1)"
+    printf '  %-12s %s\n' "$p" "$desc"
+  done < <(profile_names)
+  echo
+  echo "Modules (always on: core):"
+  local m
+  for m in "$MODULES_DIR"/*/; do
+    [[ -f $m/module.conf ]] || continue
+    m="${m%/}"; printf '  %s\n' "${m##*/}"
+  done
+  if [[ -r $PROFILE_STATE ]]; then echo; echo "This machine's remembered profile: $(<"$PROFILE_STATE")"; fi
+}
+
+# Decide the profile: --profile / WORKSTATION_PROFILE, else the remembered one,
+# else ask (interactive) or stop.
+resolve_profile() {
+  if [[ -z $PROFILE && -r $PROFILE_STATE ]]; then PROFILE="$(<"$PROFILE_STATE")"; fi
+  if [[ -z $PROFILE ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+      list_profiles
+      read -rp "Profile to use: " PROFILE
+    else
+      list_profiles >&2
+      die "No profile chosen. Use --profile NAME (or set WORKSTATION_PROFILE)."
+    fi
+  fi
+  [[ $PROFILE =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "Invalid profile name: $PROFILE"
+  [[ -f $PROFILES_DIR/$PROFILE.conf ]] || die "Unknown profile '$PROFILE'. Available: $(profile_names | paste -sd' ' -)"
+}
+
+# Load order: lock (pins win), profile, core config, module configs and code.
+# Switches use ': "${X:=default}"', so what is set first wins:
+#   environment > lock > profile > workstation.conf > module defaults
+load_config() {
+  resolve_profile
+  LOCK_FILE="${WORKSTATION_LOCK:-$LOCKS_DIR/$PROFILE.lock}"
+  CARGO_LOCK_FILE="${LOCK_FILE%.lock}.Cargo.lock"
+  declare -gA UV_PINS=() CARGO_PINS=() NPM_PINS=() PY_PINS=() IMAGE_PINS=() DOWNLOAD_SHA256=()
+  # --upgrade deliberately ignores the pins to move to the newest versions.
+  if [[ -f $LOCK_FILE ]] && (( ! UPGRADE )); then
+    # shellcheck source=/dev/null
+    source "$LOCK_FILE"
+  fi
+  PROFILE_MODULES=()
+  # shellcheck source=/dev/null
+  source "$PROFILES_DIR/$PROFILE.conf"
+  [[ -f $CONF_FILE ]] || die "Config file not found: $CONF_FILE"
+  # shellcheck source=workstation.conf
+  source "$CONF_FILE"
+  local m
+  for m in "${PROFILE_MODULES[@]}"; do
+    [[ $m =~ ^[a-z][a-z0-9_]*$ && -f $MODULES_DIR/$m/module.conf && -f $MODULES_DIR/$m/module.sh ]] \
+      || die "Profile '$PROFILE' lists unknown module '$m'."
+    MODULE_DIR="$MODULES_DIR/$m"
+    # shellcheck source=/dev/null
+    source "$MODULE_DIR/module.conf"
+    # shellcheck source=/dev/null
+    source "$MODULE_DIR/module.sh"
+    MODULES+=("$m")
+  done
+}
+
+# Normalized Python package name (PEP 503), without version specifiers.
+py_norm() {
+  local n="${1%%[=<>!~ []*}"
+  n="${n,,}"
+  printf '%s' "${n//[_.]/-}"
+}
+
+# Checks that this is Ubuntu, an LTS release, and the LATEST LTS release.
+# Uses distro-info's offline release database (no network access).
+# Sets OS_PROBLEM to a description of the first problem found, or "".
+os_check() {
+  OS_PROBLEM=""
+  OS_VERIFIED=0
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  if [[ ${ID:-} != ubuntu ]]; then
+    OS_PROBLEM="This setup is for Ubuntu; detected ${PRETTY_NAME:-an unknown system}."
+  elif [[ ${VERSION:-} != *LTS* ]]; then
+    OS_PROBLEM="Ubuntu ${VERSION_ID:-?} is not a long-term support (LTS) release. Use the latest LTS release."
+  elif ! have ubuntu-distro-info; then
+    warn "Cannot verify that Ubuntu ${VERSION_ID:-?} is the LATEST LTS release (package distro-info missing)."
+  else
+    local latest latest_name
+    latest="$(ubuntu-distro-info --lts 2>/dev/null || true)"
+    latest_name="$(ubuntu-distro-info --lts --fullname 2>/dev/null || echo "$latest")"
+    if [[ -n $latest ]]; then OS_VERIFIED=1; fi
+    if [[ -n $latest && $latest != "${VERSION_CODENAME:-}" ]]; then
+      OS_PROBLEM="Ubuntu ${VERSION_ID:-?} is an LTS release, but the latest LTS is ${latest_name}.
+   Upgrade with: sudo do-release-upgrade   (LTS-to-LTS upgrades are offered
+   once the new release's first point release, .1, is available)."
+    fi
+  fi
+}
+
+# ============================================================================
+# INSTALL STEPS
+# ============================================================================
+preflight() {
+  [[ $EUID -ne 0 ]] || die "Run this as your normal user, not as root or with sudo."
+  os_check
+  if [[ -n $OS_PROBLEM ]]; then
+    warn "$OS_PROBLEM"
+    read -rp "Continue anyway? [y/N] " answer
+    [[ "$answer" == [yY] ]] || exit 1
+  fi
+  [[ "$(uname -m)" == x86_64 ]] || warn "Not x86_64: some packages may be unavailable."
+  have sudo || die "sudo is not available."
+
+  log "Requesting sudo (kept alive for the duration of the script)"
+  sudo -v
+  ( while true; do sudo -n true; sleep 50; kill -0 "$$" 2>/dev/null || exit; done ) 2>/dev/null &
+  SUDO_KEEPALIVE_PID=$!
+  trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true; rm -rf "$STATE_DIR"' EXIT
+
+  log "Updating package lists"
+  sudo apt-get update || die "apt-get update failed. Check network / proxy settings."
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates gnupg distro-info
+}
+
+system_update() {
+  # Plain 'upgrade' never removes packages (unlike full-upgrade); --no-remove
+  # makes that explicit, as for every other apt call in this script.
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-remove
+}
+
+system_tuning() {
+  # Large source trees (clangd, rust-analyzer, file watchers) need more inotify
+  # watches. A new drop-in file; nothing existing is modified.
+  local f=/etc/sysctl.d/60-dev-inotify.conf
+  if [[ ! -e $f ]]; then
+    printf 'fs.inotify.max_user_watches = 524288\nfs.inotify.max_user_instances = 1024\n' \
+      | sudo tee "$f" >/dev/null
+    sudo sysctl -p "$f" >/dev/null
+    record_undo "sudo rm -f $f"
+    ok "Raised inotify limits"
+  else
+    ok "Unchanged: $f"
+  fi
+}
+
+# Disable (never mask) units that are currently enabled.
+disable_units() {
+  local u state
+  for u in "$@"; do
+    state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
+    if [[ $state == enabled ]]; then
+      sudo systemctl disable --now "$u" >/dev/null 2>&1 || { warn "Could not disable $u"; continue; }
+      record_undo "sudo systemctl enable --now $u"
+      ok "Disabled $u"
+    fi
+  done
+}
+
+PRIVACY_UNITS=(apport.service apport-autoreport.path apport-autoreport.timer
+               whoopsie.service whoopsie.path kerneloops.service
+               motd-news.timer fwupd-refresh.timer)
+NM_CONNECTIVITY_CONF=/etc/NetworkManager/conf.d/99-no-connectivity-check.conf
+
+privacy_hardening() {
+  # Only services are disabled and NEW drop-in files are added. No packages
+  # are removed and no package-owned config files are edited, so updates
+  # (including unattended security updates) keep working normally.
+  disable_units "${PRIVACY_UNITS[@]}"
+
+  if have pro; then
+    if sudo pro config set apt_news=false >/dev/null 2>&1; then
+      record_undo "sudo pro config set apt_news=true"
+      ok "Disabled APT news"
+    fi
+  fi
+
+  if [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
+    printf '[connectivity]\nenabled=false\n' | sudo tee "$NM_CONNECTIVITY_CONF" >/dev/null
+    sudo systemctl reload NetworkManager 2>/dev/null || true
+    record_undo "sudo rm -f $NM_CONNECTIVITY_CONF && sudo systemctl reload NetworkManager"
+    ok "Disabled NetworkManager connectivity check"
+  fi
+}
+
+base_cli() {
+  apt_install "${PKGS_BASE[@]}"
+  if have tldr; then
+    # Fetch the example pages ONCE now; auto-update stays off afterwards.
+    install_file .config/tealdeer/config.toml
+    tldr --update || warn "Could not download tldr pages"
+  fi
+}
+
+cpp_toolchain() {
+  apt_install "${PKGS_CPP[@]}"
+  install_file .gdbinit
+}
+
+gui_tools() { apt_install "${PKGS_GUI[@]}"; }
+
+offline_docs() {
+  apt_install "${PKGS_DOCS[@]}"
+  sudo mandb -q || true
+}
+
+ensure_uv() {
+  have uv && return 0
+  if apt_has uv; then apt_install uv; fi
+  have uv && return 0
+  on "$ALLOW_CURL_INSTALLERS" || { warn "uv is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
+  fetch_verified "$(uv_installer_url)" "$STATE_DIR/uv-install.sh"
+  env UV_NO_MODIFY_PATH=1 sh "$STATE_DIR/uv-install.sh"
+  record_undo "rm -f ~/.local/bin/uv ~/.local/bin/uvx"
+  have uv
+}
+
+uv_tool_install() {
+  local t="$1" pin="${UV_PINS[$1]:-}" current
+  current="$(uv tool list 2>/dev/null | awk -v t="$t" '$1 == t { sub(/^v/, "", $2); print $2 }')"
+  if [[ -z $pin ]]; then
+    if [[ -n $current ]] && on "$UPGRADE"; then uv tool upgrade "$t"; return; fi
+    if [[ -n $current ]]; then ok "$t $current (already installed)"; return 0; fi
+    uv tool install "$t"
+  else
+    if [[ $current == "$pin" ]]; then ok "$t $pin (pinned, already installed)"; return 0; fi
+    uv tool install --reinstall "$t==$pin"
+  fi
+}
+
+python_tools() {
+  apt_install "${PKGS_PYTHON[@]}"
+  ensure_uv || return 1
+  # Never let uv download Python interpreters on its own.
+  install_file .config/uv/uv.toml
+  export UV_PYTHON_DOWNLOADS=never
+  local t tools
+  mapfile -t tools < <(uv_tool_list)
+  for t in "${tools[@]}"; do
+    uv_tool_install "$t" || { warn "uv tool install failed: $t"; echo "$t (uv tool)" >> "$MISSING_FILE"; }
+  done
+}
+
+rust_toolchain() {
+  if ! have rustup && apt_has rustup; then apt_install rustup; fi
+  if ! have rustup; then
+    on "$ALLOW_CURL_INSTALLERS" || { warn "rustup is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
+    fetch_verified "https://sh.rustup.rs" "$STATE_DIR/rustup-init.sh"
+    sh "$STATE_DIR/rustup-init.sh" -y --no-modify-path --default-toolchain none
+    record_undo "rustup self uninstall -y"
+  fi
+  if rustup set auto-self-update disable >/dev/null 2>&1; then
+    record_undo "rustup set auto-self-update enable"
+  fi
+  rustup toolchain install "$RUST_TOOLCHAIN" --profile default
+  rustup default "$RUST_TOOLCHAIN"
+  rustup component add "${RUST_COMPONENTS[@]}"
+  local targets
+  mapfile -t targets < <(rust_target_list)
+  if (( ${#targets[@]} )); then rustup target add "${targets[@]}"; fi
+
+  if on "$INSTALL_CARGO_TOOLS"; then
+    apt_install "${PKGS_RUST_BUILD[@]}"
+    local specs=() c pin cargo_tools
+    mapfile -t cargo_tools < <(cargo_tool_list)
+    for c in "${cargo_tools[@]}"; do
+      pin="${CARGO_PINS[$c]:-}"
+      if [[ -n $pin ]]; then specs+=("$c@$pin"); else specs+=("$c"); fi
+    done
+    log "Compiling cargo tools (this can take 10+ minutes)"
+    cargo install --locked "${specs[@]}"
+  fi
+}
+
+bash_lsp() {
+  apt_install "${PKGS_NODE[@]}"
+  have npm || { warn "npm is not available"; return 1; }
+  npm config set prefix "$HOME/.local"
+  # Stop npm from contacting the registry for update notices, funding, audits.
+  npm config set update-notifier false
+  npm config set fund false
+  npm config set audit false
+  record_undo "npm config delete prefix; npm config delete update-notifier; npm config delete fund; npm config delete audit"
+  local specs=() t pin
+  for t in "${NPM_TOOLS[@]}"; do
+    pin="${NPM_PINS[$t]:-}"
+    if [[ -n $pin ]]; then specs+=("$t@$pin"); else specs+=("$t"); fi
+  done
+  npm install -g "${specs[@]}"
+}
+
+helix_setup() {
+  # No snap: snapd auto-refreshes from the online Snap Store.
+  if ! have hx && ! have helix && apt_has helix; then apt_install helix; fi
+  # A Helix installed from a release tarball (not apt) is moved to the newest
+  # stable release on --upgrade.
+  local tarball_install=0
+  if [[ -L "$HOME/.local/bin/hx" && "$(readlink "$HOME/.local/bin/hx")" == "$HOME/.local/opt/"* ]]; then
+    tarball_install=1
+  fi
+  if { ! have hx && ! have helix; } || { on "$UPGRADE" && (( tarball_install )); }; then
+    on "$ALLOW_CURL_INSTALLERS" || { warn "Helix is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
+    local ver; ver="$(helix_version)" || { warn "Could not determine the latest Helix release"; return 1; }
+    if have hx && [[ "$(hx --version | awk '{ print $2 }')" == "$ver" ]]; then
+      ok "Helix $ver is the newest stable release"
+    else
+    local name="helix-${ver}-x86_64-linux" dest="$HOME/.local/opt"
+    fetch_verified "$(helix_url "$ver")" "$STATE_DIR/helix.tar.xz"
+    mkdir -p "$dest" "$HOME/.local/bin"
+    tar -xJf "$STATE_DIR/helix.tar.xz" -C "$dest"
+    # Helix finds its 'runtime' directory next to the real binary.
+    ln -sf "$dest/$name/hx" "$HOME/.local/bin/hx"
+    record_undo "rm -rf $(printf %q "$dest/$name") ~/.local/bin/hx"
+    ok "Installed Helix $ver to $dest/$name"
+    fi
+  fi
+  install_file .config/helix/config.toml
+  install_file .config/helix/languages.toml
+}
+
+containers() {
+  if on "$INSTALL_PODMAN"; then apt_install "${PKGS_PODMAN[@]}"; fi
+  if on "$INSTALL_DOCKER"; then
+    apt_install "${PKGS_DOCKER[@]}"
+    add_to_groups docker
+  fi
+  return 0
+}
+
+shell_setup() {
+  mkdir -p "$HOME/.bashrc.d"
+  if ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
+    cat >> "$HOME/.bashrc" <<'EOF'
+
+# >>> workstation-setup: load ~/.bashrc.d/*.sh >>>
+if [ -d "$HOME/.bashrc.d" ]; then
+  for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done
+  unset f
+fi
+# <<< workstation-setup <<<
+EOF
+    record_undo "sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' ~/.bashrc"
+    ok "Added ~/.bashrc.d loader to ~/.bashrc"
+  fi
+
+  install_file .bashrc.d/10-workstation.sh
+  if on "$ENFORCE_OFFLINE_ENV"; then install_file .bashrc.d/20-offline.sh; fi
+  install_file .inputrc
+  install_file .local/bin/ws-init 755
+  install_cheatsheet
+
+  if on "$INSTALL_STARSHIP" && ! have starship; then
+    if apt_has starship; then
+      apt_install starship
+    elif on "$ALLOW_CURL_INSTALLERS"; then
+      fetch_verified "https://starship.rs/install.sh" "$STATE_DIR/starship-install.sh"
+      sh "$STATE_DIR/starship-install.sh" -y -b "$HOME/.local/bin"
+      record_undo "rm -f ~/.local/bin/starship"
+    fi
+  fi
+  if have starship && [[ ! -e "$HOME/.config/starship.toml" ]]; then
+    mkdir -p "$HOME/.config"
+    # Plain-text symbols: no special "Nerd Font" required.
+    if starship preset plain-text-symbols -o "$HOME/.config/starship.toml"; then
+      record_undo "rm -f ~/.config/starship.toml"
+    fi
+  fi
+}
+
+git_setup() {
+  git_set() {
+    git config --global --get "$1" >/dev/null && return 0
+    git config --global "$1" "$2"
+    record_undo "git config --global --unset $1"
+  }
+  if [[ -n "$GIT_NAME"  ]]; then git_set user.name  "$GIT_NAME"; fi
+  if [[ -n "$GIT_EMAIL" ]]; then git_set user.email "$GIT_EMAIL"; fi
+  git_set init.defaultBranch main
+  git_set pull.rebase true
+  git_set rerere.enabled true
+  git_set fetch.prune true
+  git_set push.autoSetupRemote true
+  git_set merge.conflictStyle zdiff3
+  git_set diff.colorMoved default
+  if have delta; then
+    git_set core.pager delta
+    git_set interactive.diffFilter "delta --color-only"
+    git_set delta.navigate true
+    git_set delta.line-numbers true
+  fi
+  if have git-lfs; then git lfs install --skip-repo >/dev/null; fi
+  ok "Git configured (existing settings were kept)"
+  # lazygit checks GitHub for new versions by default; turn that off.
+  install_file .config/lazygit/config.yml
+}
+
+project_templates() {
+  install_templates "$FILES/templates" generic
+}
+
+desktop_tweaks() {
+  have gsettings || return 0
+  if ! have_desktop_session; then
+    warn "No desktop session detected; run setup.sh from a logged-in desktop"
+    warn "to apply font and GNOME privacy settings."
+    return 0
+  fi
+  # Recent Ubuntu releases use a small default monospace font; the terminal follows this.
+  gset org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 11'
+  if on "$HARDEN_PRIVACY"; then
+    gset org.gnome.system.location enabled false
+    gset org.gnome.desktop.datetime automatic-timezone false
+    gset org.gnome.desktop.privacy report-technical-problems false
+    gset org.gnome.desktop.privacy send-software-usage-stats false
+    # Also turns off the web-search and Snap Store search providers in the
+    # Activities overview (searching for installed apps still works).
+    gset org.gnome.desktop.search-providers disable-external true
+  fi
+}
+
+# ============================================================================
+# OFFLINE CACHES (downloaded now, used offline afterwards)
+# ============================================================================
+cache_python() {
+  have uv || { warn "uv is not installed"; return 1; }
+  mkdir -p "$WHEELHOUSE"
+  local venv="$STATE_DIR/pydl"
+  UV_PYTHON_DOWNLOADS=never uv venv --quiet --python /usr/bin/python3 "$venv"
+  uv pip install --quiet --python "$venv/bin/python" pip
+  local dl=("$venv/bin/python" -m pip download --quiet --disable-pip-version-check
+            --only-binary=:all: --dest "$WHEELHOUSE")
+  "${dl[@]}" pip setuptools wheel
+  local p name spec pkgs
+  mapfile -t pkgs < <(py_package_list)
+  for p in "${pkgs[@]}"; do
+    name="$(py_norm "$p")"
+    spec="$p"
+    if [[ -n ${PY_PINS[$name]:-} ]]; then spec="$name==${PY_PINS[$name]}"; fi
+    if "${dl[@]}" "$spec"; then
+      ok "Cached $spec"
+    else
+      warn "Could not cache $spec (no wheel for this Python?)"
+      echo "$p (python wheel)" >> "$MISSING_FILE"
+    fi
+  done
+  ok "Wheelhouse: $(find "$WHEELHOUSE" -name '*.whl' | wc -l) wheels, $(du -sh "$WHEELHOUSE" | cut -f1) in $WHEELHOUSE"
+}
+
+cache_rust() {
+  have cargo || { warn "cargo is not installed"; return 1; }
+  local proj="$RUST_CACHE_DIR" c
+  mkdir -p "$proj/src"
+  printf '#![no_std]\n' > "$proj/src/lib.rs"
+  {
+    printf '[package]\nname = "workstation-offline-cache"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n[dependencies]\n'
+    while IFS= read -r c; do printf '%s = "*"\n' "$c"; done < <(rust_crate_list)
+  } > "$proj/Cargo.toml"
+  if on "$UPGRADE"; then
+    rm -f "$proj/Cargo.lock"      # resolve every crate to its newest release
+  elif [[ -f "$CARGO_LOCK_FILE" ]]; then
+    cp "$CARGO_LOCK_FILE" "$proj/Cargo.lock"
+    if (cd "$proj" && cargo fetch --locked); then
+      ok "Fetched pinned crate versions (${CARGO_LOCK_FILE##*/})"
+      return 0
+    fi
+    warn "Crate list differs from ${CARGO_LOCK_FILE##*/}; fetching latest versions (re-pin with --lock)"
+    rm -f "$proj/Cargo.lock"
+  fi
+  (cd "$proj" && cargo fetch)
+  ok "Crate cache ready: $(grep -c '^name = ' "$proj/Cargo.lock") crates"
+}
+
+cache_images() {
+  have podman || { warn "podman is not installed"; return 1; }
+  local img repo digest
+  for img in $OFFLINE_CONTAINER_IMAGES; do
+    digest="${IMAGE_PINS[$img]:-}"
+    if [[ -n $digest ]]; then
+      repo="${img%:*}"
+      if podman pull "$repo@$digest" && podman tag "$repo@$digest" "$img"; then
+        ok "Pulled $img (pinned $digest)"
+      else
+        warn "Could not pull $img"; echo "$img (container image)" >> "$MISSING_FILE"; continue
+      fi
+    else
+      if podman pull "$img"; then ok "Pulled $img"
+      else warn "Could not pull $img"; echo "$img (container image)" >> "$MISSING_FILE"; continue; fi
+    fi
+    record_undo "podman rmi $img"
+  done
+
+  # From now on, never pull images implicitly. Guard against an incompatible
+  # podman version: if podman rejects the file, remove it again.
+  local conf="$HOME/.config/containers/containers.conf" existed=0
+  [[ -e $conf ]] && existed=1
+  install_file .config/containers/containers.conf
+  if ! podman info >/dev/null 2>&1; then
+    if (( existed == 0 )); then rm -f "$conf"; fi
+    warn "podman did not accept containers.conf (pull_policy); left it out"
+    return 1
+  fi
+}
+
+# ============================================================================
+# DRY RUN (--check)
+# ============================================================================
+plan_tool() {
+  local label="$1" cmd="$2" pkg="$3" url="$4" how
+  if have "$cmd"; then how="already installed"
+  elif apt_has "$pkg"; then how="from the Ubuntu archive (package $pkg)"
+  elif on "$ALLOW_CURL_INSTALLERS"; then
+    if [[ -n ${DOWNLOAD_SHA256[$url]:-} ]]; then how="download $url (SHA-256 pinned)"
+    else how="download $url (SHA-256 recorded on first use)"; fi
+  else how="${c_yellow}SKIPPED: not in archive and ALLOW_CURL_INSTALLERS=0${c_off}"; fi
+  printf '    %-10s %s\n' "$label" "$how"
+}
+
+plan_versions() {
+  local label="$1" pins="$2"; shift 2
+  local -n _pins="$pins"
+  local t
+  printf '    %s\n' "$label"
+  for t in "$@"; do
+    if [[ -n ${_pins[$t]:-} ]]; then printf '      %-24s pinned %s\n' "$t" "${_pins[$t]}"
+    else printf '      %-24s latest\n' "$t"; fi
+  done
+}
+
+check_mode() {
+  section "Dry run: nothing will be changed"
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  log "System:  ${PRETTY_NAME:-unknown}, kernel $(uname -r), $(uname -m)"
+  os_check
+  if [[ -n $OS_PROBLEM ]]; then warn "$OS_PROBLEM"
+  elif (( OS_VERIFIED )); then ok "Latest Ubuntu LTS release"; fi
+  log "Profile: $PROFILE   modules: core${MODULES[*]:+ }${MODULES[*]}"
+  log "Config:  $CONF_FILE"
+  if [[ -f $LOCK_FILE ]]; then log "Lock:    $LOCK_FILE (versions pinned)"
+  else log "Lock:    none, latest versions will be installed (pin them later with --lock)"; fi
+  local newest age
+  newest="$(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -printf '%T@\n' 2>/dev/null | sort -n | tail -n1)"
+  if [[ -n $newest ]]; then
+    age=$(( ( $(date +%s) - ${newest%.*} ) / 3600 ))
+    if (( age >= 24 )); then warn "Package lists are ${age}h old. For accurate results run first:  sudo apt update"; fi
+  else
+    warn "No package lists found. For accurate results run first:  sudo apt update"
+  fi
+
+  section "APT packages"
+  local g pkg cand inst ver s1 s2 s3 n_have=0 n_new=0 n_missing=0
+  local -a pkgs=() to_install=() all=()
+  local -A CAND=() INST=()
+  for g in $(pkg_groups); do mapfile -t pkgs < <(array_items "$g"); all+=("${pkgs[@]}"); done
+  # Two batched queries instead of one per package.
+  while read -r pkg ver; do CAND[$pkg]=$ver; done < <(apt_candidates "${all[@]}")
+  # shellcheck disable=SC2034  # s1, s2 only consume dpkg-query columns
+  while read -r pkg s1 s2 s3 ver; do
+    if [[ $s3 == installed ]]; then INST[$pkg]=$ver; fi
+  done < <(dpkg-query -W -f='${Package} ${Status} ${Version}\n' "${all[@]}" 2>/dev/null || true)
+  for g in $(pkg_groups); do
+    mapfile -t pkgs < <(array_items "$g")
+    (( ${#pkgs[@]} )) || continue
+    printf '\n  %s\n' "$g"
+    for pkg in "${pkgs[@]}"; do
+      inst="${INST[$pkg]:-}"
+      cand="${CAND[$pkg]:-}"
+      if [[ -n $inst ]]; then
+        printf '    %-34s installed (%s)\n' "$pkg" "$inst"; n_have=$((n_have + 1))
+      elif [[ -n $cand ]]; then
+        printf '    %-34s will install %s\n' "$pkg" "$cand"; to_install+=("$pkg"); n_new=$((n_new + 1))
+      else
+        printf '    %-34s %sNOT AVAILABLE (will be skipped)%s\n' "$pkg" "$c_yellow" "$c_off"
+        n_missing=$((n_missing + 1))
+      fi
+    done
+  done
+  echo
+  log "$n_have installed, $n_new to install, $n_missing not available"
+  if (( ${#to_install[@]} )); then
+    local sim
+    if sim="$(apt-get install -s --no-remove "${to_install[@]}" 2>&1)"; then
+      ok "Simulation: $(grep -c '^Inst ' <<<"$sim" || true) packages incl. dependencies would be installed, none removed"
+    else
+      warn "Simulation found a conflict. Setup would skip the affected packages:"
+      grep -E '^ [^ ]+ : (Depends|PreDepends|Conflicts|Breaks)' <<<"$sim" | sed 's/^ */      /' || true
+      grep -E '^E: ' <<<"$sim" | sed 's/^/      /' || true
+      warn "Often caused by a third-party repository (e.g. NodeSource). Inspect with:"
+      warn "  apt-get install -s <package>"
+    fi
+  fi
+
+  section "Tools installed outside APT"
+  if on "$INSTALL_PYTHON"; then plan_tool uv uv uv "$(uv_installer_url)"; fi
+  if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "https://sh.rustup.rs"; fi
+  if on "$INSTALL_HELIX"; then
+    if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")"
+    else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest"; fi
+  fi
+  if on "$INSTALL_STARSHIP"; then plan_tool starship starship starship "https://starship.rs/install.sh"; fi
+  echo
+  if on "$INSTALL_RUST"; then printf '    Rust toolchain: %s\n' "$RUST_TOOLCHAIN"; fi
+  if on "$INSTALL_PYTHON"; then
+    local -a uvt; mapfile -t uvt < <(uv_tool_list)
+    plan_versions "uv tools:" UV_PINS "${uvt[@]}"
+  fi
+  if on "$INSTALL_RUST" && on "$INSTALL_CARGO_TOOLS"; then
+    local -a cat; mapfile -t cat < <(cargo_tool_list)
+    plan_versions "cargo tools:" CARGO_PINS "${cat[@]}"
+    mapfile -t cat < <(rust_target_list)
+    if (( ${#cat[@]} )); then printf '    Rust targets: %s\n' "${cat[*]}"; fi
+  fi
+  if on "$INSTALL_BASH_LSP"; then plan_versions "npm tools:" NPM_PINS "${NPM_TOOLS[@]}"; fi
+
+  section "Offline caches"
+  local n img
+  local -a items
+  if on "$CACHE_PYTHON"; then
+    mapfile -t items < <(py_package_list)
+    n=0; for img in "${items[@]}"; do if [[ -n ${PY_PINS[$(py_norm "$img")]:-} ]]; then n=$((n + 1)); fi; done
+    log "Python wheelhouse: ${#items[@]} packages + dependencies ($n pinned) -> $WHEELHOUSE"
+  fi
+  if on "$CACHE_RUST"; then
+    mapfile -t items < <(rust_crate_list)
+    if [[ -f "$CARGO_LOCK_FILE" ]]; then n="pinned by ${CARGO_LOCK_FILE##*/}"; else n="latest versions"; fi
+    log "Rust crates: ${#items[@]} crates + dependencies ($n)"
+  fi
+  if on "$CACHE_CONTAINER_IMAGES"; then
+    for img in $OFFLINE_CONTAINER_IMAGES; do
+      if [[ -n ${IMAGE_PINS[$img]:-} ]]; then log "Container image: $img (pinned digest)"
+      else log "Container image: $img (latest)"; fi
+    done
+  fi
+  module_collect check_caches
+
+  section "Planned system changes (each recorded in an undo script)"
+  [[ -e /etc/sysctl.d/60-dev-inotify.conf ]] || echo "    new file /etc/sysctl.d/60-dev-inotify.conf (more file watches for language servers)"
+  local -a want_groups=()
+  mapfile -t want_groups < <(needed_groups)
+  for g in "${want_groups[@]}"; do
+    if id -nG "$USER" | grep -qw "$g"; then echo "    group $g: already a member"
+    else echo "    group $g: add $USER"; fi
+  done
+  if on "$HARDEN_PRIVACY"; then
+    local u state
+    for u in "${PRIVACY_UNITS[@]}"; do
+      state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
+      if [[ $state == enabled ]]; then echo "    service $u: disable"; fi
+    done
+    if [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
+      echo "    new file $NM_CONNECTIVITY_CONF (no connectivity probe)"
+    fi
+    echo "    GNOME: location services, automatic timezone, problem reporting, external search providers off"
+  fi
+  echo "    GNOME: monospace font JetBrains Mono 11"
+  module_collect check
+
+  section "Files in your home directory"
+  local rel target src
+  while IFS= read -r rel; do
+    target="$HOME/$rel"
+    src="$(home_src "$rel")" || { echo "    MISSING SOURCE for ~/$rel"; continue; }
+    if [[ ! -e $target ]]; then echo "    new       ~/$rel"
+    elif cmp -s "$src" "$target"; then echo "    unchanged ~/$rel"
+    elif on "$FORCE_CONFIG"; then echo "    replace   ~/$rel (backup kept)"
+    else echo "    keep      ~/$rel (yours differs; FORCE_CONFIG=1 replaces it)"; fi
+  done < <(home_files)
+  echo "    generated ~/WORKSTATION-CHEATSHEET.md (refreshed; backup kept if you edited it)"
+  echo "    templates ~/.local/share/workstation/templates (refreshed)"
+
+  echo
+  ok "Dry run complete. Nothing was changed. Run ./setup.sh to apply."
+}
+
+# ============================================================================
+# SELF-TEST (--self-test)
+# ============================================================================
+skip()     { echo "SKIP: $*"; exit 77; }
+needs()    { local t; for t in "$@"; do have "$t" || skip "$t not installed"; done; }
+needs_on() { on "${!1:-0}" || skip "$1=0 in workstation.conf"; }
+
+# run_test "title" function [module]
+# Exit codes of a test: 0 pass, 77 skip, 78 warning (not a failure), else fail.
+run_test() {
+  local name="$1" fn="$2" tag="${3:-}" dir rc log label
+  dir="$SELFTEST_DIR/$fn"
+  rm -rf "$dir"; mkdir -p "$dir"
+  log="$dir/output.log"
+  label="$name"
+  if [[ -n $tag ]]; then label="[$tag] $name"; fi
+  set +e
+  ( set -Eeuo pipefail; cd "$dir"; "$fn" ) > "$log" 2>&1
+  rc=$?
+  set -e
+  case $rc in
+    0)  T_PASS=$((T_PASS + 1))
+        printf '  %sPASS%s  %s\n' "$c_green" "$c_off" "$label"
+        echo "PASS  $label" >> "$SELFTEST_FILE" ;;
+    77) T_SKIP=$((T_SKIP + 1))
+        printf '  %sSKIP%s  %s (%s)\n' "$c_yellow" "$c_off" "$label" "$(sed -n 's/^SKIP: //p' "$log" | tail -n1)"
+        echo "SKIP  $label" >> "$SELFTEST_FILE" ;;
+    78) T_WARN=$((T_WARN + 1))
+        printf '  %sWARN%s  %s\n' "$c_yellow" "$c_off" "$label"
+        sed 's/^/          /' "$log" | tail -n 8
+        echo "WARN  $label" >> "$SELFTEST_FILE" ;;
+    *)  T_FAIL=$((T_FAIL + 1))
+        printf '  %sFAIL%s  %s   (log: %s)\n' "$c_red" "$c_off" "$label" "$log"
+        tail -n 8 "$log" | sed 's/^/          /'
+        echo "FAIL  $label" >> "$SELFTEST_FILE" ;;
+  esac
+}
+
+t_host_c() {
+  needs gcc
+  printf '#include <stdio.h>\nint main(void) { puts("host C OK"); return 0; }\n' > hello.c
+  gcc -std=c17 -Wall -Wextra -Werror -O2 hello.c -o hello
+  ./hello | grep -q "host C OK"
+}
+
+t_host_cpp() {
+  needs clang++
+  cat > hello.cpp <<'EOF'
+#include <iostream>
+#include <vector>
+int main() { std::vector<int> v{1, 2, 3}; std::cout << "host C++ OK " << v.size() << '\n'; }
+EOF
+  clang++ -std=c++20 -Wall -Wextra -Werror hello.cpp -o hello
+  ./hello | grep -q "host C++ OK"
+}
+
+t_sanitizers() {
+  needs gcc
+  cat > bug.c <<'EOF'
+#include <stdlib.h>
+int main(void) {
+    volatile int *p = malloc(4 * sizeof *p);
+    p[4] = 1;                 /* deliberate heap buffer overflow */
+    free((void *)p);
+    return 0;
+}
+EOF
+  gcc -g -fsanitize=address,undefined bug.c -o bug
+  if ./bug 2> asan.txt; then echo "AddressSanitizer did not detect the overflow"; exit 1; fi
+  grep -q "heap-buffer-overflow" asan.txt
+}
+
+t_cmake_gtest() {
+  needs cmake ninja g++
+  cp -r "$FILES/selftest/gtest/." .
+  cmake -S . -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+  cmake --build build
+  ctest --test-dir build --output-on-failure
+  test -s build/compile_commands.json
+}
+
+# Builds a template store from the repository files, so the test checks the
+# files in this folder (not whatever was installed earlier).
+selftest_template_store() {
+  local dest="$1" m
+  mkdir -p "$dest"
+  cp -r "$FILES/templates" "$dest/generic"
+  for m in "${MODULES[@]}"; do
+    if [[ -d $MODULES_DIR/$m/files/templates ]]; then cp -r "$MODULES_DIR/$m/files/templates" "$dest/$m"; fi
+  done
+}
+
+t_cmake_presets() {
+  needs cmake ninja gcc
+  cp -r "$FILES/selftest/presets/." .
+  selftest_template_store "$PWD/tpl"
+  WS_TEMPLATE_DIR="$PWD/tpl" "$FILES/home/.local/bin/ws-init" >/dev/null
+  cmake --preset host-debug
+  cmake --build --preset host-debug
+  ctest --preset host-debug
+  test -s build/host-debug/compile_commands.json
+}
+
+t_ws_init() {
+  selftest_template_store "$PWD/tpl"
+  mkdir proj && cd proj
+  WS_TEMPLATE_DIR="$PWD/../tpl" "$FILES/home/.local/bin/ws-init" > init1.txt
+  if grep -q embedded init1.txt; then echo "generic run copied module files"; return 1; fi
+  test -f .editorconfig && test -f .clang-format && test -f .pre-commit-config.yaml && test -f CMakePresets.json
+  echo keep > .editorconfig
+  WS_TEMPLATE_DIR="$PWD/../tpl" "$FILES/home/.local/bin/ws-init" > init2.txt
+  grep -q 'skip (exists): .editorconfig' init2.txt
+  [[ "$(cat .editorconfig)" == keep ]]       # never overwrites
+}
+
+t_clangd_host() {
+  needs clangd
+  printf '%s\n' -std=c11 -Wall > compile_flags.txt
+  printf '#include <stdio.h>\nint main(void) { printf("%%d\\n", 42); return 0; }\n' > x.c
+  clangd --check=x.c
+}
+
+t_python_tools() {
+  needs ruff basedpyright
+  cat > sample.py <<'EOF'
+"""Self-test sample."""
+
+
+def add(a: int, b: int) -> int:
+    """Return the sum of a and b."""
+    return a + b
+
+
+print(add(1, 2))
+EOF
+  ruff check sample.py
+  ruff format --check sample.py
+  basedpyright sample.py
+}
+
+t_python_offline() {
+  needs_on CACHE_PYTHON
+  needs uv
+  [[ -d $WHEELHOUSE ]] || skip "wheelhouse not created yet"
+  py_package_list | grep -qx pytest || skip "pytest not in OFFLINE_PY_PACKAGES"
+  export UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never
+  uv venv --quiet --python /usr/bin/python3 venv
+  uv pip install --quiet --python venv/bin/python --no-index --find-links "$WHEELHOUSE" pytest
+  printf 'def test_ok():\n    assert 1 + 1 == 2\n' > test_ok.py
+  venv/bin/python -m pytest -q test_ok.py
+}
+
+t_rust_host() {
+  needs rustc
+  printf 'fn main() { println!("rust OK"); }\n' > main.rs
+  rustc --edition 2021 main.rs -o main
+  ./main | grep -q "rust OK"
+}
+
+t_rust_offline() {
+  needs_on CACHE_RUST
+  needs cargo
+  [[ -f $RUST_CACHE_DIR/Cargo.lock ]] || skip "crate cache not created yet"
+  rust_crate_list | grep -qx anyhow || skip "anyhow not in OFFLINE_RUST_CRATES"
+  export CARGO_NET_OFFLINE=true
+  cargo new --quiet --vcs none --lib offline_test
+  cd offline_test
+  cargo add --quiet anyhow
+  cargo build --quiet
+}
+
+t_language_servers() {
+  local want=() missing=() s
+  if on "$INSTALL_CPP"; then want+=(clangd); fi
+  if on "$INSTALL_RUST"; then want+=(rust-analyzer); fi
+  if on "$INSTALL_PYTHON"; then want+=(ruff basedpyright-langserver cmake-language-server); fi
+  if on "$INSTALL_RUST" && on "$INSTALL_CARGO_TOOLS"; then want+=(taplo); fi
+  if on "$INSTALL_BASH_LSP"; then want+=(bash-language-server); fi
+  (( ${#want[@]} )) || skip "no language servers enabled"
+  for s in "${want[@]}"; do have "$s" || missing+=("$s"); done
+  if have rust-analyzer; then rust-analyzer --version; fi
+  if (( ${#missing[@]} )); then echo "missing: ${missing[*]}"; exit 1; fi
+  echo "found: ${want[*]}"
+}
+
+t_helix() {
+  needs_on INSTALL_HELIX
+  local hx; hx="$(command -v hx || command -v helix || true)"
+  [[ -n $hx ]] || { echo "Helix not found"; exit 1; }
+  "$hx" --version
+  "$hx" --health > health.txt 2>&1
+  grep -qi 'error' health.txt && grep -i 'error' health.txt | head -n5 || true
+  for lang in c cpp python rust; do "$hx" --health "$lang"; done
+}
+
+t_precommit_offline() {
+  needs_on INSTALL_PYTHON
+  needs pre-commit git trailing-whitespace-fixer clang-format ruff shellcheck
+  export PRE_COMMIT_HOME="$PWD/pre-commit-cache"
+  git init -q repo
+  cd repo
+  git config user.email selftest@localhost
+  git config user.name selftest
+  cp -r "$FILES/templates/." .
+  cp "$FILES/selftest/presets/crc16.c" "$FILES/selftest/presets/crc16.h" .
+  printf 'def ok() -> int:\n    return 1\n' > ok.py
+  if grep -Eq '^[[:space:]]*-[[:space:]]*repo:[[:space:]]*https?://' .pre-commit-config.yaml; then
+    echo "template references a remote hook repository"; exit 1
+  fi
+  git add -A
+  pre-commit run --all-files || true      # first run may reformat files
+  git add -A
+  pre-commit run --all-files              # second run must be clean
+}
+
+t_containers() {
+  needs_on CACHE_CONTAINER_IMAGES
+  needs podman
+  local img missing=()
+  for img in $OFFLINE_CONTAINER_IMAGES; do podman image exists "$img" || missing+=("$img"); done
+  if (( ${#missing[@]} )); then echo "not available offline: ${missing[*]}"; exit 1; fi
+  timeout 120 podman run --rm --network=none "${OFFLINE_CONTAINER_IMAGES%% *}" true
+  echo "all images present; container ran without network"
+}
+
+t_groups() {
+  local want=() g missing=() pending=()
+  mapfile -t want < <(needed_groups)
+  (( ${#want[@]} )) || skip "no groups needed"
+  for g in "${want[@]}"; do
+    if ! getent group "$g" | cut -d: -f4 | tr ',' '\n' | grep -qx "$USER"; then missing+=("$g")
+    elif ! id -nG | grep -qw "$g"; then pending+=("$g"); fi
+  done
+  if (( ${#missing[@]} )); then echo "not a member of: ${missing[*]}"; exit 1; fi
+  if (( ${#pending[@]} )); then echo "member of ${pending[*]}; log out and back in to activate"; fi
+}
+
+# Core checks plus those of every module (hook nocloud_problems prints one
+# line per problem, nocloud_warnings one per warning). Problems fail the
+# test; warnings only report (status WARN).
+t_nocloud_policy() {
+  local problems=() warnings=() u line
+  if have gh; then problems+=("gh (GitHub CLI) is installed"); fi
+  if have lazygit && ! grep -q 'method: never' "$HOME/.config/lazygit/config.yml" 2>/dev/null; then
+    problems+=("lazygit update check is not disabled"); fi
+  if have uv && ! grep -q 'python-downloads = "never"' "$HOME/.config/uv/uv.toml" 2>/dev/null; then
+    problems+=("uv may download Python interpreters"); fi
+  if have tldr && ! grep -q 'auto_update = false' "$HOME/.config/tealdeer/config.toml" 2>/dev/null; then
+    problems+=("tldr auto-update is not disabled"); fi
+  if have npm && [[ "$(npm config get update-notifier 2>/dev/null)" != false ]]; then
+    problems+=("npm update notifier is enabled"); fi
+  if [[ -f "$HOME/.config/helix/languages.toml" ]]; then
+    python3 -I - "$HOME/.config/helix/languages.toml" <<'EOF' || problems+=("Helix JSON/YAML language servers are enabled")
+import sys, tomllib
+langs = {l["name"]: l for l in tomllib.load(open(sys.argv[1], "rb")).get("language", [])}
+sys.exit(0 if all(langs.get(n, {}).get("language-servers") == [] for n in ("json", "yaml")) else 1)
+EOF
+  fi
+  if on "$CACHE_CONTAINER_IMAGES" && have podman \
+     && ! grep -q 'pull_policy = "never"' "$HOME/.config/containers/containers.conf" 2>/dev/null; then
+    problems+=("podman may pull images implicitly"); fi
+  if on "$ENFORCE_OFFLINE_ENV" && [[ ! -f "$HOME/.bashrc.d/20-offline.sh" ]]; then
+    problems+=("offline environment (~/.bashrc.d/20-offline.sh) missing"); fi
+  if grep -Eq 'repo:[[:space:]]*https?://' "$TEMPLATE_DIR/generic/.pre-commit-config.yaml" 2>/dev/null; then
+    problems+=("pre-commit template references remote repositories"); fi
+  if on "$HARDEN_PRIVACY" && have systemctl; then
+    for u in "${PRIVACY_UNITS[@]}"; do
+      if [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" == enabled ]]; then problems+=("$u is enabled"); fi
+    done
+    if [[ -d /etc/NetworkManager/conf.d && ! -f $NM_CONNECTIVITY_CONF ]]; then
+      problems+=("NetworkManager connectivity check is enabled"); fi
+  fi
+  # GNOME Online Accounts (Google, Microsoft, Nextcloud, ...) sync in the background.
+  if grep -q '^\[Account' "${XDG_CONFIG_HOME:-$HOME/.config}/goa-1.0/accounts.conf" 2>/dev/null; then
+    warnings+=("GNOME Online Accounts: an online account is set up (Settings > Online Accounts); it syncs in the background"); fi
+  while IFS= read -r line; do problems+=("$line"); done < <(module_collect nocloud_problems)
+  while IFS= read -r line; do warnings+=("$line"); done < <(module_collect nocloud_warnings)
+  if (( ${#problems[@]} )); then printf 'policy problem: %s\n' "${problems[@]}"; exit 1; fi
+  if (( ${#warnings[@]} )); then printf 'warning: %s\n' "${warnings[@]}"; exit 78; fi
+  echo "all no-cloud policy checks passed"
+}
+
+t_offline_docs() {
+  needs_on INSTALL_OFFLINE_DOCS
+  needs man
+  local missing=()
+  man -w 3 printf >/dev/null 2>&1 || missing+=("C library man pages")
+  man -w 3posix pthread_create >/dev/null 2>&1 || missing+=("POSIX man pages")
+  compgen -G '/usr/share/cppreference/doc/html/*index.html' >/dev/null \
+    || compgen -G '/usr/share/cppreference/doc/html/*/index.html' >/dev/null || missing+=("cppreference")
+  compgen -G '/usr/share/doc/python3*/html/index.html' >/dev/null || missing+=("Python docs")
+  compgen -G '/usr/share/doc/cmake*/html/index.html' >/dev/null || missing+=("CMake docs")
+  if have rustup; then rustup doc --path >/dev/null 2>&1 || missing+=("Rust docs"); fi
+  if (( ${#missing[@]} )); then printf 'missing: %s\n' "${missing[@]}"; exit 1; fi
+  echo "all offline documentation present"
+}
+
+self_test() {
+  section "Self-test (profile: $PROFILE, modules: core${MODULES[*]:+ }${MODULES[*]})"
+  mkdir -p "$SELFTEST_DIR"
+  {
+    echo "# Self-test $(date -u '+%Y-%m-%d %H:%M UTC') on $(hostname), profile $PROFILE"
+  } > "$SELFTEST_FILE"
+  T_PASS=0; T_FAIL=0; T_SKIP=0; T_WARN=0
+  run_test "Host C compiler (gcc)"                    t_host_c
+  run_test "Host C++ compiler (clang++)"              t_host_cpp
+  run_test "Sanitizers detect a real bug"             t_sanitizers
+  run_test "CMake + Ninja + GoogleTest"               t_cmake_gtest
+  run_test "CMake presets template (host)"            t_cmake_presets
+  run_test "ws-init copies starter files, never overwrites" t_ws_init
+  run_test "clangd understands host code"             t_clangd_host
+  run_test "Python: ruff + basedpyright"              t_python_tools
+  run_test "Python: offline install from wheelhouse"  t_python_offline
+  run_test "Rust: host build"                         t_rust_host
+  run_test "Rust: offline build from crate cache"     t_rust_offline
+  run_test "Language servers present"                 t_language_servers
+  run_test "Helix loads its configuration"            t_helix
+  run_test "pre-commit runs fully offline"            t_precommit_offline
+  run_test "Container images available offline"       t_containers
+  run_test "Group memberships"                        t_groups
+  run_test "No-cloud policy"                          t_nocloud_policy
+  run_test "Offline documentation"                    t_offline_docs
+  module_collect selftests
+  echo
+  local summary_line="$T_PASS passed, $T_FAIL failed, $T_WARN warnings, $T_SKIP skipped"
+  echo "# $summary_line" >> "$SELFTEST_FILE"
+  if (( T_FAIL )); then warn "Self-test: $summary_line   (logs in $SELFTEST_DIR)"
+  else ok "Self-test: $summary_line"; fi
+  (( T_FAIL == 0 ))
+}
+
+# ============================================================================
+# MANIFEST (--manifest)
+# ============================================================================
+write_manifest() {
+  section "Manifest"
+  MANIFEST_FILE="$HOME/workstation-manifest-$TIMESTAMP.txt"
+  (
+    set +e +o pipefail
+    echo "# Workstation manifest"
+    echo "# Generated $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+    echo
+    echo "## Machine"
+    echo "Host:      $(hostname)"
+    echo "User:      $USER"
+    echo "OS:        $(. /etc/os-release; echo "$PRETTY_NAME")"
+    echo "Kernel:    $(uname -r) ($(uname -m))"
+    echo "CPU:       $(awk -F': ' '/model name/ { print $2; exit }' /proc/cpuinfo)"
+    echo
+    echo "## Setup"
+    echo "Profile:   $PROFILE   modules: core${MODULES[*]:+ }${MODULES[*]}"
+    echo "Script:    $SCRIPT_PATH  sha256 $(sha256sum "$SCRIPT_PATH" | cut -d' ' -f1)"
+    if git -C "$SCRIPT_DIR" rev-parse HEAD >/dev/null 2>&1; then
+      echo "Git:       $(git -C "$SCRIPT_DIR" rev-parse HEAD)$(git -C "$SCRIPT_DIR" diff --quiet HEAD -- . || echo ' (uncommitted changes)')"
+    fi
+    echo "Config:    $CONF_FILE  sha256 $(sha256sum "$CONF_FILE" | cut -d' ' -f1)"
+    if [[ -f $LOCK_FILE ]]; then echo "Lock:      $LOCK_FILE  sha256 $(sha256sum "$LOCK_FILE" | cut -d' ' -f1)"
+    else echo "Lock:      (none: versions not pinned)"; fi
+    echo
+    echo "## Key tools"
+    local t
+    local -a key_tools
+    mapfile -t key_tools < <(printf '%s\n' gcc g++ clang clangd clang-format clang-tidy cmake ninja make gdb \
+             cppcheck valgrind python3 uv ruff basedpyright pre-commit rustc cargo rust-analyzer \
+             hx node npm podman docker git; module_collect manifest_tools)
+    for t in "${key_tools[@]}"; do
+      if have "$t"; then printf '%-26s %s\n' "$t" "$(first_line "$t" --version)"; fi
+    done
+    echo
+    echo "## Rust"
+    if have rustup; then rustup show active-toolchain; echo "Targets:"; rustup target list --installed | sed 's/^/  /'; fi
+    if have cargo; then echo "cargo install --list:"; cargo install --list | sed 's/^/  /'; fi
+    echo
+    echo "## Python tools (uv tool list)"
+    if have uv; then uv tool list; fi
+    echo
+    echo "## npm global packages"
+    if have npm; then npm ls -g --depth=0; fi
+    echo
+    echo "## Offline caches"
+    if [[ -d $WHEELHOUSE ]]; then
+      echo "Wheelhouse ($WHEELHOUSE), sha256:"
+      (cd "$WHEELHOUSE" && sha256sum -- *.whl | sed 's/^/  /')
+    fi
+    if [[ -f $RUST_CACHE_DIR/Cargo.lock ]]; then
+      echo "Rust crate cache Cargo.lock sha256 $(sha256sum "$RUST_CACHE_DIR/Cargo.lock" | cut -d' ' -f1)"
+    fi
+    if have podman; then echo "Container images:"; podman images --digests --format '  {{.Repository}}:{{.Tag}} {{.Digest}}'; fi
+    module_collect manifest_extra
+    echo
+    echo "## Downloads outside APT (url sha256)"
+    if [[ -f $HASH_DB ]]; then sort -u "$HASH_DB"; else echo "(none)"; fi
+    echo
+    echo "## Self-test"
+    if [[ -f $SELFTEST_FILE ]]; then cat "$SELFTEST_FILE"; else echo "(not run)"; fi
+    echo
+    echo "## APT packages (all installed: name, version, architecture)"
+    dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' | sort
+  ) > "$MANIFEST_FILE" 2>&1
+  ln -sf "$MANIFEST_FILE" "$HOME/workstation-manifest-latest.txt"
+  ok "Manifest: $MANIFEST_FILE ($(wc -l < "$MANIFEST_FILE") lines)"
+}
+
+# ============================================================================
+# LOCK (--lock)
+# ============================================================================
+write_lock() {
+  section "Pinning installed versions"
+  local tmp; tmp="$(mktemp)"
+  local -a uvt cargot pyp
+  mapfile -t uvt < <(uv_tool_list)
+  mapfile -t cargot < <(cargo_tool_list)
+  mapfile -t pyp < <(py_package_list)
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  (
+    set +e +o pipefail
+    echo "# ${LOCK_FILE##*/} — exact versions for setup.sh, generated by: ./setup.sh --profile $PROFILE --lock"
+    echo "# Profile: $PROFILE   modules: core${MODULES[*]:+ }${MODULES[*]}"
+    echo "# Generated $(date -u '+%Y-%m-%d %H:%M UTC') on $(hostname) ($(. /etc/os-release; echo "$PRETTY_NAME"))"
+    cat <<'EOF'
+#
+# Pins the exact versions of everything NOT managed by APT, so every machine
+# set up from this folder with this profile gets identical tools. Commit it to
+# version control (together with the matching .Cargo.lock). After a deliberate
+# upgrade, regenerate it with:  ./setup.sh --profile <profile> --lock
+#
+# APT packages are intentionally not pinned: that would block Ubuntu security
+# updates. Their exact versions are recorded in each machine's manifest.
+
+EOF
+    # The format strings are literal on purpose: they write ': "${X:=value}"'.
+    # shellcheck disable=SC2016
+    if have rustc; then printf ': "${RUST_TOOLCHAIN:=%s}"\n' "$(rustc --version | awk '{ print $2 }')"; fi
+    # shellcheck disable=SC2016
+    if have uv;    then printf ': "${UV_VERSION:=%s}"\n' "$(uv --version | awk '{ print $2 }')"; fi
+    local hx; hx="$(command -v hx || command -v helix || true)"
+    # shellcheck disable=SC2016
+    if [[ -n $hx ]]; then printf ': "${HELIX_VERSION:=%s}"\n' "$("$hx" --version | awk '{ print $2 }')"; fi
+    echo
+
+    echo "declare -gA UV_PINS=("
+    if have uv; then
+      uv tool list 2>/dev/null | awk -v want=" ${uvt[*]} " \
+        '$2 ~ /^v[0-9]/ && index(want, " " $1 " ") { sub(/^v/, "", $2); printf "  [\"%s\"]=\"%s\"\n", $1, $2 }'
+    fi
+    echo ")"
+
+    echo "declare -gA CARGO_PINS=("
+    if have cargo; then
+      cargo install --list 2>/dev/null | awk -v want=" ${cargot[*]} " \
+        '/^[^ ].* v[0-9][^ ]*:$/ && index(want, " " $1 " ") { v = $2; sub(/^v/, "", v); sub(/:$/, "", v); printf "  [\"%s\"]=\"%s\"\n", $1, v }'
+    fi
+    echo ")"
+
+    echo "declare -gA NPM_PINS=("
+    if have npm; then
+      npm ls -g --depth=0 --json 2>/dev/null > "$STATE_DIR/npm.json"
+      python3 -I - "$STATE_DIR/npm.json" "${NPM_TOOLS[@]}" <<'PY'
+import json, sys
+deps = json.load(open(sys.argv[1])).get("dependencies", {})
+for name in sys.argv[2:]:
+    version = deps.get(name, {}).get("version")
+    if version:
+        print(f'  ["{name}"]="{version}"')
+PY
+    fi
+    echo ")"
+
+    echo "declare -gA PY_PINS=("
+    if [[ -d $WHEELHOUSE ]]; then
+      python3 -I - "$WHEELHOUSE" "${pyp[@]}" <<'PY'
+import os, re, sys
+wheelhouse, wanted = sys.argv[1], sys.argv[2:]
+norm = lambda s: re.sub(r"[-_.]+", "-", s).lower()
+vkey = lambda v: tuple(int(x) for x in re.findall(r"\d+", v))
+found = {}
+for f in os.listdir(wheelhouse):
+    if f.endswith(".whl"):
+        name, version = f.split("-")[:2]
+        found.setdefault(norm(name), []).append(version)
+for w in wanted:
+    n = norm(re.split(r"[=<>!~\[ ]", w)[0])
+    if n in found:
+        print(f'  ["{n}"]="{max(found[n], key=vkey)}"')
+PY
+    fi
+    echo ")"
+
+    echo "declare -gA IMAGE_PINS=("
+    if have podman; then
+      local img digest
+      for img in $OFFLINE_CONTAINER_IMAGES; do
+        digest="$(podman image inspect --format '{{.Digest}}' "$img" 2>/dev/null)"
+        if [[ -n $digest ]]; then printf '  ["%s"]="%s"\n' "$img" "$digest"; fi
+      done
+    fi
+    echo ")"
+
+    echo "declare -gA DOWNLOAD_SHA256=("
+    if [[ -f $HASH_DB ]]; then
+      awk '{ h[$1] = $2 } END { for (u in h) printf "  [\"%s\"]=\"%s\"\n", u, h[u] }' "$HASH_DB" | sort
+    fi
+    echo ")"
+  ) > "$tmp"
+
+  # Validate before replacing anything.
+  # shellcheck disable=SC1090  # the generated file is checked on purpose
+  if ! bash -n "$tmp" || ! ( set -u; source "$tmp" ) ; then
+    rm -f "$tmp"; die "Generated lock file is invalid; nothing was changed."
+  fi
+  if [[ -f $LOCK_FILE ]]; then cp -a "$LOCK_FILE" "$LOCK_FILE.bak.$TIMESTAMP"; warn "Previous lock kept as $LOCK_FILE.bak.$TIMESTAMP"; fi
+  mv "$tmp" "$LOCK_FILE"
+  ok "Wrote $LOCK_FILE"
+  if [[ -f $RUST_CACHE_DIR/Cargo.lock ]]; then
+    cp "$RUST_CACHE_DIR/Cargo.lock" "$CARGO_LOCK_FILE"
+    ok "Wrote $CARGO_LOCK_FILE (crate versions)"
+  fi
+  local n; n="$(grep -c '^  \["' "$LOCK_FILE" || true)"
+  log "$n versions and checksums pinned. Commit both lock files to version control."
+}
+
+# ============================================================================
+# SUMMARY
+# ============================================================================
+summary() {
+  section "Summary"
+  echo "Profile:      $PROFILE   (modules: core${MODULES[*]:+ }${MODULES[*]})"
+  echo "Log file:     $LOG_FILE"
+  echo "Undo script:  $UNDO_FILE   (review before running)"
+  echo "Manifest:     ${MANIFEST_FILE:-not written}"
+  echo "Self-test:    $T_PASS passed, $T_FAIL failed, $T_WARN warnings, $T_SKIP skipped   (re-run: ./setup.sh --self-test)"
+  echo
+  if (( ${#FAILED_STEPS[@]} )); then
+    warn "Steps that did not fully complete:"
+    printf '     - %s\n' "${FAILED_STEPS[@]}"
+  else
+    ok "All steps completed"
+  fi
+  if [[ -s "$MISSING_FILE" ]]; then
+    warn "Packages/tools that were skipped or failed:"
+    sort -u "$MISSING_FILE" | sed 's/^/     - /'
+  fi
+
+  local groups_note=""
+  if [[ -s "$GROUPS_FILE" ]]; then groups_note=" (new groups: $(sort -u "$GROUPS_FILE" | paste -sd, -))"; fi
+  cat <<EOF
+
+$(if on "$UPGRADE"; then printf '%s\n' "${c_yellow}Upgrade run:${c_off} newest stable versions installed, pins ignored. Review the self-test,
+then pin the new versions with ./setup.sh --lock and commit the lock files.
+"; fi)
+${c_blue}Next steps${c_off}
+  1. Log out and back in${groups_note}.
+  2. Open a terminal and run:  ws-help        (cheat sheet for everything set up here)
+                               hx --tutor      (30 min, learn the editor)
+  3. If not set yet:
+       git config --global user.name  "Your Name"
+       git config --global user.email "you@company.com"
+       ssh-keygen -t ed25519
+  4. In a project:  ws-init   then   pre-commit install
+     (modules add starter files too, see:  ws-init --list)
+  5. First machine of your team?  ./setup.sh --profile $PROFILE --lock   and commit
+     locks/$PROFILE.lock plus locks/$PROFILE.Cargo.lock, so every other machine
+     with this profile gets identical versions.
+
+${c_yellow}Still network-connected (OS level, outside this script's scope)${c_off}
+  Discuss these with IT; they should point at internal infrastructure:
+  - apt / unattended-upgrades       -> internal Ubuntu mirror
+  - snapd (Firefox, Thunderbird, App Center) -> Snap Store proxy, or remove/hold snaps
+  - chrony time sync (NTS, Ubuntu)  -> internal NTP server
+  - Ubuntu Insights is opt-in: decline any consent prompt
+EOF
+}
+
+# ============================================================================
+# MAIN
+# ============================================================================
+# Remember the chosen profile so --check/--self-test/--lock default to it.
+remember_profile() {
+  local old=""
+  if [[ -r $PROFILE_STATE ]]; then old="$(<"$PROFILE_STATE")"; fi
+  if [[ $old == "$PROFILE" ]]; then return 0; fi
+  if [[ -n $old ]]; then
+    warn "This machine was set up with profile '$old'; adding profile '$PROFILE'. Nothing is removed."
+    record_undo "printf '%s\\n' $(printf %q "$old") > $(printf %q "$PROFILE_STATE")"
+  else
+    record_undo "rm -f $(printf %q "$PROFILE_STATE") && rmdir --ignore-fail-on-non-empty $(printf %q "$(dirname "$PROFILE_STATE")")"
+  fi
+  mkdir -p "$(dirname "$PROFILE_STATE")"
+  printf '%s\n' "$PROFILE" > "$PROFILE_STATE"
+  ok "Remembered profile '$PROFILE' in $PROFILE_STATE"
+}
+
+main() {
+  if (( LIST_PROFILES )); then list_profiles; return 0; fi
+  load_config
+  case "$MODE" in
+    check)    check_mode; return 0 ;;
+    selftest) mkdir -p "$DATA_DIR"; self_test; return ;;
+    manifest) write_manifest; return 0 ;;
+    lock)     write_lock; return 0 ;;
+  esac
+
+  [[ -d $DATA_DIR ]] || FIRST_RUN_DATA=1
+  mkdir -p "$DATA_DIR"
+  : > "$MISSING_FILE"; : > "$GROUPS_FILE"
+  init_undo_file
+  if (( FIRST_RUN_DATA )); then
+    record_undo "rm -rf ~/.local/share/workstation   # templates, offline caches, self-test files"
+  fi
+  exec > >(tee -a "$LOG_FILE") 2>&1
+
+  section "Workstation setup — profile $PROFILE — $(date)"
+  preflight
+  remember_profile
+
+  step "System update"                 system_update
+  step "System tuning"                 system_tuning
+  if on "$HARDEN_PRIVACY";       then step "Privacy hardening"         privacy_hardening; fi
+  step "Base CLI tools"                base_cli
+  if on "$INSTALL_CPP";          then step "C/C++ toolchain"           cpp_toolchain; fi
+  if on "$INSTALL_GUI_TOOLS";    then step "GUI tools"                 gui_tools; fi
+  if on "$INSTALL_PYTHON";       then step "Python tools"              python_tools; fi
+  if on "$INSTALL_RUST";         then step "Rust toolchain"            rust_toolchain; fi
+  if on "$INSTALL_OFFLINE_DOCS"; then step "Offline documentation"     offline_docs; fi
+  if on "$INSTALL_BASH_LSP";     then step "Bash language server"      bash_lsp; fi
+  if on "$INSTALL_HELIX";        then step "Helix editor"              helix_setup; fi
+  step "Containers"                    containers
+  step "Shell (bash) setup"            shell_setup
+  step "Git setup"                     git_setup
+  step "Project templates"             project_templates
+  step "Desktop settings"              desktop_tweaks
+  module_collect steps
+  if on "$CACHE_PYTHON";           then step "Offline cache: Python wheels"     cache_python; fi
+  if on "$CACHE_RUST";             then step "Offline cache: Rust crates"       cache_rust; fi
+  if on "$CACHE_CONTAINER_IMAGES"; then step "Offline cache: container images" cache_images; fi
+
+  self_test || true
+  write_manifest
+  summary
+}
+
+main

@@ -1,0 +1,47 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "embedded-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "arm-cortex-m",
+      "displayName": "Target: bare-metal ARM Cortex-M (arm-none-eabi)",
+      "inherits": "embedded-base",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel"
+      }
+    },
+    {
+      "name": "riscv",
+      "displayName": "Target: bare-metal RISC-V (riscv64-unknown-elf)",
+      "inherits": "embedded-base",
+      "toolchainFile": "${sourceDir}/cmake/riscv64-unknown-elf.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "arm-cortex-m",
+      "configurePreset": "arm-cortex-m"
+    },
+    {
+      "name": "riscv",
+      "configurePreset": "riscv"
+    }
+  ]
+}
