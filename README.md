@@ -425,6 +425,11 @@ Undo: `sudo rm -f /etc/sysctl.d/60-dev-inotify.conf`.
 
 *Mirrors `step "Privacy hardening"`, function `privacy_hardening`.*
 
+> **Order matters:** the script runs this step *after* all package installs (end of
+> Part C), because installing a package can switch its timer back on (a dependency
+> pulled in `motd-news.timer` in the end-to-end test). In this manual, do A6 after
+> Parts B and C, or re-check with `systemctl is-enabled` afterwards.
+
 Only services are **disabled** (not masked, not removed) and new drop-in
 files are added, so updates keep working. These are Ubuntu's own background
 features (reports, news, probes), not tools of this setup, which is why they
@@ -1301,7 +1306,7 @@ podman pull docker.io/library/ubuntu:latest
 record_undo "if podman image exists docker.io/library/ubuntu:latest; then podman rmi docker.io/library/ubuntu:latest; fi"
 ```
 
-Whenever podman is installed (even if you cache no images), never pull images implicitly (a `podman run`/`distrobox create`
+Whenever podman is installed (the script does this in the "Containers" step, even if you cache no images), never pull images implicitly (a `podman run`/`distrobox create`
 that names a missing image fails instead of downloading; an explicit
 `podman pull` still works):
 

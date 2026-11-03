@@ -867,12 +867,13 @@ rust_toolchain() {
     "$STATE_DIR/rustup-init" -y --no-modify-path --default-toolchain none
     record_undo "rustup self uninstall -y"
   fi
+  # The archive's rustup has no self-uninstall, so undo what we add: the toolchain (with its
+  # components and targets) and, if this run creates it, the ~/.rustup directory itself.
+  # (Decided before 'rustup set ...' below, which already creates ~/.rustup/settings.toml.)
+  if [[ ! -e $HOME/.rustup ]]; then record_undo "rm -rf ~/.rustup"; fi
   if rustup set auto-self-update disable >/dev/null 2>&1; then
     record_undo "rustup set auto-self-update enable"
   fi
-  # The archive's rustup has no self-uninstall, so undo what we add: the toolchain (with its
-  # components and targets) and, if this run created it, the ~/.rustup directory itself.
-  if [[ ! -e $HOME/.rustup ]]; then record_undo "rm -rf ~/.rustup"; fi
   if ! rustup toolchain list 2>/dev/null | grep -q "^$RUST_TOOLCHAIN"; then
     record_undo "rustup toolchain uninstall $RUST_TOOLCHAIN"
   fi
@@ -961,7 +962,20 @@ helix_setup() {
 }
 
 containers() {
-  if on "$INSTALL_PODMAN"; then apt_install "${PKGS_PODMAN[@]}"; fi
+  if on "$INSTALL_PODMAN"; then
+    apt_install "${PKGS_PODMAN[@]}"
+    # Whenever podman is installed, it must never pull images by itself (guard: if this podman
+    # rejects the file, remove it again, unless it was already there).
+    local conf="$HOME/.config/containers/containers.conf" existed=0
+    if [[ -e $conf ]]; then existed=1; fi
+    if have podman; then
+      install_file .config/containers/containers.conf
+      if ! podman info >/dev/null 2>&1; then
+        if (( existed == 0 )); then rm -f "$conf"; fi
+        warn "podman did not accept containers.conf (pull_policy); left it out"
+      fi
+    fi
+  fi
   if on "$INSTALL_DOCKER"; then
     apt_install "${PKGS_DOCKER[@]}"
     if on "$JOIN_DOCKER_GROUP"; then add_to_groups docker; fi
@@ -2147,7 +2161,7 @@ show_opt_in() {
 STEP_WHY["System tuning"]="(Only with TUNE_INOTIFY=1.) Raises the inotify limits so language servers and file watchers can watch large source trees."
 STEP_TOUCHES["System tuning"]="system: one NEW file /etc/sysctl.d/60-dev-inotify.conf (sudo)."
 
-STEP_WHY["Privacy hardening"]="(Only with the DISABLE_* switches.) Stops Ubuntu's own background reporting, one switch each: crash reports, MOTD news, the firmware-refresh timer, APT news, the network connectivity probe. Services are disabled, never masked or removed."
+STEP_WHY["Privacy hardening"]="(Only with the DISABLE_* switches.) Stops Ubuntu's own background reporting, one switch each: crash reports, MOTD news, the firmware-refresh timer, APT news, the network connectivity probe. Services are disabled, never masked or removed. It runs after all installs, because installing packages can switch such timers back on."
 STEP_TOUCHES["Privacy hardening"]="system, only for the switches that are on: disables services, a NEW file /etc/NetworkManager/conf.d/99-no-connectivity-check.conf, 'pro config set apt_news=false' (sudo)."
 
 STEP_WHY["Base CLI tools"]="Everyday command-line tools (git, ripgrep, fzf, jq, tmux, ...) and the tldr example pages."
@@ -2186,8 +2200,8 @@ STEP_TOUCHES["Bash language server"]="apt packages (nodejs, npm); ~/.local (npm 
 STEP_WHY["Helix editor"]="The Helix terminal editor, from the Ubuntu archive or the official release tarball (never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
 STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/*; network: GitHub release only if Helix is not in the archive."
 
-STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on)."
-STEP_TOUCHES["Containers"]="apt packages; with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
+STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on). With podman, a small config file makes it never pull images by itself."
+STEP_TOUCHES["Containers"]="apt packages; ~/.config/containers/containers.conf (with podman); with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
 
 STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
 STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball only if not in the archive (checked against its published checksum)."
@@ -2213,10 +2227,6 @@ STEP_TOUCHES["Offline cache: container images"]="podman image storage in your ho
 # The ordered list of install steps. Used by the real run and by --explain.
 run_steps() {
   if on "$TUNE_INOTIFY"; then step "System tuning"   system_tuning; fi
-  if any_on "$DISABLE_REPORTING_SERVICES" "$DISABLE_MOTD_NEWS" "$DISABLE_FWUPD_REFRESH" \
-            "$DISABLE_APT_NEWS" "$DISABLE_NM_CONNECTIVITY_CHECK"; then
-    step "Privacy hardening"           privacy_hardening
-  fi
   step "Base CLI tools"                base_cli
   if on "$INSTALL_NERD_FONT";    then step "JetBrains Mono Nerd Font"  nerd_font; fi
   if on "$INSTALL_CPP";          then step "C/C++ toolchain"           cpp_toolchain; fi
@@ -2235,6 +2245,12 @@ run_steps() {
   step "Project templates"             project_templates
   if any_on "$SET_GNOME_FONT" "$SET_GNOME_PRIVACY"; then step "Desktop settings" desktop_tweaks; fi
   module_collect steps
+  # After every package install: installing packages can switch their timers on (a dependency
+  # pulls in motd-news.timer, fwupd-refresh.timer, apport ...), so disabling them earlier did not stick.
+  if any_on "$DISABLE_REPORTING_SERVICES" "$DISABLE_MOTD_NEWS" "$DISABLE_FWUPD_REFRESH" \
+            "$DISABLE_APT_NEWS" "$DISABLE_NM_CONNECTIVITY_CHECK"; then
+    step "Privacy hardening"           privacy_hardening
+  fi
   if on "$CACHE_PYTHON";           then step "Offline cache: Python wheels"     cache_python; fi
   if on "$CACHE_RUST";             then step "Offline cache: Rust crates"       cache_rust; fi
   if on "$CACHE_CONTAINER_IMAGES"; then step "Offline cache: container images" cache_images; fi
