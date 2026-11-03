@@ -49,6 +49,7 @@ Make your own profile by copying a file in `profiles/`; it only needs
 | Command | Purpose |
 |---|---|
 | `./setup.sh --profile NAME` | Choose the profile (remembered afterwards) |
+| `./setup.sh --full` | The **full setup**: switch on every opt-in system change (services, `/etc` drop-ins, groups, GNOME settings, `~/.bashrc` loader, git defaults, browser policies). Switches you set yourself in the environment still win. Also `FULL_SETUP=1`. Asks for confirmation in a terminal. Combine with `--explain`/`--check` to preview. Pass it to `--self-test` too so the extra changes are verified |
 | `./setup.sh --explain` | Plain-language tour of every step this profile runs: what it does, why, where it changes things; plus which system changes are on or off. Changes nothing, needs no network |
 | `./setup.sh --check` | Dry run: package availability, conflicts, planned changes |
 | `./setup.sh` | Full installation, then manifest and self-test |
@@ -127,11 +128,19 @@ system or your login files has its own switch, **off by default**:
 `TUNE_INOTIFY`, `DISABLE_REPORTING_SERVICES`, `DISABLE_MOTD_NEWS`,
 `DISABLE_FWUPD_REFRESH`, `DISABLE_APT_NEWS`, `DISABLE_NM_CONNECTIVITY_CHECK`,
 `SET_GNOME_FONT`, `SET_GNOME_PRIVACY`, `JOIN_DOCKER_GROUP`,
-`ENABLE_SHELL_LOADER` (the ~/.bashrc block), `SET_GIT_DEFAULTS`, and the
+`ENABLE_SHELL_LOADER` (the ~/.bashrc block), `SET_GIT_DEFAULTS`, `INSTALL_OH_MY_BASH`
+(Oh My Bash from one pinned commit, loaded from `~/.bashrc.d` with its update
+check off; its own installer is never used; it replaces the starship prompt), and the
 modules' `JOIN_SERIAL_GROUPS`, `JOIN_WIRESHARK_GROUP`,
 `DESKTOP_BROWSER_POLICIES`. `--explain`, `--check` and the install summary
 list them with their state. Without `ENABLE_SHELL_LOADER` the shell setup
 is installed but inactive (the summary prints the line to add yourself).
+
+**Fonts.** `INSTALL_NERD_FONT` (on by default) installs JetBrains Mono Nerd Font
+for your user in `~/.local/share/fonts` (one checksum-verified download from
+the project's GitHub release; the version is pinned by the lock). With
+`SET_GNOME_FONT=1` GNOME's monospace font becomes `JetBrainsMono Nerd Font Mono 11`
+and starship uses its icon preset; otherwise plain-text symbols.
 
 **Don't break Ubuntu.** No package is ever removed (`apt --no-remove`) and
 no installed package is upgraded (the setup never runs `apt upgrade`; installs

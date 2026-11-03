@@ -7,6 +7,13 @@
 #    ./setup.sh --profile NAME     Choose the profile (work, personal, or your
 #                                  own file in profiles/). Remembered in
 #                                  ~/.config/workstation/profile afterwards.
+#    ./setup.sh --full             The FULL setup: switch on every opt-in system change
+#                                  (services, /etc drop-ins, groups, GNOME settings,
+#                                  ~/.bashrc loader, git defaults, ...). A switch you
+#                                  set yourself still wins (SET_GNOME_FONT=0 ./setup.sh
+#                                  --full). Also usable as FULL_SETUP=1. Without it
+#                                  none of these is touched. Combine with --explain or
+#                                  --check to see exactly what it would do.
 #    ./setup.sh --explain          Plain-language tour of every step this profile would
 #                                  run: what it does, why, and where it changes things.
 #                                  Changes nothing, needs no network. Start here.
@@ -67,6 +74,11 @@
 # shellcheck disable=SC2088
 set -Eeuo pipefail
 
+# Remember which variables the user set in the environment: they win over --full.
+declare -A ENV_AT_START=()
+while IFS= read -r _v; do ENV_AT_START[$_v]=1; done < <(compgen -v | grep -E '^[A-Z][A-Z0-9_]*$' || true)
+unset _v
+
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 FILES="$SCRIPT_DIR/files"
@@ -78,6 +90,7 @@ PROFILE_STATE="$HOME/.config/workstation/profile"
 
 MODE=install
 UPGRADE=0
+FULL="${FULL_SETUP:-0}"      # 1 = --full: all opt-in system changes ON
 PROFILE="${WORKSTATION_PROFILE:-}"
 LIST_PROFILES=0
 while (( $# )); do
@@ -85,6 +98,7 @@ while (( $# )); do
     --upgrade)     UPGRADE=1 ;;
     --check)       MODE=check ;;
     --explain)     MODE=explain ;;
+    --full)        FULL=1 ;;
     --self-test)   MODE=selftest ;;
     --manifest)    MODE=manifest ;;
     --lock)        MODE=lock ;;
@@ -411,6 +425,7 @@ home_files() {
   echo .local/bin/ws-init
   echo .config/lazygit/config.yml
   echo .config/tealdeer/config.toml
+  if on "$INSTALL_OH_MY_BASH"; then echo .bashrc.d/15-oh-my-bash.sh; fi
   if on "$ENFORCE_OFFLINE_ENV"; then echo .bashrc.d/20-offline.sh; fi
   if on "$INSTALL_CPP"; then echo .gdbinit; fi
   if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
@@ -542,6 +557,20 @@ load_config() {
     # shellcheck source=/dev/null
     source "$MODULE_DIR/module.sh"
     MODULES+=("$m")
+  done
+  apply_full
+}
+
+# --full: switch on every opt-in system change (core table + modules' opt_in
+# hook), except those the user set explicitly in the environment.
+apply_full() {
+  if (( ! FULL )); then return 0; fi
+  local entry var
+  local -a entries=("${OPT_IN_CORE[@]}")
+  mapfile -t -O "${#entries[@]}" entries < <(module_collect opt_in)
+  for entry in "${entries[@]}"; do
+    var="${entry%%|*}"
+    if [[ -z ${ENV_AT_START[$var]:-} ]]; then printf -v "$var" '%s' 1; fi
   done
 }
 
@@ -812,6 +841,87 @@ containers() {
   return 0
 }
 
+# Monospace font for GNOME and its terminal: the Nerd Font if we install it.
+gnome_mono_font() {
+  if on "$INSTALL_NERD_FONT"; then echo 'JetBrainsMono Nerd Font Mono 11'; else echo 'JetBrains Mono 11'; fi
+}
+
+# ----------------------------------------------------------------------------
+# JetBrains Mono Nerd Font: JetBrains Mono patched with icon glyphs (used by
+# prompts such as starship's nerd-font-symbols preset and Oh My Bash themes).
+# Not in the Ubuntu archive; downloaded once from the project's GitHub release,
+# checksum-verified, installed for your user only.
+# ----------------------------------------------------------------------------
+NERD_FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNerdFont"
+nerd_font_version() {
+  if [[ -n ${NERD_FONT_VERSION:-} ]]; then echo "$NERD_FONT_VERSION"; return 0; fi
+  # "latest" excludes pre-releases and drafts. Network access at install time only.
+  curl -fsSL --max-time 30 https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])'
+}
+
+nerd_font() {
+  have fc-cache || apt_install fontconfig
+  # (captured, not piped into 'grep -q': with pipefail an early grep exit would look like a failure)
+  local fonts; fonts="$(fc-list : family 2>/dev/null || true)"
+  if [[ $fonts == *'JetBrainsMono Nerd Font Mono'* ]] && ! on "$UPGRADE"; then
+    ok "JetBrains Mono Nerd Font is already installed"; return 0
+  fi
+  local ver url
+  if ver="$(nerd_font_version 2>/dev/null)" && [[ -n $ver ]]; then
+    url="https://github.com/ryanoasis/nerd-fonts/releases/download/$ver/JetBrainsMono.tar.xz"
+  else
+    ver=""
+    url="https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz"
+    warn "Could not look up the newest release; using the 'latest' download (its version cannot be pinned)"
+  fi
+  fetch_verified "$url" "$STATE_DIR/jbm-nerd.tar.xz"
+  mkdir -p "$NERD_FONT_DIR"
+  # Only the two ligature families: "Nerd Font" and "Nerd Font Mono" (the Mono one
+  # is the right choice for terminals). Skips the "NL" (no ligatures) and "Propo" variants.
+  tar -xJf "$STATE_DIR/jbm-nerd.tar.xz" -C "$NERD_FONT_DIR" --wildcards \
+    'JetBrainsMonoNerdFont-*.ttf' 'JetBrainsMonoNerdFontMono-*.ttf'
+  if [[ -n $ver ]]; then printf '%s\n' "$ver" > "$NERD_FONT_DIR/.version"; fi
+  fc-cache -f "$NERD_FONT_DIR"
+  record_undo "rm -rf $(printf %q "$NERD_FONT_DIR") && fc-cache -f"
+  ok "Installed JetBrains Mono Nerd Font ${ver:-(unpinned)} to $NERD_FONT_DIR"
+}
+
+# ----------------------------------------------------------------------------
+# Oh My Bash (opt-in: INSTALL_OH_MY_BASH). Its own installer replaces ~/.bashrc
+# and enables a 13-day GitHub update check, so it is NOT used: we fetch one
+# pinned commit and load it from ~/.bashrc.d/15-oh-my-bash.sh with updates off.
+# ----------------------------------------------------------------------------
+OMB_DIR="$HOME/.local/share/oh-my-bash"
+OMB_REPO=https://github.com/ohmybash/oh-my-bash.git
+oh_my_bash() {
+  have git || { warn "git is not installed"; return 1; }
+  local commit="${OH_MY_BASH_COMMIT:-}"
+  if [[ -z $commit ]]; then commit="$(git ls-remote "$OMB_REPO" HEAD | awk 'NR == 1 { print $1 }')"; fi
+  [[ $commit =~ ^[0-9a-f]{40}$ ]] || { warn "Could not determine the Oh My Bash commit"; return 1; }
+  if [[ -d $OMB_DIR/.git ]]; then
+    if [[ "$(git -C "$OMB_DIR" rev-parse HEAD)" == "$commit" ]]; then
+      ok "Oh My Bash ${commit:0:12} is already installed"
+    else
+      git -C "$OMB_DIR" fetch --quiet --depth=1 origin "$commit"
+      git -C "$OMB_DIR" checkout --quiet --detach FETCH_HEAD
+      ok "Oh My Bash moved to ${commit:0:12}"
+    fi
+  else
+    if [[ -e $OMB_DIR ]] && [[ -n "$(ls -A "$OMB_DIR" 2>/dev/null)" ]]; then
+      warn "$OMB_DIR exists and is not an Oh My Bash clone; leaving it alone"; return 1
+    fi
+    mkdir -p "$OMB_DIR"
+    git init --quiet "$OMB_DIR"
+    git -C "$OMB_DIR" remote add origin "$OMB_REPO"
+    git -C "$OMB_DIR" fetch --quiet --depth=1 origin "$commit"
+    git -C "$OMB_DIR" checkout --quiet --detach FETCH_HEAD
+    record_undo "rm -rf $(printf %q "$OMB_DIR")"
+    ok "Installed Oh My Bash ${commit:0:12} to $OMB_DIR"
+  fi
+  install_file .bashrc.d/15-oh-my-bash.sh
+}
+
 shell_setup() {
   mkdir -p "$HOME/.bashrc.d"
   if ! on "$ENABLE_SHELL_LOADER"; then
@@ -836,7 +946,7 @@ EOF
   install_file .local/bin/ws-init 755
   install_cheatsheet
 
-  if on "$INSTALL_STARSHIP" && ! have starship; then
+  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH" && ! have starship; then
     if apt_has starship; then
       apt_install starship
     elif on "$ALLOW_CURL_INSTALLERS"; then
@@ -847,8 +957,11 @@ EOF
   fi
   if have starship && [[ ! -e "$HOME/.config/starship.toml" ]]; then
     mkdir -p "$HOME/.config"
-    # Plain-text symbols: no special "Nerd Font" required.
-    if starship preset plain-text-symbols -o "$HOME/.config/starship.toml"; then
+    # Icons only if the terminal will really use the Nerd Font (we set it ourselves);
+    # otherwise plain-text symbols, which need no special font.
+    local preset=plain-text-symbols
+    if on "$INSTALL_NERD_FONT" && on "$SET_GNOME_FONT"; then preset=nerd-font-symbols; fi
+    if starship preset "$preset" -o "$HOME/.config/starship.toml"; then
       record_undo "rm -f ~/.config/starship.toml"
     fi
   fi
@@ -898,7 +1011,7 @@ desktop_tweaks() {
     return 0
   fi
   # Recent Ubuntu releases use a small default monospace font; the terminal follows this.
-  if on "$SET_GNOME_FONT"; then gset org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 11'; fi
+  if on "$SET_GNOME_FONT"; then gset org.gnome.desktop.interface monospace-font-name "$(gnome_mono_font)"; fi
   if on "$SET_GNOME_PRIVACY"; then
     gset org.gnome.system.location enabled false
     gset org.gnome.desktop.datetime automatic-timezone false
@@ -1089,7 +1202,9 @@ check_mode() {
     if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")"
     else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest"; fi
   fi
-  if on "$INSTALL_STARSHIP"; then plan_tool starship starship starship "https://starship.rs/install.sh"; fi
+  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then plan_tool starship starship starship "https://starship.rs/install.sh"; fi
+  if on "$INSTALL_NERD_FONT"; then printf '    %-10s %s\n' "Nerd Font" "download JetBrainsMono.tar.xz from github.com/ryanoasis/nerd-fonts (${NERD_FONT_VERSION:-newest stable}; SHA-256 recorded)"; fi
+  if on "$INSTALL_OH_MY_BASH"; then printf '    %-10s %s\n' "Oh My Bash" "git clone of ONE commit (${OH_MY_BASH_COMMIT:-current HEAD}) from github.com/ohmybash/oh-my-bash"; fi
   echo
   if on "$INSTALL_RUST"; then printf '    Rust toolchain: %s\n' "$RUST_TOOLCHAIN"; fi
   if on "$INSTALL_PYTHON"; then
@@ -1446,6 +1561,12 @@ EOF
   # The runtime offline lock lives in ~/.bashrc.d; without the loader it is not active.
   if on "$ENFORCE_OFFLINE_ENV" && ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
     warnings+=("~/.bashrc does not load ~/.bashrc.d, so the offline lock for uv/pip/cargo is not active in new shells (ENABLE_SHELL_LOADER=1, or add the loader yourself)"); fi
+  if on "$INSTALL_OH_MY_BASH"; then
+    local omb_file="$HOME/.bashrc.d/15-oh-my-bash.sh"
+    if [[ ! -f $omb_file ]]; then problems+=("Oh My Bash is enabled but $omb_file is missing")
+    elif ! grep -q '^export DISABLE_AUTO_UPDATE=true' "$omb_file"; then
+      problems+=("Oh My Bash would check GitHub for updates (DISABLE_AUTO_UPDATE is not true)"); fi
+  fi
   # GNOME Online Accounts (Google, Microsoft, Nextcloud, ...) sync in the background.
   if grep -q '^\[Account' "${XDG_CONFIG_HOME:-$HOME/.config}/goa-1.0/accounts.conf" 2>/dev/null; then
     warnings+=("GNOME Online Accounts: an online account is set up (Settings > Online Accounts); it syncs in the background"); fi
@@ -1469,6 +1590,29 @@ t_offline_docs() {
   if have rustup; then rustup doc --path >/dev/null 2>&1 || missing+=("Rust docs"); fi
   if (( ${#missing[@]} )); then printf 'missing: %s\n' "${missing[@]}"; exit 1; fi
   echo "all offline documentation present"
+}
+
+t_nerd_font() {
+  needs_on INSTALL_NERD_FONT
+  needs fc-list
+  local fonts; fonts="$(fc-list : family 2>/dev/null || true)"
+  [[ $fonts == *'JetBrainsMono Nerd Font Mono'* ]] || { echo "JetBrainsMono Nerd Font Mono not found by fontconfig"; exit 1; }
+  echo "found: $(grep -c 'JetBrainsMono Nerd Font' <<<"$fonts") font entries"
+}
+
+t_oh_my_bash() {
+  needs_on INSTALL_OH_MY_BASH
+  needs git
+  [[ -d $OMB_DIR/.git ]] || { echo "Oh My Bash is not installed in $OMB_DIR"; exit 1; }
+  # Load it exactly like a new interactive shell would, without ~/.bashrc, and
+  # check that the update check is off and the framework came up.
+  local out
+  # shellcheck disable=SC2016  # the commands run in the child shell, not here
+  out="$(env -i HOME="$HOME" TERM=dumb PATH="$PATH" bash --norc -i -c \
+    '. ~/.bashrc.d/15-oh-my-bash.sh; echo "update=$DISABLE_AUTO_UPDATE"; echo "theme=$OSH_THEME"; declare -F _omb_util_command_exists >/dev/null && echo "framework=loaded"' 2>&1)"
+  grep -q 'update=true' <<<"$out" || { echo "$out"; exit 1; }
+  grep -q 'framework=loaded' <<<"$out" || { echo "$out"; exit 1; }
+  echo "Oh My Bash loads; auto-update is off"
 }
 
 self_test() {
@@ -1496,6 +1640,8 @@ self_test() {
   run_test "Group memberships"                        t_groups
   run_test "No-cloud policy"                          t_nocloud_policy
   run_test "Offline documentation"                    t_offline_docs
+  run_test "JetBrains Mono Nerd Font installed"       t_nerd_font
+  run_test "Oh My Bash loads with updates off"        t_oh_my_bash
   module_collect selftests
   echo
   local summary_line="$T_PASS passed, $T_FAIL failed, $T_WARN warnings, $T_SKIP skipped"
@@ -1533,6 +1679,8 @@ write_manifest() {
     if [[ -f $LOCK_FILE ]]; then echo "Lock:      $LOCK_FILE  sha256 $(sha256sum "$LOCK_FILE" | cut -d' ' -f1)"
     else echo "Lock:      (none: versions not pinned)"; fi
     echo
+    if [[ -s $NERD_FONT_DIR/.version ]]; then echo "Nerd Font:  JetBrainsMono $(<"$NERD_FONT_DIR/.version")"; fi
+    if [[ -d $OMB_DIR/.git ]]; then echo "Oh My Bash: $(git -C "$OMB_DIR" rev-parse HEAD)"; fi
     echo "## Key tools"
     local t
     local -a key_tools
@@ -1612,6 +1760,10 @@ EOF
     local hx; hx="$(command -v hx || command -v helix || true)"
     # shellcheck disable=SC2016
     if [[ -n $hx ]]; then printf ': "${HELIX_VERSION:=%s}"\n' "$("$hx" --version | awk '{ print $2 }')"; fi
+    # shellcheck disable=SC2016
+    if [[ -s $NERD_FONT_DIR/.version ]]; then printf ': "${NERD_FONT_VERSION:=%s}"\n' "$(<"$NERD_FONT_DIR/.version")"; fi
+    # shellcheck disable=SC2016
+    if [[ -d $OMB_DIR/.git ]]; then printf ': "${OH_MY_BASH_COMMIT:=%s}"\n' "$(git -C "$OMB_DIR" rev-parse HEAD)"; fi
     echo
 
     echo "declare -gA UV_PINS=("
@@ -1773,11 +1925,12 @@ OPT_IN_CORE=(
   "DISABLE_FWUPD_REFRESH|disable the firmware metadata refresh timer (fwupd-refresh.timer)"
   "DISABLE_APT_NEWS|turn off APT news from Canonical ('pro config set apt_news=false')"
   "DISABLE_NM_CONNECTIVITY_CHECK|turn off NetworkManager's connectivity probe (NEW file in /etc/NetworkManager/conf.d)"
-  "SET_GNOME_FONT|set the GNOME monospace font to JetBrains Mono 11"
+  "SET_GNOME_FONT|set the GNOME monospace font (JetBrainsMono Nerd Font Mono 11; JetBrains Mono 11 without the Nerd Font)"
   "SET_GNOME_PRIVACY|GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search"
   "JOIN_DOCKER_GROUP|add your user to group 'docker' (only with INSTALL_DOCKER=1; equivalent to root)"
   "ENABLE_SHELL_LOADER|append ONE marked block to ~/.bashrc that loads ~/.bashrc.d (aliases, PATH, prompt, offline lock)"
   "SET_GIT_DEFAULTS|set global git defaults (only options you have not set yourself)"
+  "INSTALL_OH_MY_BASH|install Oh My Bash (pinned commit in ~/.local/share/oh-my-bash, loaded from ~/.bashrc.d; replaces the starship prompt)"
 )
 
 # Print every opt-in change with its state: what is ON is done, what is off is left as is.
@@ -1808,6 +1961,12 @@ STEP_TOUCHES["Privacy hardening"]="system, only for the switches that are on: di
 
 STEP_WHY["Base CLI tools"]="Everyday command-line tools (git, ripgrep, fzf, jq, tmux, ...) and the tldr example pages."
 STEP_TOUCHES["Base CLI tools"]="apt packages; ~/.config/tealdeer/config.toml; network: tldr pages, once."
+
+STEP_WHY["JetBrains Mono Nerd Font"]="JetBrains Mono with icon glyphs added (the 'Nerd Font' and 'Nerd Font Mono' families), installed for your user only, so prompts and themes can show icons. It is not in the Ubuntu archive: downloaded once from the project's GitHub release and checksum-verified. To use it, pick 'JetBrainsMono Nerd Font Mono' as the terminal font (SET_GNOME_FONT=1 does it for GNOME)."
+STEP_TOUCHES["JetBrains Mono Nerd Font"]="~/.local/share/fonts/JetBrainsMonoNerdFont (32 font files) and the font cache; network: github.com release download, once."
+
+STEP_WHY["Oh My Bash"]="(Only with INSTALL_OH_MY_BASH=1.) The Oh My Bash framework (themes, aliases, plugins) from ONE pinned commit, loaded from ~/.bashrc.d/15-oh-my-bash.sh with its GitHub update check switched off. Its own installer is not used because it would replace your ~/.bashrc. While it is enabled it owns the prompt, so the starship prompt is not started."
+STEP_TOUCHES["Oh My Bash"]="~/.local/share/oh-my-bash (git clone of one commit), ~/.bashrc.d/15-oh-my-bash.sh; network: github.com, at install time only."
 
 STEP_WHY["C/C++ toolchain"]="Compilers, build systems, debuggers, static analyzers and test frameworks for C and C++."
 STEP_TOUCHES["C/C++ toolchain"]="apt packages; ~/.gdbinit."
@@ -1842,7 +2001,7 @@ STEP_TOUCHES["Git setup"]="~/.config/lazygit/config.yml; ~/.gitconfig only with 
 STEP_WHY["Project templates"]="Starter files for new projects (formatter, linter, pre-commit and CMake presets), copied into a project by ws-init without overwriting anything."
 STEP_TOUCHES["Project templates"]="~/.local/share/workstation/templates."
 
-STEP_WHY["Desktop settings"]="(Only with SET_GNOME_FONT=1 and/or SET_GNOME_PRIVACY=1.) A readable monospace font, and GNOME privacy settings: no location services, no automatic time zone, no problem reports or usage stats, no web search in the Activities overview. Needs a desktop session."
+STEP_WHY["Desktop settings"]="(Only with SET_GNOME_FONT=1 and/or SET_GNOME_PRIVACY=1.) A readable monospace font (JetBrainsMono Nerd Font Mono, which the terminal follows), and GNOME privacy settings: no location services, no automatic time zone, no problem reports or usage stats, no web search in the Activities overview. Needs a desktop session."
 STEP_TOUCHES["Desktop settings"]="GNOME settings of your user (dconf)."
 
 STEP_WHY["Offline cache: Python wheels"]="Downloads a local library of Python packages now, so uv and pip can install them later without network."
@@ -1862,6 +2021,7 @@ run_steps() {
     step "Privacy hardening"           privacy_hardening
   fi
   step "Base CLI tools"                base_cli
+  if on "$INSTALL_NERD_FONT";    then step "JetBrains Mono Nerd Font"  nerd_font; fi
   if on "$INSTALL_CPP";          then step "C/C++ toolchain"           cpp_toolchain; fi
   if on "$INSTALL_GUI_TOOLS";    then step "GUI tools"                 gui_tools; fi
   if on "$INSTALL_PYTHON";       then step "Python tools"              python_tools; fi
@@ -1871,6 +2031,7 @@ run_steps() {
   if on "$INSTALL_HELIX";        then step "Helix editor"              helix_setup; fi
   step "Containers"                    containers
   step "Shell (bash) setup"            shell_setup
+  if on "$INSTALL_OH_MY_BASH";   then step "Oh My Bash"                oh_my_bash; fi
   step "Git setup"                     git_setup
   step "Project templates"             project_templates
   if any_on "$SET_GNOME_FONT" "$SET_GNOME_PRIVACY"; then step "Desktop settings" desktop_tweaks; fi
@@ -1884,6 +2045,7 @@ run_steps() {
 explain_mode() {
   EXPLAIN=1
   section "What this setup does: profile $PROFILE (modules: core${MODULES[*]:+ }${MODULES[*]})"
+  if (( FULL )); then echo "FULL SETUP (--full): every opt-in system change is ON, unless you set it yourself."; fi
   cat <<EOT
 Steps run in this order, as your normal user; sudo is used only where a step
 says "system". Every step below is skipped or included according to your
@@ -1931,6 +2093,14 @@ main() {
     manifest) write_manifest; return 0 ;;
     lock)     write_lock; return 0 ;;
   esac
+
+  if (( FULL )) && [[ -t 0 && -t 1 ]]; then
+    section "Full setup: these system changes will be made"
+    show_opt_in
+    local answer
+    read -rp "Apply the full setup, including every change marked ON? [y/N] " answer
+    [[ $answer == [yY] ]] || { echo "Nothing was changed."; exit 1; }
+  fi
 
   [[ -d $DATA_DIR ]] || FIRST_RUN_DATA=1
   mkdir -p "$DATA_DIR"

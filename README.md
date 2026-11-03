@@ -27,7 +27,7 @@ lists them all.
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
 - [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*
-- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings
+- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
 - [Part E. Verify](#part-e-verify)
@@ -74,14 +74,26 @@ only if you want it. The script lists them with their state:
 | `DISABLE_FWUPD_REFRESH` | Disables `fwupd-refresh.timer` (firmware metadata refresh) | A6 | `systemctl enable --now` |
 | `DISABLE_APT_NEWS` | `pro config set apt_news=false` (messages apt fetches from Canonical) | A6 | `pro config set apt_news=true` |
 | `DISABLE_NM_CONNECTIVITY_CHECK` | New file in `/etc/NetworkManager/conf.d/`: no periodic connectivity probe | A6 | delete the file |
-| `SET_GNOME_FONT` | GNOME monospace font JetBrains Mono 11 | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
+| `SET_GNOME_FONT` | GNOME monospace font: JetBrainsMono Nerd Font Mono 11 (JetBrains Mono 11 without B14) | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
 | `SET_GNOME_PRIVACY` | GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search in Activities | B13 | `gsettings set` back |
 | `JOIN_DOCKER_GROUP` | Adds you to group `docker` (equivalent to root; only if you install Docker) | [B9](#b9-containers-optional-install_podman-install_docker) | `gpasswd -d` |
 | `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt, offline lock) | [B10](#b10-shell-bash) | delete the block |
 | `SET_GIT_DEFAULTS` | Global git defaults, only options you have not set | [B11](#b11-git) | `git config --unset` |
+| `INSTALL_OH_MY_BASH` | Oh My Bash from one pinned commit, loaded from `~/.bashrc.d` with its update check off; replaces the starship prompt (not a system change, but opt-in) | [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default) | delete the clone and the file |
 | `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-profile) | `gpasswd -d` |
 | `JOIN_WIRESHARK_GROUP` | *(embedded)* lets group `wireshark` capture without root (debconf answer, group) | C1 | `dpkg-reconfigure`, `gpasswd -d` |
 | `DESKTOP_BROWSER_POLICIES` | *(desktop)* new policy files below `/etc/firefox` and `/etc/thunderbird` | [C2](#c2-desktop-part-personal-profile) | delete the files |
+
+**The full setup.** To do all of them: in this guide, do every section marked
+**[opt-in]** (A5, all five blocks of A6, the Docker group in B9, the loader in
+B10, the git defaults in B11, both parts of B13, the groups and Wireshark
+group in C1, and the policy files in C2). With the script it is one option:
+`./setup.sh --profile work --full` (or `FULL_SETUP=1`). `--full` switches on
+every opt-in change, except any switch you set yourself
+(`SET_GNOME_FONT=0 ./setup.sh --full` keeps the font alone). It shows the
+list and asks for confirmation first when run in a terminal. `--full` does
+not install optional software (Docker, Frama-C, SPICE, ...): those are
+separate switches.
 
 If you skip them, everything is still installed and works; you just
 use `sudo` where those changes would have avoided it. **One consequence
@@ -96,9 +108,11 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 |---|---|
 | `~/.local/bin` | `uv`, `ws-init`, `ws-devname`, `hx` (Helix, if not from the archive), npm tools |
 | `~/.local/opt` | Helix release tarball, if used |
+| `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
+| `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
-| `~/.bashrc.d` | shell setup files (`10-workstation.sh`, `20-offline.sh`, `30-embedded.sh`) |
+| `~/.bashrc.d` | shell setup files (`10-workstation.sh`, `15-oh-my-bash.sh`, `20-offline.sh`, `30-embedded.sh`) |
 | `~/.local/share/workstation` | project starter files, Python wheelhouse, Rust crate cache, download checksums, SPICE kernels |
 | `~/WORKSTATION-CHEATSHEET.md` | the cheat sheet (`ws-help`) |
 | `~/workstation-undo.sh`, `~/workstation-manifest-*.txt` | your undo commands, the record of what was installed |
@@ -108,8 +122,9 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 - **While you set up (allowed):** `apt`; the official installers for `uv`,
   `rustup`, `starship` and the Helix release, only if the archive lacks
   them; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
-  once; the three offline caches (PyPI, crates.io, the container registry)
-  and, if you choose, the SPICE kernels.
+  once; the Nerd Font release from GitHub and, if you choose, the Oh My
+  Bash clone from GitHub; the three offline caches (PyPI, crates.io, the
+  container registry) and, if you choose, the SPICE kernels.
 - **Afterwards (not allowed unless you ask):** nothing connects by itself.
   Update checks, telemetry and online lookups of the installed tools are
   switched off, and `uv`, `pip`, `cargo` and `podman` work only from the
@@ -127,7 +142,8 @@ boot, coreutils or APT sources. Create accounts or sign in anywhere.
 
 If you also have the script: `./setup.sh --profile work --explain` prints this
 whole picture for your profile, step by step, and changes nothing;
-`./setup.sh --profile work --check` adds package names and versions.
+`./setup.sh --profile work --check` adds package names and versions. Add
+`--full` to either to see the full setup instead of the default one.
 
 ---
 
@@ -679,8 +695,10 @@ put "$WS/files/home/.local/bin/ws-init"          ~/.local/bin/ws-init 755
 (`20-offline.sh`, the runtime no-cloud lock, is installed last, in
 [D4](#d4-enforce-the-offline-environment).)
 
-**Prompt (starship)** *(optional: `INSTALL_STARSHIP`)*. Archive first,
-otherwise the official installer (download, read, record checksum, run):
+**Prompt (starship)** *(optional: `INSTALL_STARSHIP`; skip it if you use
+Oh My Bash, [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default))*.
+Archive first, otherwise the official installer (download, read, record
+checksum, run):
 
 ```bash
 command -v starship || apt_install starship
@@ -690,7 +708,8 @@ command -v starship || {
   sh /tmp/starship-install.sh -y -b ~/.local/bin
   record_undo "rm -f ~/.local/bin/starship"
 }
-# plain-text symbols: no special "Nerd Font" needed
+# plain-text symbols need no special font. If your terminal uses the Nerd Font
+# (B14 + B13), you can use 'nerd-font-symbols' instead for icons.
 if command -v starship >/dev/null && [ ! -e ~/.config/starship.toml ]; then
   starship preset plain-text-symbols -o ~/.config/starship.toml && record_undo "rm -f ~/.config/starship.toml"
 fi
@@ -786,7 +805,7 @@ gset() {   # gset SCHEMA KEY VALUE
   gsettings set "$1" "$2" "$3" && record_undo "gsettings set $1 $2 $(printf %q "$old")"
 }
 # SET_GNOME_FONT: Ubuntu's default monospace font is small; the terminal follows this setting
-gset org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 11'
+gset org.gnome.desktop.interface monospace-font-name 'JetBrainsMono Nerd Font Mono 11'   # needs B14; else 'JetBrains Mono 11'
 # SET_GNOME_PRIVACY
 gset org.gnome.system.location enabled false
 gset org.gnome.desktop.datetime automatic-timezone false
@@ -798,6 +817,73 @@ gset org.gnome.desktop.search-providers disable-external true
 
 Leave **GNOME Online Accounts** (Settings > Online Accounts) empty. Accounts
 there (Google, Microsoft, Nextcloud, ...) sync in the background.
+
+## B14. JetBrains Mono Nerd Font *(optional: `INSTALL_NERD_FONT`, default on)*
+
+*Mirrors `step "JetBrains Mono Nerd Font"`, function `nerd_font`.*
+
+JetBrains Mono with icon glyphs added, so prompts and themes can show icons.
+It is not in the Ubuntu archive, so it comes from the project's GitHub
+release. It is installed for **your user only** (no system font directory).
+The script runs this right after B1; the order does not matter.
+
+Find the newest **stable** tag on `https://github.com/ryanoasis/nerd-fonts/releases`
+(the one marked "Latest") and use it as `VERSION`:
+
+```bash
+apt_install fontconfig          # provides fc-cache; normally already present on Ubuntu Desktop
+VERSION=...                     # e.g. the tag of the latest stable release
+download "https://github.com/ryanoasis/nerd-fonts/releases/download/${VERSION}/JetBrainsMono.tar.xz" /tmp/jbm-nerd.tar.xz
+d=~/.local/share/fonts/JetBrainsMonoNerdFont; mkdir -p "$d"
+# only the two ligature families; skips the "NL" (no ligatures) and "Propo" variants
+tar -xJf /tmp/jbm-nerd.tar.xz -C "$d" --wildcards 'JetBrainsMonoNerdFont-*.ttf' 'JetBrainsMonoNerdFontMono-*.ttf'
+echo "$VERSION" > "$d/.version"
+fc-cache -f "$d"
+record_undo "rm -rf '$d' && fc-cache -f"
+fc-list : family | grep 'JetBrainsMono Nerd Font Mono'      # should list the font
+```
+
+To **use** it, pick the family **JetBrainsMono Nerd Font Mono** as your
+terminal font (the "Mono" variant keeps icons single-width, which is right for
+terminals): in GNOME Terminal under Preferences > your profile > Custom font,
+or system-wide with the opt-in font setting in [B13](#b13-desktop-gnome-settings).
+
+Undo: `rm -rf ~/.local/share/fonts/JetBrainsMonoNerdFont && fc-cache -f`.
+
+## B15. Oh My Bash *(opt-in: `INSTALL_OH_MY_BASH`, off by default)*
+
+*Mirrors `step "Oh My Bash"`, function `oh_my_bash`, and
+`files/home/.bashrc.d/15-oh-my-bash.sh`.*
+
+Oh My Bash is a bash framework with themes, aliases and plugins. **Do not use
+its own installer**: it moves your `~/.bashrc` away and replaces it with its
+template, and it turns on a check of GitHub for updates every 13 days. This
+guide instead fetches **one pinned commit** and loads it from a file in
+`~/.bashrc.d`, with the update check switched off, so your `~/.bashrc` is not
+touched (beyond the optional loader of [B10](#b10-shell-bash), which this
+needs). Oh My Bash and the starship prompt both want to own the prompt, so
+the guide's `10-workstation.sh` skips starship whenever
+`~/.bashrc.d/15-oh-my-bash.sh` exists. Choose one: if you do this section,
+you can skip the starship part of B10.
+
+```bash
+repo=https://github.com/ohmybash/oh-my-bash.git
+commit=$(git ls-remote "$repo" HEAD | awk 'NR==1 { print $1 }')
+echo "$commit"                      # write this down: it is your pin (Oh My Bash has no stable releases)
+d=~/.local/share/oh-my-bash
+mkdir -p "$d" && git init -q "$d" && git -C "$d" remote add origin "$repo"
+git -C "$d" fetch --depth=1 origin "$commit" && git -C "$d" checkout -q --detach FETCH_HEAD
+record_undo "rm -rf '$d'"
+less "$d/oh-my-bash.sh"             # read what you are about to load
+less "$WS/files/home/.bashrc.d/15-oh-my-bash.sh"
+put "$WS/files/home/.bashrc.d/15-oh-my-bash.sh" ~/.bashrc.d/15-oh-my-bash.sh
+```
+
+The file sets `DISABLE_AUTO_UPDATE=true` (no cloud), the theme, and a short
+list of completions, aliases and plugins; edit them there. To update on
+purpose later, repeat the `fetch`/`checkout` with a newer commit.
+
+Undo: `rm -rf ~/.local/share/oh-my-bash ~/.bashrc.d/15-oh-my-bash.sh`.
 
 ---
 
@@ -1187,6 +1273,8 @@ grep 'python-downloads = "never"' ~/.config/uv/uv.toml         # uv never downlo
 grep 'auto_update = false'    ~/.config/tealdeer/config.toml   # tldr never self-updates
 npm config get update-notifier                                 # false
 grep 'pull_policy = "never"'  ~/.config/containers/containers.conf
+grep '^export DISABLE_AUTO_UPDATE=true' ~/.bashrc.d/15-oh-my-bash.sh   # only if you did B15
+fc-list : family | grep 'JetBrainsMono Nerd Font Mono'                 # only if you did B14
 env | grep -E '^(UV_OFFLINE|PIP_NO_INDEX|CARGO_NET_OFFLINE)='  # all three set (D4)
 grep -Eq 'repo:[[:space:]]*https?://' ~/.local/share/workstation/templates/generic/.pre-commit-config.yaml || echo "pre-commit template: local hooks only"
 python3 -I - <<'EOF'
@@ -1250,6 +1338,8 @@ write down the versions from your manifest and use them next time:
 | Python wheels | `dl "numpy==X.Y.Z"` in D1 (versions from the wheelhouse file names) |
 | Rust crates | copy the saved `Cargo.lock` into the cache project before `cargo fetch --locked` (D2) |
 | Container images | `podman pull docker.io/library/ubuntu@sha256:DIGEST` and `podman tag` it back to `ubuntu:latest` |
+| Nerd Font | use the recorded `VERSION` tag in B14 |
+| Oh My Bash | use the recorded `commit` in B15 |
 | Downloaded installers/tarballs | compare the SHA-256 in `download-hashes.txt` with the recorded value; refuse if it differs |
 
 APT packages are deliberately **not** pinned: that would block Ubuntu

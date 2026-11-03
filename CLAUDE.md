@@ -39,6 +39,20 @@ conversation; this file carries that context over.
    modules' `opt_in` hook; listed by --explain/--check/summary). Never add a
    system-level change without a default-off switch, an entry in the opt_in
    table, a README section marked [opt-in] and a gated self-test.
+   INSTALL_OH_MY_BASH is in that table although it is software, not a system
+   change (the user asked for it as an opt-in that --full also turns on). Oh My
+   Bash's own installer is NEVER used (it replaces ~/.bashrc and enables a
+   GitHub update check): oh_my_bash() clones ONE pinned commit into
+   ~/.local/share/oh-my-bash and 15-oh-my-bash.sh sets DISABLE_AUTO_UPDATE=true;
+   10-workstation.sh skips starship while that file exists. The self-test fails
+   if auto-update is not disabled.
+   JetBrains Mono Nerd Font (INSTALL_NERD_FONT, default on) is a user-level
+   install under ~/.local/share/fonts; extract only the two ligature families
+   (not NL/Propo). NERD_FONT_VERSION and OH_MY_BASH_COMMIT are pinned by --lock.
+   `./setup.sh --full` (or FULL_SETUP=1) is the "full setup": apply_full turns
+   on every switch in OPT_IN_CORE + the modules' opt_in hook, except those the
+   user set in the environment (ENV_AT_START snapshot). A new opt-in switch
+   is picked up by --full automatically once it is in the opt_in table.
 3. **Everything reversible.** Every system/config change calls record_undo.
 4. **Always the latest stable, long-term supported version** (decided by the
    user), for the OS and for software in general:

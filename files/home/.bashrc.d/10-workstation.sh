@@ -66,7 +66,10 @@ if command -v fzf >/dev/null; then
 fi
 command -v zoxide   >/dev/null && eval "$(zoxide init bash)"   # z <part-of-dir>
 command -v direnv   >/dev/null && eval "$(direnv hook bash)"
-command -v starship >/dev/null && eval "$(starship init bash)"
+# Starship and Oh My Bash both want to own the prompt: Oh My Bash wins if enabled.
+if command -v starship >/dev/null && [[ ! -e $HOME/.bashrc.d/15-oh-my-bash.sh ]]; then
+  eval "$(starship init bash)"
+fi
 
 # --- Offline documentation (installed locally, no internet needed) ---
 _opendoc() {
