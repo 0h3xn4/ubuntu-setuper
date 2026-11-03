@@ -52,8 +52,11 @@ alias grep='grep --color=auto'
 export CMAKE_EXPORT_COMPILE_COMMANDS=ON
 # CMAKE_GENERATOR=Ninja is deliberately NOT set globally: some projects
 # (e.g. ones with a top-level Makefile wrapper) expect Make-based build trees.
-# Uncomment for faster rebuilds via ccache:
-# export CMAKE_C_COMPILER_LAUNCHER=ccache CMAKE_CXX_COMPILER_LAUNCHER=ccache
+# Faster rebuilds: compile through ccache when it is installed (local cache only).
+# Turn off for one build with:  CMAKE_C_COMPILER_LAUNCHER= CMAKE_CXX_COMPILER_LAUNCHER= cmake ...
+if command -v ccache >/dev/null; then
+  export CMAKE_C_COMPILER_LAUNCHER=ccache CMAKE_CXX_COMPILER_LAUNCHER=ccache
+fi
 
 # --- Integrations ---
 if command -v fzf >/dev/null; then

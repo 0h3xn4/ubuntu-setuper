@@ -1,0 +1,35 @@
+{
+  "servers": {
+    "python": {
+      "highlightingModeRegex": "^Python$",
+      "servers": {
+        "basedpyright": {
+          "command": ["basedpyright-langserver", "--stdio"],
+          "url": "https://github.com/DetachHead/basedpyright"
+        },
+        "ruff": {
+          "command": ["ruff", "server"],
+          "url": "https://github.com/astral-sh/ruff"
+        }
+      }
+    },
+    "cmake": {
+      "highlightingModeRegex": "^CMake$",
+      "servers": {
+        "cmake-language-server": {
+          "command": ["cmake-language-server"],
+          "url": "https://github.com/regen100/cmake-language-server"
+        }
+      }
+    },
+    "toml": {
+      "highlightingModeRegex": "^TOML$",
+      "servers": {
+        "taplo": {
+          "command": ["taplo", "lsp", "stdio"],
+          "url": "https://github.com/tamasfe/taplo"
+        }
+      }
+    }
+  }
+}

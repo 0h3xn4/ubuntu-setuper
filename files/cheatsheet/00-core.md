@@ -9,12 +9,30 @@ Press `q` to quit, `/` to search.
 |---|---|
 | `ws-help` | This cheat sheet |
 | `ws-init` | Copy generic starter files (.clang-format, .clang-tidy, .clangd, .editorconfig, pre-commit, ruff, host CMakePresets.json) into the current project; never overwrites |
+| `ws-doctor` | Quick health check: tools, editor, shell setup, no-cloud settings, offline caches (read-only, offline; `ws-doctor --quiet` shows only problems) |
 | `ws-init --list` | Show which starter-file sets are installed (modules add their own, e.g. `ws-init --embedded`) |
 | `cppref` / `pydocs` / `cmakedocs` / `rustdocs` | Open local documentation in the browser |
 | `z <part-of-dir>` | Jump to a frequently used directory |
 | `Ctrl-R` | Fuzzy search command history |
 | `Ctrl-T` | Fuzzy pick a file and insert its path |
 | `lg` | lazygit: visual git in the terminal |
+
+## First day
+
+New to the terminal? Do these, in this order, and you know the basics:
+
+1. `ws-help` (this page). Press `q` to leave, `/` to search.
+2. `hx --tutor` (30 minutes): the built-in Helix tutorial. Helix selects first, then acts.
+3. `cd`, `ls`, `ll` (long listing), `z <part-of-dir>` (jump), `Ctrl-R` (search history), `Ctrl-T` (pick a file).
+4. `tldr <command>`: short examples for any command, offline (`tldr tar`).
+5. `lg` for visual git. Make a throw-away project: `mkdir play && cd play && git init && ws-init`.
+6. `ws-doctor` any time something feels off.
+7. `zellij` (if installed): several terminals in one window; its bottom bar lists the keys.
+   `kate file` opens a graphical editor with the same language servers.
+
+Handy: `difft a b` (difftastic, if installed) shows what changed structurally;
+`cargo nextest run` runs Rust tests faster; with `ccache` installed CMake builds
+are cached automatically (`ccache -s` shows hits).
 
 ## Helix editor (`hx`)
 

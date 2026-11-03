@@ -6,8 +6,8 @@ exactly what `setup.sh` in this repository does, in the same order, so you
 can read, understand and control every change from start to finish. If you
 would rather automate it, see [Automated route](#automated-route) at the end.
 
-What you get: C/C++/Rust/Python toolchains, the Helix editor with language
-servers, git tooling, static analysis, offline documentation and a
+What you get: C/C++/Rust/Python toolchains, the Helix editor (terminal) and
+Kate (graphical) with language servers, git tooling, static analysis, offline documentation and a
 comfortable bash. Two optional parts: the **embedded** part (ARM and RISC-V
 cross compilers, QEMU, debug probes, serial and CAN tools, verification
 tools) and the **desktop** part (everyday apps with their background
@@ -27,7 +27,7 @@ lists them all.
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
 - [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*
-- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*
+- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
 - [Part E. Verify](#part-e-verify)
@@ -110,6 +110,7 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 | `~/.local/opt` | Helix release tarball, if used |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
+| `~/.config/kate` | Kate's language-server settings |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
 | `~/.bashrc.d` | shell setup files (`10-workstation.sh`, `15-oh-my-bash.sh`, `20-offline.sh`, `30-embedded.sh`) |
@@ -119,9 +120,10 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
 ### When the network is used
 
-- **While you set up (allowed):** `apt`; the official installers for `uv`,
-  `rustup`, `starship` and the Helix release, only if the archive lacks
-  them; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
+- **While you set up (allowed):** `apt`; the release downloads for `uv`,
+  `rustup`, `starship`, `lazygit` and `probe-rs` (checked against the
+  checksums those projects publish) and the Helix release, only if the archive
+  lacks them; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
   once; the Nerd Font release from GitHub and, if you choose, the Oh My
   Bash clone from GitHub; the three offline caches (PyPI, crates.io, the
   container registry) and, if you choose, the SPICE kernels.
@@ -179,9 +181,11 @@ machine ends up in the same state.
 4. **Latest stable, long-term-supported versions.** Latest Ubuntu LTS; for
    software with an LTS line the newest LTS; otherwise the newest stable
    release. Never betas, release candidates or nightlies.
-5. **Verify what you download outside APT.** Download to a file, look at it
-   (installer scripts are text: read them), record its SHA-256, and only
-   then run it. See [A2](#a2-helpers).
+5. **Verify what you download outside APT.** Where the project publishes a
+   checksum (uv, rustup, starship, Nerd Fonts, probe-rs, lazygit) the guide
+   compares the download with *that* checksum and refuses a mismatch. For the
+   rest it downloads to a file, records its SHA-256 and lets you read it
+   before running it. See [A2](#a2-helpers).
 
 ## How to use this guide
 
@@ -290,6 +294,26 @@ download() {
   echo "$1" >> ~/.local/share/workstation/download-hashes.txt
 }
 
+# download_verified URL SUMS_URL NAME FILE  downloads, then compares with the checksum the PROJECT publishes.
+#   NAME = the file name to look for inside SUMS_URL (empty if that file holds a single hash).
+#   A mismatch (or a missing checksum) deletes the download and fails.
+download_verified() {
+  local url=$1 sums=$2 name=$3 out=$4 expected actual
+  curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$out" || return 1
+  if [ -n "$name" ]; then
+    expected=$(curl -fsSL "$sums" | awk -v n="$name" '{f=$2; sub(/^\*/,"",f); sub(/^\.\//,"",f); if (f==n) {print $1; exit}}')
+  else
+    expected=$(curl -fsSL "$sums" | awk 'NR==1 {print $1}')
+  fi
+  actual=$(sha256sum "$out" | cut -d' ' -f1)
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    echo "CHECKSUM MISMATCH or no published checksum: $url"; rm -f "$out"; return 1
+  fi
+  echo "checksum verified (published by the project): $url"
+  mkdir -p ~/.local/share/workstation
+  echo "$url $actual published" >> ~/.local/share/workstation/download-hashes.txt
+}
+
 # git_set KEY VALUE  sets a global git option only if it is not set yet.
 git_set() {
   git config --global --get "$1" >/dev/null && return 0
@@ -307,8 +331,10 @@ Notes:
   upgrade packages you already have.
 - `put` never overwrites. If you already have, say, a `~/.inputrc`, you keep
   it and `put` tells you; merge by hand if you want the new settings.
-- `download` records the SHA-256 of what you downloaded. Compare it with the
-  publisher's value if your process requires it; keep
+- `download_verified` is used wherever the project publishes a checksum; it
+  refuses a mismatch. `download` is for the rest (for example the Helix
+  tarball): it records the SHA-256 of what you downloaded, so compare it
+  with the publisher's value if your process requires it; keep
   `~/.local/share/workstation/download-hashes.txt` as your record.
 - `ws-manual-helpers.sh` and `workstation-undo.sh` are your own records;
   keep them.
@@ -427,12 +453,39 @@ apt_install \
   distro-info htop btop jq yq ripgrep fd-find bat eza zoxide fzf direnv \
   tealdeer hyperfine entr just tmux bash-completion shellcheck shfmt \
   yamllint git-delta lazygit moreutils pv ncdu libxml2-utils \
-  fonts-jetbrains-mono
+  fonts-jetbrains-mono wl-clipboard xclip
 ```
 
 `gh`/`glab` are deliberately **not** in the list: they talk to cloud forges.
 (On Ubuntu `bat` runs as `batcat` and `fd-find` as `fdfind`; the shell
 setup in B10 adds the familiar aliases.)
+
+`wl-clipboard` (Wayland) and `xclip` (X11) are what Helix uses to reach the
+system clipboard (`Space y` / `Space p`).
+
+**lazygit** is not in every Ubuntu release (it is missing in 24.04). If
+`apt_install` reported it as not in the archive, take it from the project's
+release, checked against the `checksums.txt` the project publishes:
+
+```bash
+command -v lazygit || {
+  base=https://github.com/jesseduffield/lazygit/releases/latest/download
+  arch=x86_64; [ "$(uname -m)" = aarch64 ] && arch=arm64
+  asset=$(curl -fsSL "$base/checksums.txt" | awk -v a="_linux_$arch.tar.gz" 'index($2,a) {print $2; exit}')
+  download_verified "$base/$asset" "$base/checksums.txt" "$asset" "/tmp/$asset"
+  mkdir -p ~/.local/bin && tar -xzf "/tmp/$asset" -C ~/.local/bin lazygit
+  record_undo "rm -f ~/.local/bin/lazygit"
+}
+```
+
+**Extra terminal tools** *(optional: `INSTALL_NICE_TO_HAVE`; mirrors
+`step "Extra terminal tools"`)*: zellij (a beginner-friendlier terminal
+multiplexer than tmux) and difftastic (structural diffs). They are not in
+every Ubuntu release; `apt_install` skips what is missing.
+
+```bash
+apt_install zellij difftastic
+```
 
 `tealdeer` provides `tldr`. Fetch its example pages **once** now and turn
 automatic updates off:
@@ -481,15 +534,21 @@ apt_install python3-dev python3-venv
 command -v uv || apt_install uv
 ```
 
-If `uv` is still missing, use the official installer. Download it, **read
-it**, note its SHA-256, then run it. `UV_NO_MODIFY_PATH=1` stops it editing
-your shell startup files (B10 handles PATH).
+If `uv` is still missing, take the release tarball and let `download_verified`
+check it against the `.sha256` that astral publishes next to it. (This is
+used instead of the installer script, which would also edit your shell
+startup files.) To pin a version use `.../releases/download/<version>` as
+`base`.
 
 ```bash
 command -v uv || {
-  download https://astral.sh/uv/install.sh /tmp/uv-install.sh
-  less /tmp/uv-install.sh
-  UV_NO_MODIFY_PATH=1 sh /tmp/uv-install.sh
+  arch=$(uname -m)                                                  # x86_64 or aarch64
+  base=https://github.com/astral-sh/uv/releases/latest/download
+  asset=uv-$arch-unknown-linux-gnu.tar.gz
+  download_verified "$base/$asset" "$base/$asset.sha256" "$asset" "/tmp/$asset"
+  tar -xzf "/tmp/$asset" -C /tmp
+  mkdir -p ~/.local/bin
+  install -m 755 "/tmp/uv-$arch-unknown-linux-gnu/uv" "/tmp/uv-$arch-unknown-linux-gnu/uvx" -t ~/.local/bin
   record_undo "rm -f ~/.local/bin/uv ~/.local/bin/uvx"
 }
 ```
@@ -519,16 +578,18 @@ Undo: `uv tool uninstall <name>` for each tool; `rm -f ~/.local/bin/uv ~/.local/
 
 *Mirrors `step "Rust toolchain"`, function `rust_toolchain`.*
 
-**rustup**: from the archive if available, else the official installer
-(download, read, record checksum, run). `--default-toolchain none`
+**rustup**: from the archive if available, else `rustup-init` itself, checked
+against the `.sha256` the Rust project publishes (instead of the
+`sh.rustup.rs` script that downloads it). `--default-toolchain none`
 installs only rustup itself; `--no-modify-path` leaves your shell files alone.
 
 ```bash
 command -v rustup || apt_install rustup
 command -v rustup || {
-  download https://sh.rustup.rs /tmp/rustup-init.sh
-  less /tmp/rustup-init.sh
-  sh /tmp/rustup-init.sh -y --no-modify-path --default-toolchain none
+  url=https://static.rust-lang.org/rustup/dist/$(uname -m)-unknown-linux-gnu/rustup-init
+  download_verified "$url" "$url.sha256" rustup-init /tmp/rustup-init
+  chmod +x /tmp/rustup-init
+  /tmp/rustup-init -y --no-modify-path --default-toolchain none
   record_undo "rustup self uninstall -y"
 }
 
@@ -546,7 +607,7 @@ take several minutes. They need a few development libraries:
 
 ```bash
 apt_install libssl-dev pkg-config
-cargo install --locked taplo-cli
+cargo install --locked taplo-cli cargo-nextest
 ```
 
 `--locked` makes cargo use the exact dependency versions the tool's authors
@@ -690,6 +751,7 @@ less "$WS/files/home/.bashrc.d/10-workstation.sh"
 put "$WS/files/home/.bashrc.d/10-workstation.sh" ~/.bashrc.d/10-workstation.sh
 put "$WS/files/home/.inputrc"                    ~/.inputrc
 put "$WS/files/home/.local/bin/ws-init"          ~/.local/bin/ws-init 755
+put "$WS/files/home/.local/bin/ws-doctor"        ~/.local/bin/ws-doctor 755
 ```
 
 (`20-offline.sh`, the runtime no-cloud lock, is installed last, in
@@ -697,15 +759,16 @@ put "$WS/files/home/.local/bin/ws-init"          ~/.local/bin/ws-init 755
 
 **Prompt (starship)** *(optional: `INSTALL_STARSHIP`; skip it if you use
 Oh My Bash, [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default))*.
-Archive first, otherwise the official installer (download, read, record
-checksum, run):
+Archive first, otherwise the project's release tarball, checked against the
+`.sha256` it publishes:
 
 ```bash
 command -v starship || apt_install starship
 command -v starship || {
-  download https://starship.rs/install.sh /tmp/starship-install.sh
-  less /tmp/starship-install.sh
-  sh /tmp/starship-install.sh -y -b ~/.local/bin
+  asset=starship-$(uname -m)-unknown-linux-gnu.tar.gz
+  base=https://github.com/starship/starship/releases/latest/download
+  download_verified "$base/$asset" "$base/$asset.sha256" "" "/tmp/$asset"
+  mkdir -p ~/.local/bin && tar -xzf "/tmp/$asset" -C ~/.local/bin starship
   record_undo "rm -f ~/.local/bin/starship"
 }
 # plain-text symbols need no special font. If your terminal uses the Nerd Font
@@ -833,7 +896,9 @@ Find the newest **stable** tag on `https://github.com/ryanoasis/nerd-fonts/relea
 ```bash
 apt_install fontconfig          # provides fc-cache; normally already present on Ubuntu Desktop
 VERSION=...                     # e.g. the tag of the latest stable release
-download "https://github.com/ryanoasis/nerd-fonts/releases/download/${VERSION}/JetBrainsMono.tar.xz" /tmp/jbm-nerd.tar.xz
+base=https://github.com/ryanoasis/nerd-fonts/releases/download/${VERSION}
+# checked against SHA-256.txt, which the project publishes with every release
+download_verified "$base/JetBrainsMono.tar.xz" "$base/SHA-256.txt" JetBrainsMono.tar.xz /tmp/jbm-nerd.tar.xz
 d=~/.local/share/fonts/JetBrainsMonoNerdFont; mkdir -p "$d"
 # only the two ligature families; skips the "NL" (no ligatures) and "Propo" variants
 tar -xJf /tmp/jbm-nerd.tar.xz -C "$d" --wildcards 'JetBrainsMonoNerdFont-*.ttf' 'JetBrainsMonoNerdFontMono-*.ttf'
@@ -884,6 +949,37 @@ list of completions, aliases and plugins; edit them there. To update on
 purpose later, repeat the `fetch`/`checkout` with a newer commit.
 
 Undo: `rm -rf ~/.local/share/oh-my-bash ~/.bashrc.d/15-oh-my-bash.sh`.
+
+## B16. Kate editor *(optional: `INSTALL_KATE`, default on)*
+
+*Mirrors `step "Kate editor"`, function `kate_setup`.*
+
+Kate is the KDE text editor, a graphical editor next to Helix. It is
+installed as a Debian package from the Ubuntu archive (not a snap or
+Flatpak), and being a KDE program it brings in a set of KDE libraries. Skip
+this section on a machine without a desktop. In Kate's build files (checked in
+its repository) I found no telemetry or update-check dependency; only use its
+"download"/"get new" buttons if you accept an online request. The script runs
+this after Helix; the order does not matter.
+
+```bash
+apt_install kate
+put "$WS/files/home/.config/kate/lspclient/settings.json" ~/.config/kate/lspclient/settings.json
+```
+
+The settings file points Kate's built-in language-server client at the same
+local servers Helix uses: basedpyright and ruff (Python), cmake-language-server,
+taplo (TOML). Kate merges it over its own defaults, which already cover
+clangd, rust-analyzer and bash-language-server. Kate's defaults for JSON and
+YAML would use `vscode-json-languageserver` and `yaml-language-server`, which
+download schemas from the internet; they are not installed, so they are not
+used. Keep it that way:
+
+```bash
+for s in vscode-json-languageserver yaml-language-server; do command -v "$s" && echo "REMOVE $s: it fetches schemas online"; done
+```
+
+Undo: `rm ~/.config/kate/lspclient/settings.json`; the package via APT history.
 
 ---
 
@@ -953,8 +1049,28 @@ installed above):
 
 ```bash
 rustup target add thumbv6m-none-eabi thumbv7m-none-eabi thumbv7em-none-eabihf riscv32imac-unknown-none-elf
-cargo install --locked cargo-binutils flip-link probe-rs-tools        # compiles; slow (INSTALL_CARGO_TOOLS)
+cargo install --locked cargo-binutils flip-link        # compiles; slow (INSTALL_CARGO_TOOLS)
 ```
+
+**probe-rs** *(mirrors `step "probe-rs (prebuilt)"`; switch `PROBE_RS_PREBUILT`,
+default on)*. Compiling it takes 10+ minutes, so take the project's own
+release instead, checked against the `.sha256` it publishes (to pin a version
+use `.../releases/download/<tag>` as `base`). If you prefer to compile it:
+`cargo install --locked probe-rs-tools`.
+
+```bash
+asset=probe-rs-tools-$(uname -m)-unknown-linux-gnu.tar.xz
+base=https://github.com/probe-rs/probe-rs/releases/latest/download
+download_verified "$base/$asset" "$base/$asset.sha256" "$asset" "/tmp/$asset"
+tar -xJf "/tmp/$asset" -C /tmp
+mkdir -p ~/.local/bin
+install -m 755 "/tmp/${asset%.tar.xz}"/{probe-rs,cargo-embed,cargo-flash} -t ~/.local/bin
+record_undo "rm -f ~/.local/bin/probe-rs ~/.local/bin/cargo-embed ~/.local/bin/cargo-flash"
+```
+
+If `probe-rs list` does not see your probe, it may need udev rules that give
+your user access to it (a system file below `/etc/udev/rules.d`: your
+decision; the probe-rs documentation has the file).
 
 **Helpers and starter files.** `30-embedded.sh` adds `serial` and `vcan-up`.
 `ws-devname` gives USB serial adapters stable names (`/dev/ws/<name>`) by
@@ -1323,6 +1439,11 @@ m=~/workstation-manifest-$(date +%Y%m%d).txt
 ln -sf "$m" ~/workstation-manifest-latest.txt
 ```
 
+To compare two machines (or a manual and a scripted setup):
+`tools/manifest-diff.sh manifest-A.txt manifest-B.txt` ignores host, user, CPU,
+kernel, hashes and dates and shows added, removed and changed packages and
+tools. Plain `diff` works too, just noisier.
+
 ## Pin versions for reproducibility (optional)
 
 *Mirrors `./setup.sh --lock`.* Without pins, a repeat of this guide on
@@ -1354,9 +1475,11 @@ Each section above ended with its undo. In general:
 
 - **Files you created with `put`/`put_system`**, **gsettings**, **git
   settings**, **services**, **npm config**, **groups**: `~/workstation-undo.sh`
-  contains one command per change, newest last. Read it, then run the
-  lines you want, **newest first** (copy single lines rather than running
-  the whole file).
+  contains one command per change, newest last. See them newest first with
+  `grep -vE '^(#|set -x)' ~/workstation-undo.sh | tac`, then run the lines you
+  want. With the script it is one command that shows everything first and
+  asks before it runs anything: `./setup.sh --undo ~/workstation-undo.sh`
+  (add `--dry-run` to only list).
 - **Packages from APT**: use APT's history on newer APT (`apt history-list`,
   then `sudo apt history-undo <ID>`); with older APT, read
   `/var/log/apt/history.log` for what was installed.
@@ -1366,6 +1489,27 @@ Each section above ended with its undo. In general:
   wheelhouse, crate cache, hashes) and `~/.cargo/registry` for downloaded crates.
 - **Switch the offline lock off** without uninstalling anything:
   `rm ~/.bashrc.d/20-offline.sh`.
+
+---
+
+# Troubleshooting
+
+Start with `ws-doctor` (read-only, offline): it lists what is missing or
+misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
+
+| Symptom | Likely cause and fix |
+|---|---|
+| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` and `zellij` on 24.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
+| New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
+| `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
+| Prompt shows boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml`. |
+| Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
+| `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
+| Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-profile)), or you have not logged out and in since joining. |
+| Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-profile)). |
+| Two prompts fight (starship vs Oh My Bash) | Only one may own the prompt; while `~/.bashrc.d/15-oh-my-bash.sh` exists, starship is skipped by `10-workstation.sh`. |
+| A checksum mismatch message | The download differs from what the project published: do not use it. Retry later; if it persists, the release changed under you, so report it to the project. |
+| Something I do not understand | `./setup.sh --explain` describes every step, and the "big picture" section at the top of this page shows where things go. |
 
 ---
 
@@ -1382,7 +1526,12 @@ sudo apt update
 
 The guide and the script are kept in step: `tools/check-readme-sync.sh`
 verifies that every package, tool and config file the script knows about is
-mentioned here. If you find a difference between this guide and the script,
+mentioned here. `tools/check-all.sh` runs every check of the repository in one
+go (lint, parsing, README sync, and functional tests in a throw-away home
+directory; `--quick` for the static ones, which the git hook from
+`tools/install-hooks.sh` runs on every commit), and the GitHub workflow in
+`.github/workflows` runs them, plus a real install on the newest Ubuntu LTS,
+for every change. If you find a difference between this guide and the script,
 the script's behaviour is the reference and the guide has a bug; please
 report it.
 

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast, static and functional checks of the repository itself.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq python3-yaml
+      - name: tools/check-all.sh
+        run: tools/check-all.sh
+
+  # The real thing: the setup on the newest Ubuntu LTS (the Docker image tagged
+  # "latest" is always the newest LTS). The script refuses to run as root, so a
+  # normal user with sudo does the work, exactly like on a workstation.
+  ubuntu-lts:
+    needs: checks
+    runs-on: ubuntu-latest
+    container: ubuntu:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [work, personal]
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Prerequisites inside the container
+        run: |
+          apt-get update
+          apt-get install -y sudo git curl ca-certificates python3 jq xz-utils
+      - uses: actions/checkout@v4
+      - name: Create a normal user with sudo
+        run: |
+          useradd -m -s /bin/bash tester
+          echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester
+          chown -R tester:tester "$GITHUB_WORKSPACE"
+      - name: Explain and check (every package name against the real archive)
+        run: |
+          sudo -u tester -H bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --profile ${{ matrix.profile }} --explain >/dev/null"
+          sudo -u tester -H bash -c "cd '$GITHUB_WORKSPACE' && sudo apt-get update && ./setup.sh --profile ${{ matrix.profile }} --check"
+      - name: Install a reduced setup (no GUI apps, no compiles, no big caches)
+        run: |
+          sudo -u tester -H env \
+            INSTALL_KATE=0 INSTALL_GUI_TOOLS=0 INSTALL_NICE_TO_HAVE=0 INSTALL_PODMAN=0 INSTALL_RUST=0 \
+            INSTALL_BASH_LSP=0 INSTALL_OFFLINE_DOCS=0 INSTALL_NERD_FONT=0 INSTALL_WIRESHARK=0 \
+            INSTALL_VERIFICATION=0 INSTALL_FPRIME_BOOTSTRAP=0 CACHE_PYTHON=0 CACHE_RUST=0 \
+            CACHE_CONTAINER_IMAGES=0 PROBE_RS_PREBUILT=0 \
+            DESKTOP_LIBREOFFICE=0 DESKTOP_VLC=0 DESKTOP_GIMP=0 DESKTOP_INKSCAPE=0 DESKTOP_DEJADUP=0 \
+            DESKTOP_KEEPASSXC=0 \
+            bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --profile ${{ matrix.profile }} </dev/null"
+      # Non-blocking for now ("|| true"): make it blocking after the first green runs,
+      # once it is clear which checks are stable inside a container.
+      - name: Self-test of what was installed
+        run: |
+          sudo -u tester -H env \
+            INSTALL_KATE=0 INSTALL_GUI_TOOLS=0 INSTALL_NICE_TO_HAVE=0 INSTALL_PODMAN=0 INSTALL_RUST=0 \
+            INSTALL_BASH_LSP=0 INSTALL_OFFLINE_DOCS=0 INSTALL_NERD_FONT=0 INSTALL_WIRESHARK=0 \
+            INSTALL_VERIFICATION=0 INSTALL_FPRIME_BOOTSTRAP=0 CACHE_PYTHON=0 CACHE_RUST=0 \
+            CACHE_CONTAINER_IMAGES=0 PROBE_RS_PREBUILT=0 \
+            DESKTOP_LIBREOFFICE=0 DESKTOP_VLC=0 DESKTOP_GIMP=0 DESKTOP_INKSCAPE=0 DESKTOP_DEJADUP=0 \
+            DESKTOP_KEEPASSXC=0 \
+            bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --profile ${{ matrix.profile }} --self-test || true"
+      - name: ws-doctor and undo
+        run: |
+          sudo -u tester -H bash -c "~/.local/bin/ws-doctor --quiet || true"
+          sudo -u tester -H bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --undo --dry-run"

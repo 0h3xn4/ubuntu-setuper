@@ -6,7 +6,7 @@
 #
 #   tools/check-readme-sync.sh        exit 0 = in sync, 1 = README misses things
 set -euo pipefail
-cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
+cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." || exit 1
 
 README=README.md
 missing=0
@@ -25,7 +25,7 @@ for m in modules/*/module.conf; do
   source "$m"
 done
 for arr in PKGS_BASE PKGS_CPP PKGS_GUI PKGS_DOCS PKGS_PYTHON PKGS_RUST_BUILD PKGS_NODE \
-           PKGS_PODMAN PKGS_DOCKER UV_TOOLS CARGO_TOOLS NPM_TOOLS RUST_COMPONENTS \
+           PKGS_PODMAN PKGS_DOCKER PKGS_KATE PKGS_NICE_TO_HAVE UV_TOOLS CARGO_TOOLS NPM_TOOLS RUST_COMPONENTS \
            PKGS_EMBEDDED PKGS_EMBEDDED_GUI PKGS_WIRESHARK PKGS_VERIFICATION PKGS_FRAMA_C \
            EMBEDDED_UV_TOOLS_VERIFICATION EMBEDDED_CARGO_TOOLS EMBEDDED_RUST_TARGETS \
            EMBEDDED_PY_PACKAGES EMBEDDED_RUST_CRATES \
@@ -44,7 +44,7 @@ while IFS= read -r f; do
 done < <(find files/home modules/*/files/home -type f | sort)
 
 # --- script options a user of the manual should know about -------------------
-for opt in --full --explain --check; do need "option" "$opt"; done
+for opt in --full --explain --check --undo --dry-run ws-doctor manifest-diff.sh check-all.sh; do need "option" "$opt"; done
 
 # --- every `step "Title"` in setup.sh and the modules ----------------------
 while IFS= read -r title; do

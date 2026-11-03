@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# ws-doctor — quick, read-only health check of this workstation. Installed by
+# workstation-setup. Needs no network and no copy of the setup repository.
+#
+#   ws-doctor            check tools, editor, shell setup and the no-cloud settings
+#   ws-doctor --quiet    only print problems and the summary
+#
+# Exit status: 0 = nothing is wrong, 1 = at least one check failed.
+# For the full verification (builds, offline installs, ...) run, in the setup
+# folder:  ./setup.sh --self-test
+# Messages show '~' literally on purpose.
+# shellcheck disable=SC2088
+set -uo pipefail
+
+QUIET=0
+case "${1:-}" in
+  --quiet|-q) QUIET=1 ;;
+  -h|--help)  sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+  "") ;;
+  *) echo "ws-doctor: unknown option $1" >&2; exit 2 ;;
+esac
+
+if [[ -t 1 ]]; then G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; B=$'\e[1m'; O=$'\e[0m'; else G=; Y=; R=; B=; O=; fi
+PASS=0 WARN=0 FAIL=0
+have() { command -v "$1" >/dev/null 2>&1; }
+say() { if (( ! QUIET )); then printf '%s\n' "$*"; fi; }
+head1() { say ""; say "${B}$*${O}"; }
+pass() { PASS=$((PASS + 1)); say "  ${G}ok${O}    $*"; }
+warn() { WARN=$((WARN + 1)); printf '  %swarn%s  %s\n' "$Y" "$O" "$*"; }
+fail() { FAIL=$((FAIL + 1)); printf '  %sFAIL%s  %s\n' "$R" "$O" "$*"; }
+
+# tool NAME [required|optional]  — present, with its first version line
+tool() {
+  local t="$1" kind="${2:-required}" v
+  if have "$t"; then
+    v="$(timeout 10 "$t" --version 2>&1 | head -n1)"
+    pass "$(printf '%-24s %s' "$t" "${v:0:60}")"
+  elif [[ $kind == required ]]; then fail "$t is not installed"
+  else warn "$t is not installed (optional)"; fi
+}
+
+cfg() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+
+PROFILE="$(cat "$(cfg)/workstation/profile" 2>/dev/null || echo "unknown")"
+say "ws-doctor: profile ${PROFILE}, $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown system}")"
+
+head1 "Tools"
+for t in git gcc g++ clang clangd cmake ninja gdb python3 uv ruff rustc cargo rust-analyzer hx podman; do tool "$t"; done
+for t in kate lazygit starship zoxide fzf ccache; do tool "$t" optional; done
+
+if [[ -x $HOME/.local/bin/ws-devname ]]; then
+  head1 "Embedded tools (the embedded part is installed)"
+  for t in arm-none-eabi-gcc riscv64-unknown-elf-gcc qemu-system-arm openocd gdb-multiarch probe-rs; do tool "$t"; done
+fi
+
+head1 "Editor and language servers"
+for s in clangd rust-analyzer ruff basedpyright-langserver cmake-language-server taplo bash-language-server; do
+  if have "$s"; then pass "$s"; else warn "$s not found (Helix/Kate lose that language's help)"; fi
+done
+if have hx && ! hx --health >/dev/null 2>&1; then warn "'hx --health' reports problems"; fi
+fonts="$(fc-list : family 2>/dev/null || true)"
+if [[ $fonts == *'JetBrainsMono Nerd Font Mono'* ]]; then pass "JetBrains Mono Nerd Font installed"
+else warn "JetBrains Mono Nerd Font not found (icons in prompts may show as boxes)"; fi
+if have wl-copy || have xclip || have xsel; then pass "clipboard tool for Helix (wl-copy / xclip / xsel)"
+else warn "no clipboard tool: Helix 'Space y' / 'Space p' cannot reach the system clipboard"; fi
+
+head1 "Shell setup"
+if grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then pass "~/.bashrc loads ~/.bashrc.d"
+else warn "~/.bashrc does not load ~/.bashrc.d: aliases, prompt, PATH additions and the offline lock are not active"; fi
+case ":$PATH:" in *":$HOME/.local/bin:"*) pass "~/.local/bin is on PATH" ;; *) warn "~/.local/bin is not on PATH" ;; esac
+if have cargo; then
+  case ":$PATH:" in *":$HOME/.cargo/bin:"*) pass "~/.cargo/bin is on PATH" ;; *) warn "~/.cargo/bin is not on PATH" ;; esac
+fi
+
+head1 "No-cloud settings"
+if have gh; then fail "gh (GitHub CLI) is installed: it talks to a cloud forge"; else pass "no gh (GitHub CLI)"; fi
+chk() { # chk FILE PATTERN MESSAGE  — only when the tool uses that file
+  if grep -q -- "$2" "$1" 2>/dev/null; then pass "$3"; else fail "$3: setting missing in $1"; fi
+}
+if have lazygit; then chk "$(cfg)/lazygit/config.yml" 'method: never' "lazygit update check is off"; fi
+if have uv; then chk "$(cfg)/uv/uv.toml" 'python-downloads = "never"' "uv never downloads Python interpreters"; fi
+if have tldr; then chk "$(cfg)/tealdeer/config.toml" 'auto_update = false' "tldr never updates by itself"; fi
+if have podman; then chk "$(cfg)/containers/containers.conf" 'pull_policy = "never"' "podman never pulls images implicitly"; fi
+if have npm; then
+  if [[ "$(npm config get update-notifier 2>/dev/null)" == false ]]; then pass "npm update notifier is off"
+  else fail "npm update notifier is on"; fi
+fi
+if [[ -f $HOME/.bashrc.d/15-oh-my-bash.sh ]]; then
+  chk "$HOME/.bashrc.d/15-oh-my-bash.sh" '^export DISABLE_AUTO_UPDATE=true' "Oh My Bash update check is off"
+fi
+if [[ -f $HOME/.bashrc.d/20-offline.sh ]]; then
+  if [[ ${UV_OFFLINE:-} == 1 && ${CARGO_NET_OFFLINE:-} == true ]]; then pass "offline lock is active in this shell (uv, pip, cargo)"
+  else warn "offline lock file exists but is not active in this shell (open a new terminal?)"; fi
+fi
+if grep -q '^\[Account' "$(cfg)/goa-1.0/accounts.conf" 2>/dev/null; then
+  warn "a GNOME Online Account is set up: it syncs in the background"
+fi
+
+head1 "Offline caches"
+if [[ -d $HOME/.local/share/workstation/wheelhouse ]]; then
+  pass "Python wheelhouse: $(find "$HOME/.local/share/workstation/wheelhouse" -name '*.whl' 2>/dev/null | wc -l) wheels"
+else warn "no Python wheelhouse (uv/pip cannot install offline)"; fi
+if [[ -d $HOME/.cargo/registry ]]; then pass "Rust crate cache present"
+else warn "no Rust crate cache (cargo cannot build with dependencies offline)"; fi
+if have podman; then
+  n="$(podman images -q 2>/dev/null | wc -l)"
+  if (( n > 0 )); then pass "$n container image(s) available offline"; else warn "no container images cached"; fi
+fi
+
+say ""
+printf '%sws-doctor summary:%s %d ok, %d warnings, %d failed\n' "$B" "$O" "$PASS" "$WARN" "$FAIL"
+if (( FAIL )); then
+  echo "Failed checks are policy or tool problems. The full verification is: ./setup.sh --self-test"
+  exit 1
+fi
+exit 0
