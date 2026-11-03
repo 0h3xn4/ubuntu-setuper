@@ -961,20 +961,26 @@ helix_setup() {
   install_file .config/helix/languages.toml
 }
 
+# Install containers.conf (pull_policy = "never"). Guard against a podman that rejects it: if podman
+# worked before the file and fails after it, remove the file again. If podman does not work at all
+# here (a container without user namespaces), that says nothing about the file, so it stays.
+install_podman_conf() {
+  local conf="$HOME/.config/containers/containers.conf" existed=0 worked=0
+  if [[ -e $conf ]]; then existed=1; fi
+  if podman info >/dev/null 2>&1; then worked=1; fi
+  install_file .config/containers/containers.conf
+  if (( worked )) && ! podman info >/dev/null 2>&1; then
+    if (( existed == 0 )); then rm -f "$conf"; fi
+    warn "podman did not accept containers.conf (pull_policy); left it out"
+    return 1
+  fi
+}
+
 containers() {
   if on "$INSTALL_PODMAN"; then
     apt_install "${PKGS_PODMAN[@]}"
-    # Whenever podman is installed, it must never pull images by itself (guard: if this podman
-    # rejects the file, remove it again, unless it was already there).
-    local conf="$HOME/.config/containers/containers.conf" existed=0
-    if [[ -e $conf ]]; then existed=1; fi
-    if have podman; then
-      install_file .config/containers/containers.conf
-      if ! podman info >/dev/null 2>&1; then
-        if (( existed == 0 )); then rm -f "$conf"; fi
-        warn "podman did not accept containers.conf (pull_policy); left it out"
-      fi
-    fi
+    # Whenever podman is installed, it must never pull images by itself.
+    if have podman; then install_podman_conf || true; fi
   fi
   if on "$INSTALL_DOCKER"; then
     apt_install "${PKGS_DOCKER[@]}"
@@ -1244,16 +1250,8 @@ cache_images() {
     record_undo "if podman image exists $img; then podman rmi $img; fi"
   done
 
-  # From now on, never pull images implicitly. Guard against an incompatible
-  # podman version: if podman rejects the file, remove it again.
-  local conf="$HOME/.config/containers/containers.conf" existed=0
-  [[ -e $conf ]] && existed=1
-  install_file .config/containers/containers.conf
-  if ! podman info >/dev/null 2>&1; then
-    if (( existed == 0 )); then rm -f "$conf"; fi
-    warn "podman did not accept containers.conf (pull_policy); left it out"
-    return 1
-  fi
+  # From now on, never pull images implicitly.
+  install_podman_conf
 }
 
 # ============================================================================

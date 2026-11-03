@@ -1312,7 +1312,9 @@ that names a missing image fails instead of downloading; an explicit
 
 ```bash
 put "$WS/files/home/.config/containers/containers.conf" ~/.config/containers/containers.conf
-podman info >/dev/null || { echo "podman rejects the file: remove it again"; rm -f ~/.config/containers/containers.conf; }
+# If podman ran fine before and now fails, it rejects the file: remove it again.
+# (If podman cannot run here at all, e.g. in a container, that says nothing about the file.)
+podman info >/dev/null 2>&1 || echo "podman does not run (or rejects the file): check 'podman info' with and without the file"
 ```
 
 ## D4. Enforce the offline environment

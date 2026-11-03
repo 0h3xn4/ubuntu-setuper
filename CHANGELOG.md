@@ -35,6 +35,7 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
 - Undo now covers what was missing: Rust toolchains (and `~/.rustup` when this run created it), cargo tools, uv tools,
   global npm tools; the `podman rmi` undo no longer fails when the image is gone; undo commands find `~/.local/bin` and `~/.cargo/bin`.
 - Privacy hardening now runs after all installs (a dependency re-enabled `motd-news.timer`); `containers.conf` is installed in the Containers step; `~/.rustup` ownership is decided before `rustup set` creates it.
+- The `containers.conf` guard no longer removes the file when podman cannot run at all (a container): it only removes it if podman worked before the file and fails after.
 - E2E test itself: lock phase SIGPIPE, runner images that already ship rustup/`gh`, container images that strip `/usr/share/doc`.
 
 ### Fixed (found by the first CI run on the newest LTS)
