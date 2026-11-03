@@ -1,0 +1,25 @@
+# ~/.config/helix/config.toml — installed by workstation-setup
+theme = "onedark"
+
+[editor]
+line-number = "relative"
+cursorline = true
+bufferline = "multiple"
+color-modes = true
+true-color = true
+rulers = [100]
+
+[editor.lsp]
+display-inlay-hints = true
+display-messages = true
+
+[editor.cursor-shape]
+insert = "bar"
+normal = "block"
+select = "underline"
+
+[editor.file-picker]
+hidden = false
+
+[editor.indent-guides]
+render = true

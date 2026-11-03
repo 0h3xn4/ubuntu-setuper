@@ -1,0 +1,7 @@
+# Tells clangd which build's compile_commands.json to use. The CMake presets
+# put each build in build/<preset>, which clangd does not search on its own.
+# This file is the embedded variant: it is the host build by default. When
+# working on target code, switch it to build/arm-cortex-m (or build/riscv) so
+# clangd sees the cross compiler's flags and headers.
+CompileFlags:
+  CompilationDatabase: build/host-debug

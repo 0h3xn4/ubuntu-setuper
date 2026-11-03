@@ -1,0 +1,4 @@
+# ~/.config/tealdeer/config.toml — installed by workstation-setup
+# Pages were downloaded at install time. Never fetch updates automatically.
+[updates]
+auto_update = false

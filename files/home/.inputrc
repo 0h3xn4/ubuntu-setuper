@@ -1,0 +1,10 @@
+# ~/.inputrc — installed by workstation-setup
+$include /etc/inputrc
+set completion-ignore-case on
+set show-all-if-ambiguous on
+set colored-stats on
+set colored-completion-prefix on
+set mark-symlinked-directories on
+# Type the start of a command, then Up/Down cycles through matching history
+"\e[A": history-search-backward
+"\e[B": history-search-forward

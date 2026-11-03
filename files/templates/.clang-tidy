@@ -1,0 +1,18 @@
+# Starting point for C/C++ static analysis. Tighten to match your standard.
+# For C++ code, consider adding: cppcoreguidelines-*, hicpp-*
+# MISRA C: use 'cppcheck --addon=misra' (requires your licensed rule texts).
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -misc-include-cleaner,
+  -readability-identifier-length,
+  -readability-magic-numbers
+WarningsAsErrors: ''
+FormatStyle: file

@@ -1,0 +1,13 @@
+# ~/.config/vlc/vlcrc — installed by workstation-setup (desktop module)
+# VLC rewrites this file when you change preferences; the settings below are
+# kept. They stop VLC from fetching metadata and album art from the internet
+# and from asking about it on first start.
+[core]
+# Network access for metadata/album art (0 = never)
+metadata-network-access=0
+
+[qt]
+# Do not show the first-run privacy/network dialog
+qt-privacy-ask=0
+# Do not check for updates
+qt-updates-notif=0

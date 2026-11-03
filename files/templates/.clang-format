@@ -1,0 +1,13 @@
+# Starting point only. Align with your project's coding standard
+# (your team's or project's own rules) before adopting it.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+PointerAlignment: Right
+# Include order can matter (platform headers, legacy code); don't let the formatter reorder.
+SortIncludes: Never

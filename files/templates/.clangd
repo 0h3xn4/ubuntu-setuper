@@ -1,0 +1,5 @@
+# Tells clangd which build's compile_commands.json to use. The CMake presets
+# put each build in build/<preset>, which clangd does not search on its own.
+# Change the directory here if you work on a different preset.
+CompileFlags:
+  CompilationDatabase: build/host-debug

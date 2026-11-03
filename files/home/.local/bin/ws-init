@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# ws-init — copy starter files into the current project. Installed by
+# workstation-setup. Never overwrites an existing file.
+#
+#   ws-init               generic starter files (.editorconfig, .clang-format,
+#                         .clang-tidy, .clangd, pre-commit, ruff, host CMake presets)
+#   ws-init --embedded    the same, plus the embedded files (CMake cross
+#                         toolchain files, ARM/RISC-V presets, clangd target note)
+#
+# Every installed module with starter files adds a --<module> option; see
+# 'ws-init --list'. Where a module offers its own variant of a generic file
+# (e.g. .clangd), the module's variant wins.
+set -euo pipefail
+
+SRC="${WS_TEMPLATE_DIR:-$HOME/.local/share/workstation/templates}"
+
+usage() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; }
+
+list_modules() {
+  local d
+  for d in "$SRC"/*/; do
+    d="${d%/}"; d="${d##*/}"
+    if [[ $d != generic ]]; then printf '%s\n' "$d"; fi
+  done
+}
+
+overlays=()
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    --list)    echo "generic"; list_modules | sed 's/^/--/'; exit 0 ;;
+    --[a-z]*)
+      name="${arg#--}"
+      [[ $name =~ ^[a-z][a-z0-9_]*$ ]] || { echo "ws-init: invalid option $arg" >&2; exit 2; }
+      [[ -d $SRC/$name ]] || { echo "ws-init: no starter files for '$name' (module not installed?). Try: ws-init --list" >&2; exit 1; }
+      overlays+=("$name") ;;
+    *) echo "ws-init: unknown argument: $arg" >&2; usage >&2; exit 2 ;;
+  esac
+done
+[[ -d $SRC/generic ]] || { echo "ws-init: no templates found at $SRC/generic" >&2; exit 1; }
+
+declare -A added=()
+
+# Copy every file below $1 into the current directory, never overwriting.
+copy_tree() {
+  local dir="$1" f rel
+  while IFS= read -r -d '' f; do
+    rel="${f#"$dir"/}"
+    if [[ -n ${added[$rel]:-} ]]; then
+      continue                      # a module variant of this file was added already
+    elif [[ -e $rel ]]; then
+      echo "skip (exists): $rel"
+    else
+      mkdir -p "$(dirname "$rel")"
+      cp "$f" "$rel"
+      added[$rel]=1
+      echo "added: $rel"
+    fi
+  done < <(find "$dir" -type f -print0 | sort -z)
+}
+
+# Modules first, so their variants of generic files take precedence.
+for m in "${overlays[@]}"; do copy_tree "$SRC/$m"; done
+generic_presets_new=0
+[[ -e CMakePresets.json ]] || generic_presets_new=1
+copy_tree "$SRC/generic"
+
+# A module may ship cmake/<module>-presets.json; CMakePresets.json includes it.
+for m in "${overlays[@]}"; do
+  inc="cmake/$m-presets.json"
+  [[ -f $inc && -f CMakePresets.json ]] || continue
+  if jq -e --arg i "$inc" '(.include // []) | index($i)' CMakePresets.json >/dev/null 2>&1; then
+    continue
+  fi
+  if (( generic_presets_new )) && command -v jq >/dev/null; then
+    tmp="$(mktemp)"
+    jq --arg i "$inc" '.include = ((.include // []) + [$i])' CMakePresets.json > "$tmp" && mv "$tmp" CMakePresets.json
+    echo "updated: CMakePresets.json (includes $inc)"
+  else
+    echo "note: add  \"include\": [\"$inc\"]  to your existing CMakePresets.json to get the $m presets"
+  fi
+done
+
+echo "Next: review the files, then run 'pre-commit install'."
+echo "Build:  cmake --preset host-debug && cmake --build --preset host-debug && ctest --preset host-debug"

@@ -1,0 +1,16 @@
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableAppUpdate": true,
+    "DisableSystemAddonUpdate": true,
+    "ExtensionUpdate": false,
+    "DontCheckDefaultClient": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "DNSOverHTTPS": {
+      "Enabled": false,
+      "Locked": true
+    },
+    "NetworkPrediction": false
+  }
+}

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.25)
+project(gtest_selftest CXX)
+find_package(GTest REQUIRED)
+enable_testing()
+add_executable(selftest test.cpp)
+target_link_libraries(selftest PRIVATE GTest::gtest_main)
+include(GoogleTest)
+gtest_discover_tests(selftest)
