@@ -26,6 +26,8 @@ EMBEDDED_DIR="$MODULE_DIR"
 # What each step does (shown during install and by ./setup.sh --explain)
 STEP_WHY["Embedded toolchain"]="Cross compilers for ARM and RISC-V, QEMU emulators, OpenOCD and flash tools for debug probes, serial and CAN tools. With JOIN_SERIAL_GROUPS=1 your user also joins the 'dialout' and 'plugdev' groups so serial ports and probes work without sudo (active after the next login); otherwise they need sudo."
 STEP_TOUCHES["Embedded toolchain"]="apt packages; with JOIN_SERIAL_GROUPS=1 system: adds you to groups dialout and plugdev (sudo)."
+STEP_WHY["probe-rs (prebuilt)"]="probe-rs, cargo-flash and cargo-embed (flashing and debugging through debug probes) from the project's own release, checked against its published checksum, instead of compiling them from source (10+ minutes). Set PROBE_RS_PREBUILT=0 to compile with cargo instead."
+STEP_TOUCHES["probe-rs (prebuilt)"]="~/.local/bin (3 programs); network: github.com release download, once."
 STEP_WHY["Wireshark"]="Packet inspection (for telemetry and bus traffic). With JOIN_WIRESHARK_GROUP=1, members of the 'wireshark' group may capture without root; otherwise capture needs sudo."
 STEP_TOUCHES["Wireshark"]="apt package; with JOIN_WIRESHARK_GROUP=1 system: debconf answer + dpkg-reconfigure wireshark-common, adds you to group wireshark (sudo)."
 STEP_WHY["Verification tools"]="Formal and static verification helpers: CBMC bounded model checker, flawfinder, AFL++ fuzzer, lizard (complexity) and codespell."
@@ -66,7 +68,23 @@ mod_embedded_uv_tools() {
   if on "$INSTALL_VERIFICATION"; then printf '%s\n' "${EMBEDDED_UV_TOOLS_VERIFICATION[@]}"; fi
   if on "$INSTALL_FPRIME_BOOTSTRAP"; then echo fprime-bootstrap; fi
 }
-mod_embedded_cargo_tools() { printf '%s\n' "${EMBEDDED_CARGO_TOOLS[@]}"; }
+mod_embedded_cargo_tools() {
+  local t
+  for t in "${EMBEDDED_CARGO_TOOLS[@]}"; do
+    # probe-rs is installed prebuilt unless PROBE_RS_PREBUILT=0
+    if [[ $t == probe-rs-tools ]] && on "$PROBE_RS_PREBUILT"; then continue; fi
+    echo "$t"
+  done
+}
+
+mod_embedded_lock_pins() {
+  # shellcheck disable=SC2016  # writes ': "${X:=value}"' literally
+  if [[ -s $DATA_DIR/probe-rs.version ]]; then printf ': "${PROBE_RS_VERSION:=%s}"\n' "$(<"$DATA_DIR/probe-rs.version")"; fi
+}
+
+mod_embedded_manifest_extra_probe() {
+  if [[ -s $DATA_DIR/probe-rs.version ]]; then echo "probe-rs (prebuilt): $(<"$DATA_DIR/probe-rs.version")"; fi
+}
 mod_embedded_rust_targets() { printf '%s\n' "${EMBEDDED_RUST_TARGETS[@]}"; }
 mod_embedded_py_packages()  { printf '%s\n' "${EMBEDDED_PY_PACKAGES[@]}"; }
 mod_embedded_rust_crates()  { printf '%s\n' "${EMBEDDED_RUST_CRATES[@]}"; }
@@ -77,6 +95,7 @@ mod_embedded_manifest_tools() {
 }
 
 mod_embedded_manifest_extra() {
+  mod_embedded_manifest_extra_probe
   if [[ -d $DATA_DIR/spice ]]; then echo "SPICE kernels:"; (cd "$DATA_DIR/spice" && sha256sum -- * | sed 's/^/  /'); fi
 }
 
@@ -86,6 +105,7 @@ mod_embedded_check_caches() {
 
 mod_embedded_steps() {
   step "Embedded toolchain"             embedded_toolchain
+  if on "$PROBE_RS_PREBUILT";    then step "probe-rs (prebuilt)" probe_rs_prebuilt; fi
   if on "$INSTALL_WIRESHARK";    then step "Wireshark"          wireshark_setup; fi
   if on "$INSTALL_VERIFICATION"; then step "Verification tools" verification_tools; fi
   if on "$INSTALL_GUI_TOOLS";    then step "Embedded GUI tools" embedded_gui_tools; fi
@@ -99,6 +119,26 @@ embedded_toolchain() {
   # Probe udev rules from the packages apply the next time a device is plugged in.
   if on "$JOIN_SERIAL_GROUPS"; then add_to_groups dialout plugdev
   else log "JOIN_SERIAL_GROUPS=0: you are not added to dialout/plugdev; serial ports and probes need sudo"; fi
+}
+
+# probe-rs (debug probes, flashing) from the project's own release tarball, checked
+# against the checksum the project publishes: saves a 10+ minute compile.
+probe_rs_prebuilt() {
+  local asset base tag dir
+  asset="probe-rs-tools-$(host_arch)-unknown-linux-gnu.tar.xz"; dir="${asset%.tar.xz}"
+  if [[ -n ${PROBE_RS_VERSION:-} ]]; then
+    tag="$PROBE_RS_VERSION"; base="https://github.com/probe-rs/probe-rs/releases/download/$tag"
+  else
+    base="https://github.com/probe-rs/probe-rs/releases/latest/download"
+    tag="$(release_tag_of "$base/$asset")"
+  fi
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/$asset.sha256" "$asset"
+  tar -xJf "$STATE_DIR/$asset" -C "$STATE_DIR"
+  mkdir -p "$HOME/.local/bin" "$DATA_DIR"
+  install -m 755 "$STATE_DIR/$dir/probe-rs" "$STATE_DIR/$dir/cargo-embed" "$STATE_DIR/$dir/cargo-flash" "$HOME/.local/bin/"
+  if [[ -n $tag ]]; then printf '%s\n' "$tag" > "$DATA_DIR/probe-rs.version"; fi
+  record_undo "rm -f ~/.local/bin/probe-rs ~/.local/bin/cargo-embed ~/.local/bin/cargo-flash"
+  ok "Installed probe-rs ${tag:-(version unknown)} (prebuilt)"
 }
 
 wireshark_setup() {

@@ -91,7 +91,10 @@ Neutral naming everywhere (project "workstation-setup", ws-help, ws-init,
 ws-devname, /dev/ws/, ~/.local/share/workstation); flight-software specifics
 belong only inside the embedded module.
 
-- **core** (setup.sh + workstation.conf + files/): always on.
+- **core** (setup.sh + workstation.conf + files/): always on. Includes Helix, Kate
+  (INSTALL_KATE; deb; ~/.config/kate/lspclient/settings.json merged over Kate's defaults,
+  verified against Kate's source: JSON merge, same schema), ws-init, ws-doctor (standalone
+  health check), `--undo`, ccache enabled via CMAKE_*_COMPILER_LAUNCHER in 10-workstation.sh.
 - **modules/<name>/** (module.conf = switches and package lists; module.sh =
   hooks, install steps, self-tests; files/ = home files, templates,
   selftest sources, cheatsheet.md): `embedded` (cross compilers, QEMU,
@@ -143,6 +146,20 @@ belong only inside the embedded module.
   policy files, or something else?
 - Should `embedded` be part of the `personal` profile?
 
+## Checks you can run (and CI)
+- `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
+  `tools/install-hooks.sh`). CI (.github/workflows/ci.yml) runs it, then per profile
+  `--check` against the real archive of `ubuntu:latest` and a reduced real install. The CI
+  workflow has NOT been run yet (GitHub Actions cannot be triggered from the sandbox); its
+  self-test step is non-blocking until it has been seen green.
+- The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
+  `./setup.sh --profile X --check` verifies package names for real (only `lazygit` was
+  missing on 24.04). It is NOT the latest LTS (26.04), so names may differ there.
+- A real install (`./setup.sh` without --check) is BLOCKED in the cloud sandbox by its
+  guard ("modify shared resources": sudo, packages, a test user with sudo rights), and
+  must not be worked around. Real installs belong in the CI workflow (container) or in a
+  VM of the user's. Do not create users/sudoers entries in the sandbox to attempt it.
+
 ## Making the setup understandable
 - Every step has a plain-language `STEP_WHY[title]` and `STEP_TOUCHES[title]`
   (core: setup.sh; modules: their module.sh). They are printed during the
@@ -177,11 +194,29 @@ belong only inside the embedded module.
 - Use `if ...; then ...; fi`, not `cmd && cmd`, in functions run under set -e.
 - NEVER locate code in setup.sh with a text search for "main() {": it also
   occurs inside self-test heredocs (C/C++ sources).
+- Downloads outside APT: prefer `fetch_published URL DEST SUMS_URL [NAME]` (checks the
+  checksum the PROJECT publishes; refuses a mismatch; records "<url> <sha> published"
+  in the hash DB, which --lock skips) over `fetch_verified` (trust on first use + lock
+  pin). Read a release tag with `release_tag_of <latest/download URL>` (redirect, no API).
+  Never run a freshly downloaded binary in the cloud sandbox to "test" it: the auto-mode
+  classifier blocks that; verify checksums and file lists instead.
+- NEVER `rm -rf` a path built from $HOME in a command you run (the safety check blocks it);
+  use a fresh scratch directory per test instead.
 - Self-tests: functions t_*, run via `run_test "title" fn [module]`; exit
   codes 0 pass, 77 skip (`skip`, `needs`, `needs_on`), 78 warning, other fail.
 
 ## Status
-Done and checked in a sandbox (Ubuntu 24.04, no package archive, no network):
+Verified against the REAL Ubuntu 24.04 archive (apt lists were reachable): every package
+name in the configs (only lazygit, zellij, difftastic are absent on 24.04; the script skips
+or falls back), and `apt-get install -s --no-remove --no-upgrade` for both profiles shows no
+removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publishes no
+checksum file, so trust-on-first-use stays. Downloads checked for real against the
+projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
+(also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+NOT run: any apt install, the Helix install, Kate, the self-test on an installed machine,
+the CI workflow, anything on the newest LTS (26.04).
+
+Also done and checked in the sandbox:
 - shellcheck is clean on all shell files; bash -n; JSON/YAML/TOML parse.
 - `--check` runs end to end for both profiles; `--self-test`, `--manifest`,
   `--lock` run; a generated lock is loaded again and wins over the config.
@@ -200,15 +235,16 @@ its actual package archive, and the desktop module's app settings are written
 from documentation, not from a run of each app.
 
 ## Open tasks (in order)
-1. In a VM with the latest Ubuntu LTS: `sudo apt update &&
-   ./setup.sh --profile work --check` and the same for `personal`. Fix
-   package names reported NOT AVAILABLE (module.conf / workstation.conf).
+1. Names were checked on 24.04 only. On the latest LTS (26.04): `sudo apt update &&
+   ./setup.sh --profile work --check` and the same for `personal`; fix package names
+   reported NOT AVAILABLE (module.conf / workstation.conf). The CI job does this on
+   `ubuntu:latest` once the workflow has run.
 2. Run `./setup.sh --profile work` in the VM (snapshot first), then
    `--self-test`; repeat for `personal`.
 3. Assumptions to verify on the real latest LTS (written without being able to test):
    - containers.conf `[engine] pull_policy = "never"` is accepted by podman
      (cache_images removes the file again if `podman info` fails).
-   - Helix tarball name helix-<ver>-x86_64-linux.tar.xz (only if Helix isn't in apt).
+   - (verified) Helix tarball name helix-<ver>-x86_64-linux.tar.xz exists on GitHub.
    - `clangd --check` returns non-zero when the file has errors.
    - QEMU semihosting tests (t_emb_arm_qemu, t_emb_riscv_qemu): vector table,
      SYS_EXIT semantics (32-bit ARM passes the reason code directly; RV64 a
@@ -217,8 +253,12 @@ from documentation, not from a run of each app.
      POSIX man pages as section 3posix.
    - udev properties ID_VENDOR_ID / ID_MODEL_ID / ID_SERIAL_SHORT /
      ID_USB_INTERFACE_NUM on tty devices (ws-devname).
-   - starship installer flags `-y -b <dir>`; uv versioned installer URL
-     https://astral.sh/uv/<version>/install.sh.
+   - Release asset names and the .sha256/checksum files of uv, rustup-init, starship,
+     lazygit, Nerd Fonts and probe-rs were checked for real (not the installer scripts any more).
+   - Kate: `QT_QPA_PLATFORM=offscreen kate --version` works headless (used by t_kate);
+     the LSP settings file merge was verified in Kate's source, not by running Kate.
+   - probe-rs: the unpacked binaries run (not executed in the sandbox); probe udev rules
+     are a system file left to the user.
    - Desktop: LibreOffice AutoCheckEnabled item path in
      registrymodifications.xcu; KeePassXC keys GUI/CheckForUpdates and
      Security/IconDownloadFallback; VLC keys metadata-network-access,

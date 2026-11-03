@@ -49,6 +49,7 @@ Make your own profile by copying a file in `profiles/`; it only needs
 | Command | Purpose |
 |---|---|
 | `./setup.sh --profile NAME` | Choose the profile (remembered afterwards) |
+| `./setup.sh --undo [FILE]` | Take back an install run: replays the newest `~/workstation-undo-*.sh` (or FILE) newest-first after listing every command and asking. `--dry-run` only lists, `--yes` skips the question. Never removes APT packages. Works on the manual guide's `~/workstation-undo.sh` too |
 | `./setup.sh --full` | The **full setup**: switch on every opt-in system change (services, `/etc` drop-ins, groups, GNOME settings, `~/.bashrc` loader, git defaults, browser policies). Switches you set yourself in the environment still win. Also `FULL_SETUP=1`. Asks for confirmation in a terminal. Combine with `--explain`/`--check` to preview. Pass it to `--self-test` too so the extra changes are verified |
 | `./setup.sh --explain` | Plain-language tour of every step this profile runs: what it does, why, where it changes things; plus which system changes are on or off. Changes nothing, needs no network |
 | `./setup.sh --check` | Dry run: package availability, conflicts, planned changes |
@@ -179,3 +180,24 @@ with the RTEMS Source Builder, ideally in a Distrobox container), VxWorks,
 SEGGER J-Link software, Renode, MISRA rule texts for cppcheck.
 Browsers and mail clients are not installed (on Ubuntu they are snaps); the
 desktop module only places policy files for Firefox and Thunderbird.
+
+## Tools in `tools/`
+
+| Tool | Purpose |
+|---|---|
+| `tools/check-all.sh [--quick]` | Every check of this repository: `shellcheck`/`bash -n`, JSON/TOML/YAML parsing, README sync, the README's code blocks, `--explain`/`--check` for every profile; without `--quick` also functional tests in a throw-away `HOME` (`ws-init`, `ws-doctor`, `--undo`, manifest diff, the checksum-verified download helper incl. a tamper test, the LibreOffice helper) |
+| `tools/check-readme-sync.sh` | Fails if the README misses a package, tool, home file, step, switch, option or privacy service the script knows about |
+| `tools/manifest-diff.sh A B` | Compare two manifests (two machines, or manual vs scripted setup), ignoring host, user, CPU, kernel, hashes and dates |
+| `tools/install-hooks.sh` | Enable the git pre-commit hook (`check-all.sh --quick`) in this clone |
+
+CI (`.github/workflows/ci.yml`): `check-all.sh` on every push and PR, then for each profile a
+`--check` against the real archive of the newest Ubuntu LTS and a reduced real install in a container.
+
+## Downloads and checksums
+
+Where the project publishes a checksum, the download is compared with *that* checksum and a
+mismatch is refused (`fetch_published`): uv, rustup (`rustup-init`), starship, the Nerd Font
+(`SHA-256.txt`), probe-rs and lazygit (`checksums.txt`). For the rest (the Helix tarball) the
+SHA-256 is recorded on first use and pinned by `--lock` (`fetch_verified`). The release tag of a
+`latest/download` URL is read from its redirect, so no GitHub API call is needed. `PROBE_RS_PREBUILT=0`
+compiles probe-rs with cargo instead; `lazygit` is taken from its release where the archive has none.

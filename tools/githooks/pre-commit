@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Git pre-commit hook of this repository: the quick static checks.
+# Install with:  tools/install-hooks.sh        Skip once with:  git commit --no-verify
+exec "$(git rev-parse --show-toplevel)/tools/check-all.sh" --quick

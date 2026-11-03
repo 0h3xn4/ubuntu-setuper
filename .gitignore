@@ -1,0 +1,8 @@
+# Backups and leftovers of the setup script
+locks/*.bak.*
+*.bak.*
+*.done-*
+.tmp-harness-*
+# Editors
+*.swp
+*~

@@ -30,6 +30,11 @@
 #    ./setup.sh --upgrade          Ignore the pins: install the newest stable
 #                                  versions, run the self-test. Then review and
 #                                  re-pin with --lock.
+#    ./setup.sh --undo [FILE]      Take back what an install run did: replays the undo
+#                                  file (newest ~/workstation-undo-*.sh by default)
+#                                  newest-first, after showing every command and asking.
+#                                  Add --dry-run to only list, --yes to skip the question.
+#                                  Never removes APT packages (see README, Undo).
 #    ./setup.sh --list-profiles    Show the available profiles and modules.
 #    ./setup.sh --help
 #
@@ -91,6 +96,9 @@ PROFILE_STATE="$HOME/.config/workstation/profile"
 MODE=install
 UPGRADE=0
 FULL="${FULL_SETUP:-0}"      # 1 = --full: all opt-in system changes ON
+UNDO_ARG=""                  # --undo [FILE]
+DRY_RUN=0                    # --undo --dry-run: only list
+ASSUME_YES=0                 # --undo --yes: do not ask
 PROFILE="${WORKSTATION_PROFILE:-}"
 LIST_PROFILES=0
 while (( $# )); do
@@ -103,6 +111,10 @@ while (( $# )); do
     --manifest)    MODE=manifest ;;
     --lock)        MODE=lock ;;
     --list-profiles) LIST_PROFILES=1 ;;
+    --undo)        MODE=undo
+                   if [[ ${2:-} != "" && ${2:-} != --* ]]; then UNDO_ARG="$2"; shift; fi ;;
+    --dry-run)     DRY_RUN=1 ;;
+    --yes|-y)      ASSUME_YES=1 ;;
     --profile)     [[ $# -ge 2 ]] || { echo "--profile needs a name" >&2; exit 2; }; PROFILE="$2"; shift ;;
     --profile=*)   PROFILE="${1#--profile=}" ;;
     -h|--help)     sed -n '2,/^# =====/p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -373,10 +385,64 @@ fetch_verified() {
   mv "$tmp" "$dest"
 }
 
-uv_installer_url() {
-  if [[ -n ${UV_VERSION:-} ]]; then echo "https://astral.sh/uv/$UV_VERSION/install.sh"
-  else echo "https://astral.sh/uv/install.sh"; fi
+# Download URL to DEST and verify it against a checksum file PUBLISHED by the
+# project itself (stronger than trust-on-first-use).
+#   $3 = URL of the checksum file
+#   $4 = file name to look for in it; empty = the file holds a single hash
+# Understands "HASH  name", "HASH *./name" and a bare "HASH". If the project's
+# checksum cannot be fetched it falls back to fetch_verified (with a warning).
+fetch_published() {
+  local url="$1" dest="$2" sumurl="$3" name="${4:-}" tmp sums expected actual
+  tmp="$(mktemp)"
+  if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$tmp"; then
+    rm -f "$tmp"; warn "Download failed: $url"; return 1
+  fi
+  if ! sums="$(curl -fsSL --retry 3 --connect-timeout 20 "$sumurl" 2>/dev/null)"; then
+    rm -f "$tmp"
+    warn "No published checksum at $sumurl; falling back to trust-on-first-use"
+    fetch_verified "$url" "$dest"; return
+  fi
+  if [[ -n $name ]]; then
+    expected="$(awk -v n="$name" '{ f = $2; sub(/^\*/, "", f); sub(/^\.\//, "", f); if (f == n) { print $1; exit } }' <<<"$sums")"
+  else
+    expected="$(awk 'NR == 1 { print $1 }' <<<"$sums")"
+  fi
+  if [[ ! $expected =~ ^[0-9a-fA-F]{64}$ ]]; then
+    rm -f "$tmp"; warn "Could not read a SHA-256 for ${name:-the file} from $sumurl"; return 1
+  fi
+  actual="$(sha256sum "$tmp" | cut -d' ' -f1)"
+  if [[ ${expected,,} != "$actual" ]]; then
+    rm -f "$tmp"
+    warn "CHECKSUM MISMATCH against the project's published checksum: $url"
+    warn "  published: $expected"
+    warn "  received:  $actual"
+    return 1
+  fi
+  ok "Checksum verified against the project's published checksum: ${url##*/}"
+  mkdir -p "$(dirname "$HASH_DB")" "$(dirname "$dest")"
+  printf '%s %s published\n' "$url" "$actual" >> "$HASH_DB"
+  mv "$tmp" "$dest"
 }
+
+# The release tag behind a ".../releases/latest/download/<asset>" URL: read from
+# the first redirect, so no API call is needed (and it works behind proxies that
+# block api.github.com). Prints nothing if it cannot be determined.
+release_tag_of() {
+  curl -s -o /dev/null -D - --max-time 30 "$1" 2>/dev/null \
+    | awk 'tolower($1) == "location:" { if (match($2, /\/download\/[^\/]+\//)) { print substr($2, RSTART + 10, RLENGTH - 11); exit } }'
+}
+
+# CPU architecture as used in the projects' release file names (x86_64, aarch64).
+host_arch() { uname -m; }
+
+uv_asset() { echo "uv-$(host_arch)-unknown-linux-gnu.tar.gz"; }
+uv_base_url() {
+  if [[ -n ${UV_VERSION:-} ]]; then echo "https://github.com/astral-sh/uv/releases/download/$UV_VERSION"
+  else echo "https://github.com/astral-sh/uv/releases/latest/download"; fi
+}
+rustup_init_url() { echo "https://static.rust-lang.org/rustup/dist/$(host_arch)-unknown-linux-gnu/rustup-init"; }
+starship_asset() { echo "starship-$(host_arch)-unknown-linux-gnu.tar.gz"; }
+starship_base_url() { echo "https://github.com/starship/starship/releases/latest/download"; }
 helix_url() {  # $1 = version
   echo "https://github.com/helix-editor/helix/releases/download/$1/helix-$1-x86_64-linux.tar.xz"
 }
@@ -384,8 +450,10 @@ helix_url() {  # $1 = version
 # pre-releases and drafts). Network access here happens at install time only.
 helix_version() {
   if [[ -n ${HELIX_VERSION:-} ]]; then echo "$HELIX_VERSION"; return 0; fi
-  curl -fsSL https://api.github.com/repos/helix-editor/helix/releases/latest \
-    | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])'
+  curl -fsSL https://api.github.com/repos/helix-editor/helix/releases/latest 2>/dev/null \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null \
+    || curl -s -o /dev/null -D - --max-time 30 https://github.com/helix-editor/helix/releases/latest \
+    | awk 'tolower($1) == "location:" { n = split($2, a, "/"); gsub(/\r/, "", a[n]); print a[n]; exit }'
 }
 
 # ----------------------------------------------------------------------------
@@ -407,6 +475,8 @@ pkg_groups() {
   echo PKGS_BASE
   if on "$INSTALL_CPP"; then echo PKGS_CPP; fi
   if on "$INSTALL_GUI_TOOLS"; then echo PKGS_GUI; fi
+  if on "$INSTALL_KATE"; then echo PKGS_KATE; fi
+  if on "$INSTALL_NICE_TO_HAVE"; then echo PKGS_NICE_TO_HAVE; fi
   if on "$INSTALL_OFFLINE_DOCS"; then echo PKGS_DOCS; fi
   if on "$INSTALL_PYTHON"; then echo PKGS_PYTHON; fi
   if on "$INSTALL_RUST" && on "$INSTALL_CARGO_TOOLS"; then echo PKGS_RUST_BUILD; fi
@@ -423,9 +493,11 @@ home_files() {
   echo .bashrc.d/10-workstation.sh
   echo .inputrc
   echo .local/bin/ws-init
+  echo .local/bin/ws-doctor
   echo .config/lazygit/config.yml
   echo .config/tealdeer/config.toml
   if on "$INSTALL_OH_MY_BASH"; then echo .bashrc.d/15-oh-my-bash.sh; fi
+  if on "$INSTALL_KATE"; then echo .config/kate/lspclient/settings.json; fi
   if on "$ENFORCE_OFFLINE_ENV"; then echo .bashrc.d/20-offline.sh; fi
   if on "$INSTALL_CPP"; then echo .gdbinit; fi
   if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
@@ -698,8 +770,28 @@ privacy_hardening() {
   fi
 }
 
+# lazygit is not in every Ubuntu release (not in 24.04). Fallback: its release
+# tarball, checked against the checksums.txt the project publishes. The version
+# is read from that file, so no API call is needed.
+lazygit_fallback() {
+  have lazygit && return 0
+  apt_has lazygit && return 0
+  on "$ALLOW_CURL_INSTALLERS" || return 0
+  local base="https://github.com/jesseduffield/lazygit/releases/latest/download" arch=x86_64 asset
+  if [[ $(host_arch) == aarch64 ]]; then arch=arm64; fi
+  asset="$(curl -fsSL --retry 3 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
+           | awk -v a="_linux_$arch.tar.gz" 'index($2, a) { print $2; exit }')"
+  [[ -n $asset ]] || { warn "Could not find a lazygit release for this CPU"; return 0; }
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/checksums.txt" "$asset"
+  mkdir -p "$HOME/.local/bin"
+  tar -xzf "$STATE_DIR/$asset" -C "$HOME/.local/bin" lazygit
+  record_undo "rm -f ~/.local/bin/lazygit"
+  ok "Installed lazygit from the project's release (not in the Ubuntu archive)"
+}
+
 base_cli() {
   apt_install "${PKGS_BASE[@]}"
+  lazygit_fallback
   if have tldr; then
     # Fetch the example pages ONCE now; auto-update stays off afterwards.
     install_file .config/tealdeer/config.toml
@@ -723,8 +815,13 @@ ensure_uv() {
   if apt_has uv; then apt_install uv; fi
   have uv && return 0
   on "$ALLOW_CURL_INSTALLERS" || { warn "uv is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
-  fetch_verified "$(uv_installer_url)" "$STATE_DIR/uv-install.sh"
-  env UV_NO_MODIFY_PATH=1 sh "$STATE_DIR/uv-install.sh"
+  # The release tarball, checked against the checksum astral publishes next to it
+  # (not the installer script: it would also edit your shell startup files).
+  local asset base dir; asset="$(uv_asset)"; base="$(uv_base_url)"; dir="${asset%.tar.gz}"
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/$asset.sha256" "$asset"
+  tar -xzf "$STATE_DIR/$asset" -C "$STATE_DIR"
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$STATE_DIR/$dir/uv" "$STATE_DIR/$dir/uvx" "$HOME/.local/bin/"
   record_undo "rm -f ~/.local/bin/uv ~/.local/bin/uvx"
   have uv
 }
@@ -759,8 +856,11 @@ rust_toolchain() {
   if ! have rustup && apt_has rustup; then apt_install rustup; fi
   if ! have rustup; then
     on "$ALLOW_CURL_INSTALLERS" || { warn "rustup is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
-    fetch_verified "https://sh.rustup.rs" "$STATE_DIR/rustup-init.sh"
-    sh "$STATE_DIR/rustup-init.sh" -y --no-modify-path --default-toolchain none
+    # rustup-init itself, checked against the .sha256 the Rust project publishes
+    # (instead of the sh.rustup.rs script that downloads it).
+    fetch_published "$(rustup_init_url)" "$STATE_DIR/rustup-init" "$(rustup_init_url).sha256" "rustup-init"
+    chmod +x "$STATE_DIR/rustup-init"
+    "$STATE_DIR/rustup-init" -y --no-modify-path --default-toolchain none
     record_undo "rustup self uninstall -y"
   fi
   if rustup set auto-self-update disable >/dev/null 2>&1; then
@@ -802,6 +902,17 @@ bash_lsp() {
   done
   npm install -g "${specs[@]}"
 }
+
+kate_setup() {
+  apt_install "${PKGS_KATE[@]}"
+  # Language servers for Kate's LSP client: ours (basedpyright, ruff, cmake, taplo) in
+  # addition to Kate's defaults (clangd, rust-analyzer, bash-language-server). Merged
+  # over Kate's built-in settings by Kate itself. JSON/YAML servers are not installed
+  # on purpose: their defaults download schemas from the internet.
+  install_file .config/kate/lspclient/settings.json
+}
+
+nice_to_have() { apt_install "${PKGS_NICE_TO_HAVE[@]}"; }
 
 helix_setup() {
   # No snap: snapd auto-refreshes from the online Snap Store.
@@ -856,6 +967,10 @@ NERD_FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNerdFont"
 nerd_font_version() {
   if [[ -n ${NERD_FONT_VERSION:-} ]]; then echo "$NERD_FONT_VERSION"; return 0; fi
   # "latest" excludes pre-releases and drafts. Network access at install time only.
+  # The redirect of the "latest" download names the tag; the API is the second choice.
+  local tag
+  tag="$(release_tag_of https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz)"
+  if [[ -n $tag ]]; then echo "$tag"; return 0; fi
   curl -fsSL --max-time 30 https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest \
     | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])'
 }
@@ -867,15 +982,16 @@ nerd_font() {
   if [[ $fonts == *'JetBrainsMono Nerd Font Mono'* ]] && ! on "$UPGRADE"; then
     ok "JetBrains Mono Nerd Font is already installed"; return 0
   fi
-  local ver url
+  local ver base
   if ver="$(nerd_font_version 2>/dev/null)" && [[ -n $ver ]]; then
-    url="https://github.com/ryanoasis/nerd-fonts/releases/download/$ver/JetBrainsMono.tar.xz"
+    base="https://github.com/ryanoasis/nerd-fonts/releases/download/$ver"
   else
     ver=""
-    url="https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz"
+    base="https://github.com/ryanoasis/nerd-fonts/releases/latest/download"
     warn "Could not look up the newest release; using the 'latest' download (its version cannot be pinned)"
   fi
-  fetch_verified "$url" "$STATE_DIR/jbm-nerd.tar.xz"
+  # Checked against SHA-256.txt, which the Nerd Fonts project publishes with each release.
+  fetch_published "$base/JetBrainsMono.tar.xz" "$STATE_DIR/jbm-nerd.tar.xz" "$base/SHA-256.txt" "JetBrainsMono.tar.xz"
   mkdir -p "$NERD_FONT_DIR"
   # Only the two ligature families: "Nerd Font" and "Nerd Font Mono" (the Mono one
   # is the right choice for terminals). Skips the "NL" (no ligatures) and "Propo" variants.
@@ -944,14 +1060,17 @@ EOF
   if on "$ENFORCE_OFFLINE_ENV"; then install_file .bashrc.d/20-offline.sh; fi
   install_file .inputrc
   install_file .local/bin/ws-init 755
+  install_file .local/bin/ws-doctor 755
   install_cheatsheet
 
   if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH" && ! have starship; then
     if apt_has starship; then
       apt_install starship
     elif on "$ALLOW_CURL_INSTALLERS"; then
-      fetch_verified "https://starship.rs/install.sh" "$STATE_DIR/starship-install.sh"
-      sh "$STATE_DIR/starship-install.sh" -y -b "$HOME/.local/bin"
+      local sasset; sasset="$(starship_asset)"
+      fetch_published "$(starship_base_url)/$sasset" "$STATE_DIR/$sasset" "$(starship_base_url)/$sasset.sha256"
+      mkdir -p "$HOME/.local/bin"
+      tar -xzf "$STATE_DIR/$sasset" -C "$HOME/.local/bin" starship
       record_undo "rm -f ~/.local/bin/starship"
     fi
   fi
@@ -1196,14 +1315,14 @@ check_mode() {
   fi
 
   section "Tools installed outside APT"
-  if on "$INSTALL_PYTHON"; then plan_tool uv uv uv "$(uv_installer_url)"; fi
-  if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "https://sh.rustup.rs"; fi
+  if on "$INSTALL_PYTHON"; then plan_tool uv uv uv "$(uv_base_url)/$(uv_asset) (checked against the published .sha256)"; fi
+  if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "$(rustup_init_url) (checked against the published .sha256)"; fi
   if on "$INSTALL_HELIX"; then
     if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")"
     else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest"; fi
   fi
-  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then plan_tool starship starship starship "https://starship.rs/install.sh"; fi
-  if on "$INSTALL_NERD_FONT"; then printf '    %-10s %s\n' "Nerd Font" "download JetBrainsMono.tar.xz from github.com/ryanoasis/nerd-fonts (${NERD_FONT_VERSION:-newest stable}; SHA-256 recorded)"; fi
+  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then plan_tool starship starship starship "$(starship_base_url)/$(starship_asset) (checked against the published .sha256)"; fi
+  if on "$INSTALL_NERD_FONT"; then printf '    %-10s %s\n' "Nerd Font" "download JetBrainsMono.tar.xz from github.com/ryanoasis/nerd-fonts (${NERD_FONT_VERSION:-newest stable}; checked against the published SHA-256.txt)"; fi
   if on "$INSTALL_OH_MY_BASH"; then printf '    %-10s %s\n' "Oh My Bash" "git clone of ONE commit (${OH_MY_BASH_COMMIT:-current HEAD}) from github.com/ohmybash/oh-my-bash"; fi
   echo
   if on "$INSTALL_RUST"; then printf '    Rust toolchain: %s\n' "$RUST_TOOLCHAIN"; fi
@@ -1561,6 +1680,14 @@ EOF
   # The runtime offline lock lives in ~/.bashrc.d; without the loader it is not active.
   if on "$ENFORCE_OFFLINE_ENV" && ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
     warnings+=("~/.bashrc does not load ~/.bashrc.d, so the offline lock for uv/pip/cargo is not active in new shells (ENABLE_SHELL_LOADER=1, or add the loader yourself)"); fi
+  if on "$INSTALL_KATE" && have kate; then
+    # Kate's default JSON/YAML language servers download schemas from the internet:
+    # fine while they are not installed, a policy problem if someone installs them.
+    for u in vscode-json-languageserver yaml-language-server; do
+      if have "$u"; then problems+=("$u is installed: Kate would use it, and it fetches schemas online"); fi
+    done
+    [[ -f $HOME/.config/kate/lspclient/settings.json ]] || problems+=("Kate LSP settings missing (~/.config/kate/lspclient/settings.json)")
+  fi
   if on "$INSTALL_OH_MY_BASH"; then
     local omb_file="$HOME/.bashrc.d/15-oh-my-bash.sh"
     if [[ ! -f $omb_file ]]; then problems+=("Oh My Bash is enabled but $omb_file is missing")
@@ -1590,6 +1717,49 @@ t_offline_docs() {
   if have rustup; then rustup doc --path >/dev/null 2>&1 || missing+=("Rust docs"); fi
   if (( ${#missing[@]} )); then printf 'missing: %s\n' "${missing[@]}"; exit 1; fi
   echo "all offline documentation present"
+}
+
+t_ccache() {
+  needs ccache cmake ninja gcc
+  # 10-workstation.sh must turn ccache on for CMake builds...
+  local launcher
+  launcher="$(bash --norc -c '. "$1" >/dev/null 2>&1; echo "$CMAKE_C_COMPILER_LAUNCHER"' _ "$FILES/home/.bashrc.d/10-workstation.sh")"
+  [[ $launcher == ccache ]] || { echo "CMAKE_C_COMPILER_LAUNCHER is '$launcher', not ccache"; exit 1; }
+  # ...and a second build in a fresh build directory must hit the cache.
+  export CCACHE_DIR="$PWD/cc" CMAKE_C_COMPILER_LAUNCHER=ccache
+  cp -r "$FILES/selftest/presets/." .
+  ccache --zero-stats >/dev/null
+  local i
+  for i in 1 2; do
+    rm -rf "build$i"
+    cmake -S . -B "build$i" -G Ninja >/dev/null
+    cmake --build "build$i" >/dev/null
+  done
+  ccache --print-stats | awk -F'\t' '$1 == "direct_cache_hit" || $1 == "preprocessed_cache_hit" { s += $2 } END { exit !(s > 0) }' \
+    || { ccache -s; echo "no cache hit on the second build"; exit 1; }
+  echo "second build was served from the ccache"
+}
+
+t_ws_doctor() {
+  # It must run on its own (no repo needed) and print its summary; whether it
+  # reports problems depends on the machine, so only a crash fails this test.
+  local out rc=0
+  out="$("$FILES/home/.local/bin/ws-doctor" --quiet 2>&1)" || rc=$?
+  (( rc <= 1 )) || { echo "$out"; exit 1; }
+  grep -q 'ws-doctor summary' <<<"$out" || { echo "$out"; exit 1; }
+  tail -n 1 <<<"$out"
+}
+
+t_kate() {
+  needs_on INSTALL_KATE
+  needs kate
+  python3 -I - "$HOME/.config/kate/lspclient/settings.json" <<'EOT'
+import json, sys
+servers = json.load(open(sys.argv[1]))["servers"]
+assert servers["python"]["servers"]["basedpyright"]["command"][0] == "basedpyright-langserver"
+print("Kate LSP settings parse; servers:", ", ".join(sorted(servers)))
+EOT
+  QT_QPA_PLATFORM=offscreen kate --version
 }
 
 t_nerd_font() {
@@ -1641,6 +1811,9 @@ self_test() {
   run_test "No-cloud policy"                          t_nocloud_policy
   run_test "Offline documentation"                    t_offline_docs
   run_test "JetBrains Mono Nerd Font installed"       t_nerd_font
+  run_test "Kate starts and its LSP settings parse"   t_kate
+  run_test "ws-doctor runs on its own"                t_ws_doctor
+  run_test "ccache speeds up a CMake rebuild"         t_ccache
   run_test "Oh My Bash loads with updates off"        t_oh_my_bash
   module_collect selftests
   echo
@@ -1764,6 +1937,7 @@ EOF
     if [[ -s $NERD_FONT_DIR/.version ]]; then printf ': "${NERD_FONT_VERSION:=%s}"\n' "$(<"$NERD_FONT_DIR/.version")"; fi
     # shellcheck disable=SC2016
     if [[ -d $OMB_DIR/.git ]]; then printf ': "${OH_MY_BASH_COMMIT:=%s}"\n' "$(git -C "$OMB_DIR" rev-parse HEAD)"; fi
+    module_collect lock_pins
     echo
 
     echo "declare -gA UV_PINS=("
@@ -1826,7 +2000,7 @@ PY
 
     echo "declare -gA DOWNLOAD_SHA256=("
     if [[ -f $HASH_DB ]]; then
-      awk '{ h[$1] = $2 } END { for (u in h) printf "  [\"%s\"]=\"%s\"\n", u, h[u] }' "$HASH_DB" | sort
+      awk '$3 != "published" { h[$1] = $2 } END { for (u in h) printf "  [\"%s\"]=\"%s\"\n", u, h[u] }' "$HASH_DB" | sort
     fi
     echo ")"
   ) > "$tmp"
@@ -1963,10 +2137,16 @@ STEP_WHY["Base CLI tools"]="Everyday command-line tools (git, ripgrep, fzf, jq, 
 STEP_TOUCHES["Base CLI tools"]="apt packages; ~/.config/tealdeer/config.toml; network: tldr pages, once."
 
 STEP_WHY["JetBrains Mono Nerd Font"]="JetBrains Mono with icon glyphs added (the 'Nerd Font' and 'Nerd Font Mono' families), installed for your user only, so prompts and themes can show icons. It is not in the Ubuntu archive: downloaded once from the project's GitHub release and checksum-verified. To use it, pick 'JetBrainsMono Nerd Font Mono' as the terminal font (SET_GNOME_FONT=1 does it for GNOME)."
-STEP_TOUCHES["JetBrains Mono Nerd Font"]="~/.local/share/fonts/JetBrainsMonoNerdFont (32 font files) and the font cache; network: github.com release download, once."
+STEP_TOUCHES["JetBrains Mono Nerd Font"]="~/.local/share/fonts/JetBrainsMonoNerdFont (32 font files) and the font cache; network: github.com release download, once (checked against the project's published SHA-256.txt)."
 
 STEP_WHY["Oh My Bash"]="(Only with INSTALL_OH_MY_BASH=1.) The Oh My Bash framework (themes, aliases, plugins) from ONE pinned commit, loaded from ~/.bashrc.d/15-oh-my-bash.sh with its GitHub update check switched off. Its own installer is not used because it would replace your ~/.bashrc. While it is enabled it owns the prompt, so the starship prompt is not started."
 STEP_TOUCHES["Oh My Bash"]="~/.local/share/oh-my-bash (git clone of one commit), ~/.bashrc.d/15-oh-my-bash.sh; network: github.com, at install time only."
+
+STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files."
+STEP_TOUCHES["Kate editor"]="apt packages (kate and KDE libraries); ~/.config/kate/lspclient/settings.json."
+
+STEP_WHY["Extra terminal tools"]="Nice-to-have terminal tools: zellij (a beginner-friendlier terminal multiplexer than tmux) and difftastic (structural diffs). Packages the archive of your Ubuntu release lacks are skipped and reported."
+STEP_TOUCHES["Extra terminal tools"]="apt packages."
 
 STEP_WHY["C/C++ toolchain"]="Compilers, build systems, debuggers, static analyzers and test frameworks for C and C++."
 STEP_TOUCHES["C/C++ toolchain"]="apt packages; ~/.gdbinit."
@@ -1975,10 +2155,10 @@ STEP_WHY["GUI tools"]="Meld, a visual diff and merge tool."
 STEP_TOUCHES["GUI tools"]="apt package."
 
 STEP_WHY["Python tools"]="uv (package and tool manager) and the Python developer tools (ruff, basedpyright, pre-commit, ...), installed per user. uv is told never to download Python interpreters."
-STEP_TOUCHES["Python tools"]="apt packages; ~/.local (uv and the tools); ~/.config/uv/uv.toml; network: uv installer only if uv is not in the archive, PyPI for the tools."
+STEP_TOUCHES["Python tools"]="apt packages; ~/.local (uv and the tools); ~/.config/uv/uv.toml; network: uv's release tarball only if uv is not in the archive (checked against astral's published checksum), PyPI for the tools."
 
 STEP_WHY["Rust toolchain"]="rustup with the newest stable Rust, the editor components, and cargo tools compiled from source (slow). rustup's self-update is switched off."
-STEP_TOUCHES["Rust toolchain"]="apt build libraries; ~/.rustup and ~/.cargo; network: rustup installer only if not in the archive, Rust servers, crates.io."
+STEP_TOUCHES["Rust toolchain"]="apt build libraries; ~/.rustup and ~/.cargo; network: rustup-init only if not in the archive (checked against the Rust project's published checksum), Rust servers, crates.io."
 
 STEP_WHY["Offline documentation"]="Reference documentation that works without internet: C/C++ (cppreference), Python, CMake, POSIX, glibc, GDB."
 STEP_TOUCHES["Offline documentation"]="apt packages (docs, man pages)."
@@ -1992,8 +2172,8 @@ STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; 
 STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on)."
 STEP_TOUCHES["Containers"]="apt packages; with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
 
-STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands, written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
-STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship installer only if not in the archive."
+STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
+STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball only if not in the archive (checked against its published checksum)."
 
 STEP_WHY["Git setup"]="Switches lazygit's update check off. With SET_GIT_DEFAULTS=1 it also sets sensible global git defaults, only where you have not set a value yourself; GIT_NAME/GIT_EMAIL are applied if you give them."
 STEP_TOUCHES["Git setup"]="~/.config/lazygit/config.yml; ~/.gitconfig only with SET_GIT_DEFAULTS=1 or GIT_NAME/GIT_EMAIL."
@@ -2029,6 +2209,8 @@ run_steps() {
   if on "$INSTALL_OFFLINE_DOCS"; then step "Offline documentation"     offline_docs; fi
   if on "$INSTALL_BASH_LSP";     then step "Bash language server"      bash_lsp; fi
   if on "$INSTALL_HELIX";        then step "Helix editor"              helix_setup; fi
+  if on "$INSTALL_KATE";         then step "Kate editor"               kate_setup; fi
+  if on "$INSTALL_NICE_TO_HAVE"; then step "Extra terminal tools"      nice_to_have; fi
   step "Containers"                    containers
   step "Shell (bash) setup"            shell_setup
   if on "$INSTALL_OH_MY_BASH";   then step "Oh My Bash"                oh_my_bash; fi
@@ -2067,6 +2249,49 @@ EOT
   show_opt_in
 }
 
+# --undo: replay an undo file newest-first. The commands are the ones this setup
+# recorded itself (see record_undo); all of them are shown before anything runs.
+undo_mode() {
+  local file="${UNDO_ARG:-}" line i n=0 failed=0 answer
+  local -a cmds=() failures=()
+  if [[ -z $file ]]; then
+    file="$(find "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+  fi
+  [[ -n $file && -f $file ]] || die "No undo file found (looked for ~/workstation-undo-*.sh). Give one: ./setup.sh --undo FILE"
+  while IFS= read -r line; do
+    case $line in ''|'#'*|'set -x') continue ;; esac
+    cmds+=("$line")
+  done < "$file"
+  (( ${#cmds[@]} )) || { ok "$file records no changes: nothing to undo"; return 0; }
+
+  section "Undo: $file"
+  echo "These ${#cmds[@]} commands will run, newest first. Installed APT packages are NOT removed"
+  echo "(see 'Undo' in the README for apt history)."
+  echo
+  for (( i = ${#cmds[@]} - 1; i >= 0; i-- )); do n=$((n + 1)); printf '  %2d. %s\n' "$n" "${cmds[i]}"; done
+  echo
+  if (( DRY_RUN )); then ok "Dry run: nothing was changed"; return 0; fi
+  if (( ! ASSUME_YES )); then
+    [[ -t 0 && -t 1 ]] || die "Not a terminal: add --yes to run without asking"
+    read -rp "Run these commands? [y/N] " answer
+    [[ $answer == [yY] ]] || { echo "Nothing was changed."; return 1; }
+  fi
+  if printf '%s\n' "${cmds[@]}" | grep -q 'sudo '; then sudo -v || die "sudo is needed for some of these commands"; fi
+  n=0
+  for (( i = ${#cmds[@]} - 1; i >= 0; i-- )); do
+    n=$((n + 1))
+    printf '%s[%d/%d]%s %s\n' "$c_blue" "$n" "${#cmds[@]}" "$c_off" "${cmds[i]}"
+    if ! bash -c "${cmds[i]}"; then failed=$((failed + 1)); failures+=("${cmds[i]}"); warn "That command failed; continuing"; fi
+  done
+  if (( failed )); then
+    warn "$failed command(s) failed; the undo file is kept: $file"
+    printf '     - %s\n' "${failures[@]}"
+    return 1
+  fi
+  mv "$file" "$file.done-$TIMESTAMP"
+  ok "Undone. The undo file was renamed to $file.done-$TIMESTAMP"
+}
+
 # Remember the chosen profile so --check/--self-test/--lock default to it.
 remember_profile() {
   local old=""
@@ -2085,6 +2310,7 @@ remember_profile() {
 
 main() {
   if (( LIST_PROFILES )); then list_profiles; return 0; fi
+  if [[ $MODE == undo ]]; then undo_mode; return; fi
   load_config
   case "$MODE" in
     check)    check_mode; return 0 ;;
