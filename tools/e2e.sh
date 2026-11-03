@@ -200,7 +200,8 @@ ph_lock() {
   grep -c '^  \["' "$lock" | sed 's/^/pins written: /'
   grep -q 'declare -gA UV_PINS' "$lock" || { echo "lock lacks UV_PINS"; bad=1; }
   grep -q 'RUST_TOOLCHAIN:=' "$lock" || { echo "lock lacks the Rust toolchain version"; bad=1; }
-  WORKSTATION_LOCK="$lock" setup --check 2>&1 | strip | grep -q 'versions pinned' || { echo "--check did not load the lock"; bad=1; }
+  local checked; checked="$(WORKSTATION_LOCK="$lock" setup --check 2>&1 | strip || true)"   # captured: grep -q on a pipe can SIGPIPE under pipefail
+  grep -q 'versions pinned' <<<"$checked" || { echo "--check did not load the lock"; bad=1; }
   grep -E 'UV_VERSION|HELIX_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
   return $bad
 }
@@ -224,11 +225,15 @@ ph_undo() {
 
 ph_leftovers() {
   local p bad=0 found=()
+  # A runner image may already ship rustup: what existed before the install is not ours to remove.
+  local -a skip=()
+  if [[ -n ${E2E_PRE_RUSTUP:-} ]]; then skip=("$HOME/.rustup" "$HOME/.cargo/bin/rustup"); fi
   for p in "$HOME"/.local/bin/{ws-init,ws-doctor,ws-devname,uv,uvx,hx,probe-rs,cargo-flash,cargo-embed,starship,lazygit} \
            "$HOME/.local/share/workstation" "$HOME/.config/helix" "$HOME/.config/uv" "$HOME/.config/kate/lspclient/settings.json" \
            "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$HOME/WORKSTATION-CHEATSHEET.md" \
            "$HOME/.inputrc" "$HOME/.cargo/bin/rustup" "$HOME/.rustup" /etc/sysctl.d/60-dev-inotify.conf \
            /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json; do
+    if [[ " ${skip[*]} " == *" $p "* ]]; then continue; fi
     if [[ -d $p ]]; then
       # an empty directory is not a leftover (undo removes the files it created, not the folders)
       [[ -n "$(find "$p" -type f -print -quit 2>/dev/null)" ]] && found+=("$p")
@@ -242,6 +247,8 @@ ph_leftovers() {
   bash -ic 'ws-doctor --quiet' 2>&1 | strip | tail -n 2 | sed 's/^/  after undo: /'
   return $bad
 }
+
+if [[ -e $HOME/.rustup || -e $HOME/.cargo/bin/rustup ]]; then E2E_PRE_RUSTUP=1; fi
 
 echo; echo "Running 10 phases (this takes a while: it is a full install)"
 run_phase "explain+check" ph_explain_check

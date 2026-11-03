@@ -502,7 +502,7 @@ home_files() {
   if on "$INSTALL_CPP"; then echo .gdbinit; fi
   if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
   if on "$INSTALL_HELIX"; then echo .config/helix/config.toml; echo .config/helix/languages.toml; fi
-  if on "$CACHE_CONTAINER_IMAGES"; then echo .config/containers/containers.conf; fi
+  if on "$INSTALL_PODMAN" || on "$CACHE_CONTAINER_IMAGES"; then echo .config/containers/containers.conf; fi
   module_collect home_files
 }
 
@@ -726,8 +726,10 @@ disable_units() {
   for u in "$@"; do
     state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
     if [[ $state == enabled ]]; then
-      sudo systemctl disable --now "$u" >/dev/null 2>&1 || { warn "Could not disable $u"; continue; }
-      record_undo "sudo systemctl enable --now $u"
+      # 'disable' is what matters; stopping is best effort (no running systemd in a container)
+      sudo systemctl disable "$u" >/dev/null 2>&1 || { warn "Could not disable $u"; continue; }
+      sudo systemctl stop "$u" >/dev/null 2>&1 || true
+      record_undo "sudo systemctl enable $u"
       ok "Disabled $u"
     fi
   done
@@ -833,9 +835,11 @@ uv_tool_install() {
     if [[ -n $current ]] && on "$UPGRADE"; then uv tool upgrade "$t"; return; fi
     if [[ -n $current ]]; then ok "$t $current (already installed)"; return 0; fi
     uv tool install "$t"
+    record_undo "uv tool uninstall $t"
   else
     if [[ $current == "$pin" ]]; then ok "$t $pin (pinned, already installed)"; return 0; fi
     uv tool install --reinstall "$t==$pin"
+    if [[ -z $current ]]; then record_undo "uv tool uninstall $t"; fi
   fi
 }
 
@@ -866,6 +870,12 @@ rust_toolchain() {
   if rustup set auto-self-update disable >/dev/null 2>&1; then
     record_undo "rustup set auto-self-update enable"
   fi
+  # The archive's rustup has no self-uninstall, so undo what we add: the toolchain (with its
+  # components and targets) and, if this run created it, the ~/.rustup directory itself.
+  if [[ ! -e $HOME/.rustup ]]; then record_undo "rm -rf ~/.rustup"; fi
+  if ! rustup toolchain list 2>/dev/null | grep -q "^$RUST_TOOLCHAIN"; then
+    record_undo "rustup toolchain uninstall $RUST_TOOLCHAIN"
+  fi
   rustup toolchain install "$RUST_TOOLCHAIN" --profile default
   rustup default "$RUST_TOOLCHAIN"
   rustup component add "${RUST_COMPONENTS[@]}"
@@ -880,6 +890,10 @@ rust_toolchain() {
     for c in "${cargo_tools[@]}"; do
       pin="${CARGO_PINS[$c]:-}"
       if [[ -n $pin ]]; then specs+=("$c@$pin"); else specs+=("$c"); fi
+    done
+    local installed_before; installed_before="$(cargo install --list 2>/dev/null || true)"
+    for c in "${cargo_tools[@]}"; do
+      if ! grep -q "^$c v" <<<"$installed_before"; then record_undo "cargo uninstall $c"; fi
     done
     log "Compiling cargo tools (this can take 10+ minutes)"
     cargo install --locked "${specs[@]}"
@@ -899,6 +913,9 @@ bash_lsp() {
   for t in "${NPM_TOOLS[@]}"; do
     pin="${NPM_PINS[$t]:-}"
     if [[ -n $pin ]]; then specs+=("$t@$pin"); else specs+=("$t"); fi
+  done
+  for t in "${NPM_TOOLS[@]}"; do
+    if [[ ! -e $HOME/.local/lib/node_modules/$t ]]; then record_undo "npm uninstall -g $t"; fi
   done
   npm install -g "${specs[@]}"
 }
@@ -1210,7 +1227,7 @@ cache_images() {
       if podman pull "$img"; then ok "Pulled $img"
       else warn "Could not pull $img"; echo "$img (container image)" >> "$MISSING_FILE"; continue; fi
     fi
-    record_undo "podman rmi $img"
+    record_undo "if podman image exists $img; then podman rmi $img; fi"
   done
 
   # From now on, never pull images implicitly. Guard against an incompatible
@@ -1661,7 +1678,7 @@ langs = {l["name"]: l for l in tomllib.load(open(sys.argv[1], "rb")).get("langua
 sys.exit(0 if all(langs.get(n, {}).get("language-servers") == [] for n in ("json", "yaml")) else 1)
 EOF
   fi
-  if on "$CACHE_CONTAINER_IMAGES" && have podman \
+  if have podman \
      && ! grep -q 'pull_policy = "never"' "$HOME/.config/containers/containers.conf" 2>/dev/null; then
     problems+=("podman may pull images implicitly"); fi
   if on "$ENFORCE_OFFLINE_ENV" && [[ ! -f "$HOME/.bashrc.d/20-offline.sh" ]]; then
@@ -2281,7 +2298,8 @@ undo_mode() {
   for (( i = ${#cmds[@]} - 1; i >= 0; i-- )); do
     n=$((n + 1))
     printf '%s[%d/%d]%s %s\n' "$c_blue" "$n" "${#cmds[@]}" "$c_off" "${cmds[i]}"
-    if ! bash -c "${cmds[i]}"; then failed=$((failed + 1)); failures+=("${cmds[i]}"); warn "That command failed; continuing"; fi
+    # tools we installed live in ~/.local/bin and ~/.cargo/bin, which a plain shell may not have on PATH
+    if ! PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" bash -c "${cmds[i]}"; then failed=$((failed + 1)); failures+=("${cmds[i]}"); warn "That command failed; continuing"; fi
   done
   if (( failed )); then
     warn "$failed command(s) failed; the undo file is kept: $file"

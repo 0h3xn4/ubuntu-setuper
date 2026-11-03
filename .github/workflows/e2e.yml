@@ -34,6 +34,9 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           df -h /
+      - name: Remove what a fresh Ubuntu does not have
+        # The runner image ships the GitHub CLI; a real workstation must not have it (no-cloud policy).
+        run: sudo apt-get purge -y gh || true
       - name: Full lifecycle
         env:
           E2E_LOG_DIR: ${{ github.workspace }}/e2e-logs
@@ -64,6 +67,8 @@ jobs:
     steps:
       - name: Prerequisites inside the container
         run: |
+          # The minimal image strips /usr/share/doc and man pages; a real install keeps them.
+          rm -f /etc/dpkg/dpkg.cfg.d/excludes
           apt-get update
           apt-get install -y sudo git curl ca-certificates python3 jq xz-utils
       - uses: actions/checkout@v4

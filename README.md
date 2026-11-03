@@ -480,7 +480,7 @@ Undo: the `record_undo` lines above; the commands are in `~/workstation-undo.sh`
 
 ```bash
 apt_install \
-  git git-lfs wget unzip zip p7zip-full xz-utils zstd rsync tree file \
+  git git-lfs wget unzip zip 7zip xz-utils zstd rsync tree file \
   distro-info htop btop jq yq ripgrep fd-find bat eza zoxide fzf direnv \
   tealdeer hyperfine entr just tmux bash-completion shellcheck shfmt \
   yamllint git-delta lazygit moreutils pv ncdu libxml2-utils \
@@ -1031,7 +1031,7 @@ apt_install \
   libstdc++-arm-none-eabi-newlib gcc-riscv64-unknown-elf \
   picolibc-riscv64-unknown-elf gdb-multiarch openocd stlink-tools \
   dfu-util srecord can-utils sigrok-cli qemu-system-arm qemu-system-misc \
-  qemu-system-sparc qemu-user-static qemu-utils tio picocom minicom \
+  qemu-system-sparc qemu-user qemu-user-binfmt qemu-utils tio picocom minicom \
   libudev-dev
 ```
 
@@ -1298,10 +1298,10 @@ only as deliberate exceptions.
 
 ```bash
 podman pull docker.io/library/ubuntu:latest
-record_undo "podman rmi docker.io/library/ubuntu:latest"
+record_undo "if podman image exists docker.io/library/ubuntu:latest; then podman rmi docker.io/library/ubuntu:latest; fi"
 ```
 
-From now on, never pull images implicitly (a `podman run`/`distrobox create`
+Whenever podman is installed (even if you cache no images), never pull images implicitly (a `podman run`/`distrobox create`
 that names a missing image fails instead of downloading; an explicit
 `podman pull` still works):
 

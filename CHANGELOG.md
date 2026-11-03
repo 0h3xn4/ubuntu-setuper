@@ -26,6 +26,16 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
 - Fix found by reading the code for it: the sysctl drop-in is now recorded for undo as soon as it is
   written, and failing to apply it (container) only warns.
 
+### Fixed (found by the first end-to-end run on Ubuntu 26.04 LTS)
+- Package names that changed: `p7zip-full` is now `7zip`; `qemu-user-static` is now `qemu-user` + `qemu-user-binfmt`
+  (both names also exist on 24.04).
+- `containers.conf` (podman never pulls implicitly) is installed whenever podman is, not only with the image cache.
+- Disabling a service no longer uses `--now` (fails without a running systemd, e.g. in a container): it disables,
+  then stops on a best-effort basis. Its undo is `systemctl enable`.
+- Undo now covers what was missing: Rust toolchains (and `~/.rustup` when this run created it), cargo tools, uv tools,
+  global npm tools; the `podman rmi` undo no longer fails when the image is gone; undo commands find `~/.local/bin` and `~/.cargo/bin`.
+- E2E test itself: lock phase SIGPIPE, runner images that already ship rustup/`gh`, container images that strip `/usr/share/doc`.
+
 ### Fixed (found by the first CI run on the newest LTS)
 - `ws-doctor` no longer reports tools in `~/.local/bin` / `~/.cargo/bin` as missing when the
   (opt-in) shell loader is off.
