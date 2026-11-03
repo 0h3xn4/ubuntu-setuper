@@ -83,6 +83,17 @@ only if you want it. The script lists them with their state:
 | `JOIN_WIRESHARK_GROUP` | *(embedded)* lets group `wireshark` capture without root (debconf answer, group) | C1 | `dpkg-reconfigure`, `gpasswd -d` |
 | `DESKTOP_BROWSER_POLICIES` | *(desktop)* new policy files below `/etc/firefox` and `/etc/thunderbird` | [C2](#c2-desktop-part-personal-profile) | delete the files |
 
+**The full setup.** To do all of them: in this guide, do every section marked
+**[opt-in]** (A5, all five blocks of A6, the Docker group in B9, the loader in
+B10, the git defaults in B11, both parts of B13, the groups and Wireshark
+group in C1, and the policy files in C2). With the script it is one option:
+`./setup.sh --profile work --full` (or `FULL_SETUP=1`). `--full` switches on
+every opt-in change, except any switch you set yourself
+(`SET_GNOME_FONT=0 ./setup.sh --full` keeps the font alone). It shows the
+list and asks for confirmation first when run in a terminal. `--full` does
+not install optional software (Docker, Frama-C, SPICE, ...): those are
+separate switches.
+
 If you skip them, everything is still installed and works; you just
 use `sudo` where those changes would have avoided it. **One consequence
 to know about:** without the shell loader (`ENABLE_SHELL_LOADER`), the new
@@ -127,7 +138,8 @@ boot, coreutils or APT sources. Create accounts or sign in anywhere.
 
 If you also have the script: `./setup.sh --profile work --explain` prints this
 whole picture for your profile, step by step, and changes nothing;
-`./setup.sh --profile work --check` adds package names and versions.
+`./setup.sh --profile work --check` adds package names and versions. Add
+`--full` to either to see the full setup instead of the default one.
 
 ---
 

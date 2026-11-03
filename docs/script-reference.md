@@ -49,6 +49,7 @@ Make your own profile by copying a file in `profiles/`; it only needs
 | Command | Purpose |
 |---|---|
 | `./setup.sh --profile NAME` | Choose the profile (remembered afterwards) |
+| `./setup.sh --full` | The **full setup**: switch on every opt-in system change (services, `/etc` drop-ins, groups, GNOME settings, `~/.bashrc` loader, git defaults, browser policies). Switches you set yourself in the environment still win. Also `FULL_SETUP=1`. Asks for confirmation in a terminal. Combine with `--explain`/`--check` to preview. Pass it to `--self-test` too so the extra changes are verified |
 | `./setup.sh --explain` | Plain-language tour of every step this profile runs: what it does, why, where it changes things; plus which system changes are on or off. Changes nothing, needs no network |
 | `./setup.sh --check` | Dry run: package availability, conflicts, planned changes |
 | `./setup.sh` | Full installation, then manifest and self-test |

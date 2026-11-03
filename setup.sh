@@ -7,6 +7,13 @@
 #    ./setup.sh --profile NAME     Choose the profile (work, personal, or your
 #                                  own file in profiles/). Remembered in
 #                                  ~/.config/workstation/profile afterwards.
+#    ./setup.sh --full             The FULL setup: switch on every opt-in system change
+#                                  (services, /etc drop-ins, groups, GNOME settings,
+#                                  ~/.bashrc loader, git defaults, ...). A switch you
+#                                  set yourself still wins (SET_GNOME_FONT=0 ./setup.sh
+#                                  --full). Also usable as FULL_SETUP=1. Without it
+#                                  none of these is touched. Combine with --explain or
+#                                  --check to see exactly what it would do.
 #    ./setup.sh --explain          Plain-language tour of every step this profile would
 #                                  run: what it does, why, and where it changes things.
 #                                  Changes nothing, needs no network. Start here.
@@ -67,6 +74,11 @@
 # shellcheck disable=SC2088
 set -Eeuo pipefail
 
+# Remember which variables the user set in the environment: they win over --full.
+declare -A ENV_AT_START=()
+while IFS= read -r _v; do ENV_AT_START[$_v]=1; done < <(compgen -v | grep -E '^[A-Z][A-Z0-9_]*$' || true)
+unset _v
+
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 FILES="$SCRIPT_DIR/files"
@@ -78,6 +90,7 @@ PROFILE_STATE="$HOME/.config/workstation/profile"
 
 MODE=install
 UPGRADE=0
+FULL="${FULL_SETUP:-0}"      # 1 = --full: all opt-in system changes ON
 PROFILE="${WORKSTATION_PROFILE:-}"
 LIST_PROFILES=0
 while (( $# )); do
@@ -85,6 +98,7 @@ while (( $# )); do
     --upgrade)     UPGRADE=1 ;;
     --check)       MODE=check ;;
     --explain)     MODE=explain ;;
+    --full)        FULL=1 ;;
     --self-test)   MODE=selftest ;;
     --manifest)    MODE=manifest ;;
     --lock)        MODE=lock ;;
@@ -542,6 +556,20 @@ load_config() {
     # shellcheck source=/dev/null
     source "$MODULE_DIR/module.sh"
     MODULES+=("$m")
+  done
+  apply_full
+}
+
+# --full: switch on every opt-in system change (core table + modules' opt_in
+# hook), except those the user set explicitly in the environment.
+apply_full() {
+  if (( ! FULL )); then return 0; fi
+  local entry var
+  local -a entries=("${OPT_IN_CORE[@]}")
+  mapfile -t -O "${#entries[@]}" entries < <(module_collect opt_in)
+  for entry in "${entries[@]}"; do
+    var="${entry%%|*}"
+    if [[ -z ${ENV_AT_START[$var]:-} ]]; then printf -v "$var" '%s' 1; fi
   done
 }
 
@@ -1884,6 +1912,7 @@ run_steps() {
 explain_mode() {
   EXPLAIN=1
   section "What this setup does: profile $PROFILE (modules: core${MODULES[*]:+ }${MODULES[*]})"
+  if (( FULL )); then echo "FULL SETUP (--full): every opt-in system change is ON, unless you set it yourself."; fi
   cat <<EOT
 Steps run in this order, as your normal user; sudo is used only where a step
 says "system". Every step below is skipped or included according to your
@@ -1931,6 +1960,14 @@ main() {
     manifest) write_manifest; return 0 ;;
     lock)     write_lock; return 0 ;;
   esac
+
+  if (( FULL )) && [[ -t 0 && -t 1 ]]; then
+    section "Full setup: these system changes will be made"
+    show_opt_in
+    local answer
+    read -rp "Apply the full setup, including every change marked ON? [y/N] " answer
+    [[ $answer == [yY] ]] || { echo "Nothing was changed."; exit 1; }
+  fi
 
   [[ -d $DATA_DIR ]] || FIRST_RUN_DATA=1
   mkdir -p "$DATA_DIR"

@@ -39,6 +39,10 @@ conversation; this file carries that context over.
    modules' `opt_in` hook; listed by --explain/--check/summary). Never add a
    system-level change without a default-off switch, an entry in the opt_in
    table, a README section marked [opt-in] and a gated self-test.
+   `./setup.sh --full` (or FULL_SETUP=1) is the "full setup": apply_full turns
+   on every switch in OPT_IN_CORE + the modules' opt_in hook, except those the
+   user set in the environment (ENV_AT_START snapshot). A new opt-in switch
+   is picked up by --full automatically once it is in the opt_in table.
 3. **Everything reversible.** Every system/config change calls record_undo.
 4. **Always the latest stable, long-term supported version** (decided by the
    user), for the OS and for software in general:
