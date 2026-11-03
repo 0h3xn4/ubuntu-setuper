@@ -19,12 +19,16 @@ conversation; this file carries that context over.
    are never installed. Runtime enforcement: files/home/.bashrc.d/20-offline.sh,
    uv.toml, containers.conf, lazygit/tealdeer/npm/rustup settings, and the
    desktop module's per-app settings.
-   Definition for inherently networked apps (PROPOSED by Claude, NOT yet
-   confirmed by the user): allowed is traffic the user directs to a
-   destination the user chose (opening a website, fetching mail from their
-   own server, an explicit `podman pull`); not allowed is anything automatic
-   or in the background (telemetry, update checks, crash reports, sync,
-   accounts, recommendations, automatic lookups, implicit downloads).
+   Inherently networked apps (browser, mail): the user did NOT confirm Claude's proposed strict
+   definition ("only traffic the user directs"). Their answer: such apps "of course might have
+   network access, naturally". So the setup does not try to cut off the network use that is the
+   app's purpose (browsing, fetching mail). The hard requirement stays strict for everything the
+   SETUP installs: dev tools, language servers, package managers, no telemetry/update checks/
+   implicit downloads. Per-app hardening already in the desktop module (update checks, metadata
+   lookups, crash reports of everyday apps) stays as is; do not extend it to browser/mail behaviour
+   beyond the optional policy files. Safe Browsing (polls Google) is switched off by the Firefox
+   policy file from before this answer: it is a security trade-off, mention it and ask before
+   changing it either way.
 2. **Don't break Ubuntu.** apt install always with --no-remove --no-upgrade;
    NEVER run `apt upgrade`/`full-upgrade` (the user rejected a system upgrade
    step: updating the system is Ubuntu's business, not this setup's); never edit
@@ -71,10 +75,14 @@ conversation; this file carries that context over.
      `--lock` re-pins. Without a lock, every install gets the newest.
    - Container images: ubuntu:latest (= newest LTS). Older images only as
      deliberate, pinned exceptions.
-   - OPEN QUESTION (ask the user): when the Ubuntu archive ships an older but
-     Canonical-supported version and upstream has a newer LTS/stable release
-     (e.g. Node.js), which wins? Current code prefers the archive (security
-     updates via apt for the release's lifetime, no extra package sources).
+   - DECIDED by the user: when the Ubuntu archive ships an older version and upstream has a
+     newer LTS, the NEWEST UPSTREAM LTS WINS. Implemented for Node.js (the only installed tool with
+     an LTS line): node_install() unpacks the release nodejs.org's index.json marks as newest LTS into
+     ~/.local/opt/node-<ver> (links in ~/.local/bin), checked with fetch_published against the
+     project's SHASUMS256.txt; NO APT repository (no NodeSource). NODE_LTS_VERSION pins (lock),
+     NODE_FROM_ARCHIVE=1 or a failed download falls back to the archive's nodejs/npm (the fallback is
+     recorded in MISSING_FILE so the E2E flags it). NOT extended to tools without an LTS line
+     (uv, Helix, starship still prefer the archive when it has them): ask before changing that.
      Components the OS itself depends on (system Python, gcc, glibc,
      systemd) must ALWAYS stay the archive version under requirement 2.
 
@@ -103,7 +111,8 @@ belong only inside the embedded module.
   (LibreOffice, KeePassXC, VLC, GIMP, Inkscape, Déjà Dup, Firefox/
   Thunderbird policy files, languages).
 - **profiles/<name>.conf**: `PROFILE_MODULES=(...)`, may preset switches.
-  `work` = core + embedded, `personal` = core + desktop. The chosen profile
+  `work` = core + embedded, `personal` = core + embedded + desktop (embedded is in personal by the
+  user's decision; `PROFILE_MODULES=(embedded desktop)`). The chosen profile
   is remembered in ~/.config/workstation/profile.
 - **locks/<profile>.lock** and **locks/<profile>.Cargo.lock**: one per profile.
 - Load order in load_config: lock > profile > workstation.conf > module.conf
@@ -137,21 +146,30 @@ belong only inside the embedded module.
 - GNOME Online Accounts: leave unconfigured; the self-test WARNS (status 78,
   not a failure) if an account exists.
 
-### Open questions for the user
-- Confirm the "no cloud" definition above.
-- Which everyday apps (defaults: LibreOffice, KeePassXC, VLC, GIMP, Inkscape,
-  Déjà Dup; each has a DESKTOP_* switch) and which languages
-  (DESKTOP_LANGUAGES is empty = English only).
-- Browser and email client: keep the Firefox/Thunderbird snaps with the
-  policy files, or something else?
-- Should `embedded` be part of the `personal` profile?
+### Terminal look
+`ls`/`ll`/`la`/`tree` are eza; icons (`--icons=auto`) are on when ~/.local/share/fonts/JetBrainsMonoNerdFont
+exists, `WS_ICONS=0|1` overrides. The user likes this look (long listing, folder/file icons, starship `❯`
+prompt) and uses JetBrains Mono Nerd Font in their terminal.
+
+### Decisions by the user (the former open questions, all answered)
+- No-cloud definition for networked apps: see requirement 1 (they may use the network naturally).
+- Everyday apps and languages: the defaults are fine (LibreOffice, KeePassXC, VLC, GIMP, Inkscape,
+  Déjà Dup; DESKTOP_LANGUAGES empty = English only).
+- Browser and mail: keep Ubuntu's own Firefox/Thunderbird snaps (this setup neither installs nor
+  removes them) and only place the optional policy files (DESKTOP_BROWSER_POLICIES, opt-in), as
+  Claude recommended. Still UNVERIFIED whether the snaps read /etc/<app>/policies/policies.json.
+- `embedded` is part of `personal`.
+- Newest upstream LTS wins over the archive: requirement 4.
+Still open: whether tools WITHOUT an LTS line (uv, Helix, starship) should also prefer upstream over
+an older archive version (today: the archive if it has them, else the project's release).
 
 ## Checks you can run (and CI)
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
   `tools/install-hooks.sh`). CI (.github/workflows/ci.yml) runs it, then per profile
   `--check` against the real archive of `ubuntu:latest` and a reduced real install. It ran
-  green (PR #5, #6); its self-test step is still non-blocking ("|| true") because the QEMU
-  test failed (see Status): make it blocking once a CI run shows that test passing.
+  green (PR #5, #6, #8); its self-test step is still non-blocking ("|| true"). The QEMU test that
+  made it flaky passes now (0 failures in the last runs), so it can be made blocking when the user
+  agrees; the E2E workflow is the one that blocks.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
   `./setup.sh --profile X --check` verifies package names for real (only `lazygit` was
   missing on 24.04). It is NOT the latest LTS (26.04), so names may differ there.
@@ -162,8 +180,11 @@ belong only inside the embedded module.
 
 - `tools/e2e.sh` = the full end-to-end test (see docs/script-reference.md); the "E2E" workflow
   runs it on GitHub runner VMs and a newest-LTS container, only manually or for a PR whose title
-  contains "[e2e]". It is the ONLY way to test a real full install (the sandbox cannot). Fetch its
-  logs with get_job_logs; the summary table is at the end of each job's log.
+  contains "[e2e]" (a push to such a PR cancels its running E2E: batch pushes). It is the ONLY way to
+  test a real full install (the sandbox cannot). It took ~15 min per run. get_job_logs shows the
+  summary table at the end of a FAILED job's log only; for green jobs download the artifact
+  (api.github.com/repos/OWNER/REPO/actions/artifacts/ID/zip with $GITHUB_TOKEN) and read summary.md.
+  A docs-only change does not need an E2E: leave "[e2e]" out of its PR title.
 
 ## Making the setup understandable
 - Every step has a plain-language `STEP_WHY[title]` and `STEP_TOUCHES[title]`
@@ -197,6 +218,13 @@ belong only inside the embedded module.
   install_system_file / install_templates / record_undo / fetch_verified
   (SHA-256 TOFU, then pinned via lock) / add_to_groups / disable_units / gset.
 - Use `if ...; then ...; fi`, not `cmd && cmd`, in functions run under set -e.
+- Never pipe into `grep -q` under pipefail (SIGPIPE makes the pipeline fail): capture into a variable
+  first. This bit three times (ws-init test, check-all, the E2E lock phase).
+- Order matters for services: anything that disables a unit (privacy_hardening) runs AFTER all package
+  installs, because a dependency can switch its timer back on. Every `record_undo` must be recorded
+  BEFORE the thing that can fail, and only for what THIS run created (check "did it exist?" first).
+- Containers: no running systemd (`systemctl disable`, never `--now`), no podman (`podman info` fails
+  whatever the config says: judge a config by before/after, not by one failing call).
 - NEVER locate code in setup.sh with a text search for "main() {": it also
   occurs inside self-test heredocs (C/C++ sources).
 - Downloads outside APT: prefer `fetch_published URL DEST SUMS_URL [NAME]` (checks the
@@ -218,6 +246,18 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+FULL E2E, LATEST (GitHub run #7, workflow_dispatch on the branch, head c9f4669): GREEN in all four jobs, nothing
+hidden: self-test vm-work 33/0, vm-personal 36/0, container-work 32/0, container-personal 35/0 (passed/failed),
+install 9-11 min, ws-doctor 0 failed, RISC-V QEMU test PASSES, lock pins NODE_LTS_VERSION, leftovers clean (incl.
+~/.local/opt and node/npm/npx). Node.js v26.13.0 from nodejs.org (node_install) in every job, bash-language-server
+installed with its npm; personal = core + embedded + desktop. Remaining skips are expected (SPICE kernels off by
+default; container images off in the container jobs). The run before it (#6, head 8fb892a) was green too but its
+selftest.log showed `SKIP RISC-V program runs in QEMU (qemu-system-riscv64 not installed)`: 26.04 split RISC-V out of
+qemu-system-misc into `qemu-system-riscv` (found by reading the real 26.04 package index at
+archive.ubuntu.com/ubuntu/dists/resolute/{main,universe}/binary-amd64/Packages.gz, which the sandbox can download).
+Fixed in c9f4669; e2e.sh now FAILS on a RISC-V skip and checks the Node lock pin and its undo.
+LESSON: green is not enough, grep the logs for SKIP and WARN. Six E2E runs actually executed (4 on PR #8, then 2
+manual dispatches); GitHub's run numbers count one more, a PR-event run whose jobs were skipped (no "[e2e]" in the title).
 FULL E2E on Ubuntu 26.04.1 (PR #8, `tools/e2e.sh`): GREEN in all four jobs (VM and `ubuntu:latest` container,
 work and personal), all 10 phases: --check, --full install, self-test (32 passed/0 failed on VM work, 31/0 in
 the container work job), ws-doctor, idempotent re-run, manifest, lock, --undo of every undo file, leftovers.
@@ -246,7 +286,7 @@ captures both (`> qemu.txt 2>&1`); confirmed by the full E2E run. ws-doctor wron
 reported tools in ~/.local/bin as missing when the shell loader is off: fixed (it searches
 ~/.local/bin and ~/.cargo/bin itself) and CONFIRMED in the real CI log (31 ok).
 (In THAT early run Kate, the Nerd Font, Oh My Bash and Rust were switched off or not run; the full E2E above ran
-them. The RISC-V QEMU test is still the one to look at in an E2E summary: it may have been skipped.)
+them. The RISC-V skip found later is described above.)
 Fetch CI logs with the github get_job_logs tool (job ids from the PR's check runs).
 
 Also done and checked in the sandbox:
@@ -279,7 +319,7 @@ run of each app) and anything needing a desktop session.
    - `clangd --check` returns non-zero when the file has errors.
    - QEMU semihosting tests: ARM verified in CI (QEMU 10.2.1: SYS_EXIT 0x20026 -> exit status 0;
      semihosting output on stderr, hence 2>&1). RISC-V (t_emb_riscv_qemu: RV64 SYS_EXIT with a
-     2-word block) still unverified: qemu-system-misc was not installed in the CI subset.
+     2-word block) VERIFIED in CI since c9f4669 (needs the qemu-system-riscv package on 26.04).
    - Doc paths: cppreference under /usr/share/cppreference/doc/html/,
      POSIX man pages as section 3posix.
    - udev properties ID_VENDOR_ID / ID_MODEL_ID / ID_SERIAL_SHORT /
@@ -300,7 +340,10 @@ run of each app) and anything needing a desktop session.
      `check-language-support -l <lang>` output.
    - OpenOCD `-c "bindto 127.0.0.1"` is accepted (cheat sheet example).
 4. When the VM runs are clean: `./setup.sh --profile work --lock` and the
-   same for personal, review, commit locks/.
+   same for personal, review, commit locks/. (The lock now also pins NODE_LTS_VERSION.)
+5. (DONE: the E2E covered Node.js upstream LTS and personal = core+embedded+desktop, see Status.)
+   An E2E can be started WITHOUT a PR: actions_run_trigger(run_workflow, workflow_id e2e.yml, ref = the branch);
+   a docs push to that branch then does not cancel it (only pull_request runs share the cancel group per ref).
 
 ## Safety rules for Claude Code in this repo
 - Do not run `./setup.sh` (install mode) on the development machine: it uses

@@ -71,9 +71,9 @@ only if you want it. The script lists them with their state:
 | Switch | What it does | Where this guide covers it | Undo |
 |---|---|---|---|
 | `TUNE_INOTIFY` | New file `/etc/sysctl.d/60-dev-inotify.conf`: more file watches, so language servers cope with big source trees | [A5](#a5-system-tuning) | delete the file |
-| `DISABLE_REPORTING_SERVICES` | Disables crash and problem reporting: `apport`, `whoopsie`, `kerneloops` | [A6](#a6-privacy-hardening-at-os-level) | `systemctl enable --now` |
-| `DISABLE_MOTD_NEWS` | Disables `motd-news.timer` (news fetched at login) | A6 | `systemctl enable --now` |
-| `DISABLE_FWUPD_REFRESH` | Disables `fwupd-refresh.timer` (firmware metadata refresh) | A6 | `systemctl enable --now` |
+| `DISABLE_REPORTING_SERVICES` | Disables crash and problem reporting: `apport`, `whoopsie`, `kerneloops` | [A6](#a6-privacy-hardening-at-os-level) | `systemctl enable` |
+| `DISABLE_MOTD_NEWS` | Disables `motd-news.timer` (news fetched at login) | A6 | `systemctl enable` |
+| `DISABLE_FWUPD_REFRESH` | Disables `fwupd-refresh.timer` (firmware metadata refresh) | A6 | `systemctl enable` |
 | `DISABLE_APT_NEWS` | `pro config set apt_news=false` (messages apt fetches from Canonical) | A6 | `pro config set apt_news=true` |
 | `DISABLE_NM_CONNECTIVITY_CHECK` | New file in `/etc/NetworkManager/conf.d/`: no periodic connectivity probe | A6 | delete the file |
 | `SET_GNOME_FONT` | GNOME monospace font: JetBrainsMono Nerd Font Mono 11 (JetBrains Mono 11 without B14) | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
@@ -82,9 +82,12 @@ only if you want it. The script lists them with their state:
 | `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt, offline lock) | [B10](#b10-shell-bash) | delete the block |
 | `SET_GIT_DEFAULTS` | Global git defaults, only options you have not set | [B11](#b11-git) | `git config --unset` |
 | `INSTALL_OH_MY_BASH` | Oh My Bash from one pinned commit, loaded from `~/.bashrc.d` with its update check off; replaces the starship prompt (not a system change, but opt-in) | [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default) | delete the clone and the file |
-| `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-profile) | `gpasswd -d` |
+| `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-and-personal-profiles) | `gpasswd -d` |
 | `JOIN_WIRESHARK_GROUP` | *(embedded)* lets group `wireshark` capture without root (debconf answer, group) | C1 | `dpkg-reconfigure`, `gpasswd -d` |
 | `DESKTOP_BROWSER_POLICIES` | *(desktop)* new policy files below `/etc/firefox` and `/etc/thunderbird` | [C2](#c2-desktop-part-personal-profile) | delete the files |
+
+In the script, the privacy changes (A6) run *after* all package installs, because installing a
+package can switch its timer back on; the guide lists A6 early only to keep the opt-in sections together.
 
 **The full setup.** To do all of them: in this guide, do every section marked
 **[opt-in]** (A5, all five blocks of A6, the Docker group in B9, the loader in
@@ -108,8 +111,8 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
 | Path | Contents |
 |---|---|
-| `~/.local/bin` | `uv`, `ws-init`, `ws-devname`, `hx` (Helix, if not from the archive), npm tools |
-| `~/.local/opt` | Helix release tarball, if used |
+| `~/.local/bin` | `uv`, `ws-init`, `ws-devname`, `hx` (Helix, if not from the archive), `node`/`npm`/`npx` (links into `~/.local/opt`), npm tools |
+| `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release tarball, if used |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
 | `~/.config/kate` | Kate's language-server settings |
@@ -124,8 +127,9 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
 - **While you set up (allowed):** `apt`; the release downloads for `uv`,
   `rustup`, `starship`, `lazygit` and `probe-rs` (checked against the
-  checksums those projects publish) and the Helix release, only if the archive
-  lacks them; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
+  checksums those projects publish), the Node.js LTS tarball from nodejs.org
+  (checked against its `SHASUMS256.txt`) and the Helix release, only if the archive
+  lacks it; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
   once; the Nerd Font release from GitHub and, if you choose, the Oh My
   Bash clone from GitHub; the three offline caches (PyPI, crates.io, the
   container registry) and, if you choose, the SPICE kernels.
@@ -159,18 +163,24 @@ Be skeptical, and check for yourself; this is what has and has not been verified
 (newest facts first; the details and dates are in `CHANGELOG.md` and `CLAUDE.md`).
 
 - **Full end-to-end test on Ubuntu 26.04.1 LTS (in CI, `tools/e2e.sh`):** the
-  *whole* life cycle of both profiles passed in all four jobs (a GitHub runner VM
-  and an `ubuntu:latest` container, each for `work` and `personal`): `--check`
-  against the real archive, a full `--full` install as a normal user with `sudo`,
-  the self-test (32 passed, 0 failed on the VM `work` run; 31 passed, 0 failed in
-  the container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
-  lock, `--undo` of every undo file, and a check that nothing the setup created is
-  left behind (APT packages stay by design). It took three fix rounds to get
-  there; the bugs it found are listed in `CHANGELOG.md` (two package names that
-  changed on 26.04, undo gaps, service handling in containers, an ordering
-  problem in the privacy step). Limits: a container has no running systemd and
-  cannot run podman, so image caching is switched off there; the VM run covers
-  that. No desktop session was involved.
+  *whole* life cycle of both profiles passes in all four jobs (a GitHub runner VM
+  and an `ubuntu:latest` container, each for `work` and `personal`; `personal`
+  includes the embedded part): `--check` against the real archive, a full `--full`
+  install as a normal user with `sudo` (9 to 11 minutes), the self-test (33 and 36
+  checks passed, 0 failed, on the VM for `work` and `personal`; 32 and 35 in the
+  container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
+  lock (it pins Node.js too), `--undo` of every undo file, and a check that
+  nothing the setup created is left behind (APT packages stay by design).
+  **Node.js 26 (the newest LTS) from nodejs.org is installed and used in all four
+  jobs**, and the ARM and RISC-V programs run in QEMU. The checks that are skipped
+  are skipped on purpose (SPICE kernels are off by default; image caching is off in
+  a container, which cannot run podman; the VM run covers the rest). It took six
+  runs to get here: the bugs found are in `CHANGELOG.md` (package names that
+  changed on 26.04, undo gaps, service handling in containers, an ordering problem
+  in the privacy step), and one was only visible by reading a green run's log: a
+  RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation into its
+  own package (`qemu-system-riscv`). The E2E test now fails on such a skip. No
+  desktop session was involved in any of this.
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
@@ -181,9 +191,13 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   as expected). The test now reads both streams (confirmed later by the full
   run above). The same run confirmed that `ws-doctor` finds the tools installed in
   `~/.local/bin` without the shell loader.
-- **Package names:** all checked against the real Ubuntu 24.04 archive; only
-  `lazygit`, `zellij` and `difftastic` are missing there (the guide and script
-  have a fallback for lazygit and skip the others).
+- **Package names:** all checked against the real Ubuntu 24.04 and 26.04
+  archives. Only `lazygit` (24.04 only), `zellij` and `difftastic` are missing
+  (the guide and script have a fallback for lazygit and skip the others).
+  26.04 renamed or split three packages, which the lists now use: `7zip` (was
+  `p7zip-full`), `qemu-user` + `qemu-user-binfmt` (was `qemu-user-static`) and
+  `qemu-system-riscv` (split from `qemu-system-misc`; on 24.04 it does not exist and
+  the setup just reports it as not available, because `qemu-system-misc` still has RISC-V there).
 - **Downloads:** the checksum checks for uv, rustup, starship, lazygit, probe-rs
   and the Nerd Font were run against the real files, including a deliberately
   wrong checksum, which is refused.
@@ -191,7 +205,9 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   from documentation, not from running each app), the Firefox/Thunderbird policy
   files (do they apply to the snaps? check `about:policies`), the GNOME
   settings (`SET_GNOME_FONT`, `SET_GNOME_PRIVACY`) and how the icons look in a
-  real terminal, and the RISC-V QEMU test if it was skipped. Everything on a real desktop.
+  real terminal, and everything on a real desktop. Also not run yet: the lock files
+(`locks/`) are not committed, so version pinning has been tested (the lock phase of
+the E2E test) but no real pins exist.
 
 ## Rules this guide follows
 
@@ -241,9 +257,9 @@ machine ends up in the same state.
   function `base_cli` in `setup.sh`*, so you can read the code next to the
   text.
 - **Which parts do I do?** Parts A, B, D and E are the core and are
-  always done. Part C is optional: C1 is the **work** profile (embedded and
-  flight-software tooling), C2 is the **personal** profile (everyday
-  desktop apps). Do either, both or neither. Inside a section, lines marked
+  always done. Part C is optional: C1 is embedded and flight-software tooling
+  (in both the **work** and the **personal** profile), C2 is everyday desktop
+  apps (the **personal** profile). Do either, both or neither. Inside a section, lines marked
   *(optional)* correspond to a switch in `workstation.conf`.
 - **Sections marked [opt-in]** change the system or your login files. Skip
   them unless you want that change; the heading names the switch the script
@@ -453,20 +469,23 @@ are your choice.
 for u in apport.service apport-autoreport.path apport-autoreport.timer \
          whoopsie.service whoopsie.path kerneloops.service; do
   if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-    sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+    sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
+    sudo systemctl stop "$u" || true     # best effort: a container has no running systemd
   fi
 done
 
 # DISABLE_MOTD_NEWS: news fetched at login
 u=motd-news.timer
 if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-  sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+  sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
+  sudo systemctl stop "$u" || true
 fi
 
 # DISABLE_FWUPD_REFRESH: periodic firmware metadata refresh
 u=fwupd-refresh.timer
 if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-  sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+  sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
+  sudo systemctl stop "$u" || true
 fi
 
 # DISABLE_APT_NEWS: messages fetched from Canonical when you run apt
@@ -615,7 +634,7 @@ server, pre-commit and its hooks, CMake language server):
 
 ```bash
 for t in ruff basedpyright pre-commit pre-commit-hooks cmake-language-server; do
-  uv tool install "$t"
+  uv tool list | grep -q "^$t " || { uv tool install "$t" && record_undo "uv tool uninstall $t"; }
 done
 ```
 
@@ -642,6 +661,11 @@ command -v rustup || {
   record_undo "rustup self uninstall -y"
 }
 
+# What we add to ~/.rustup is undone too (the archive's rustup has no "self uninstall"). Decide
+# this BEFORE 'rustup set ...', which already creates ~/.rustup/settings.toml:
+[ -e ~/.rustup ] || record_undo "rm -rf ~/.rustup"
+rustup toolchain list | grep -q '^stable' || record_undo "rustup toolchain uninstall stable"
+
 # no automatic self-update of rustup
 rustup set auto-self-update disable && record_undo "rustup set auto-self-update enable"
 
@@ -656,13 +680,17 @@ take several minutes. They need a few development libraries:
 
 ```bash
 apt_install libssl-dev pkg-config
+for c in taplo-cli cargo-nextest; do
+  cargo install --list | grep -q "^$c v" || record_undo "cargo uninstall $c"
+done
 cargo install --locked taplo-cli cargo-nextest
 ```
 
 `--locked` makes cargo use the exact dependency versions the tool's authors
 tested. Pin a tool with `cargo install --locked taplo-cli@X.Y.Z`.
 
-Undo: `cargo uninstall <name>`; `rustup self uninstall`.
+Undo: `cargo uninstall <name>`; `rustup toolchain uninstall stable`; `rustup self uninstall`
+if you installed rustup with `rustup-init` (the archive's rustup has no such command).
 
 ## B6. Offline documentation *(optional: `INSTALL_OFFLINE_DOCS`)*
 
@@ -685,17 +713,53 @@ the GDB manual (`info gdb`) and, via rustup, the Rust docs (`rustup doc`).
 Installed with npm into your home directory (no root). npm is told not to
 contact the registry for update notices, funding messages or audits.
 
+**Node.js itself: the newest LTS release from nodejs.org, not the archive's.** Ubuntu's
+`nodejs` is older than the newest upstream LTS; this setup prefers the newest LTS (your
+decision) without adding an APT repository (no NodeSource): the project's own tarball is
+unpacked in your home directory and checked against the `SHASUMS256.txt` the project publishes.
+The project's index marks which release is the newest LTS (its "lts" field):
+
 ```bash
-apt_install nodejs npm
+v=$(curl -fsSL https://nodejs.org/dist/index.json | python3 -I -c 'import json, sys
+for r in json.load(sys.stdin):
+    if r.get("lts"):
+        print(r["version"]); break')
+echo "newest LTS: $v"
+case "$(uname -m)" in x86_64) a=x64 ;; aarch64) a=arm64 ;; esac
+asset=node-$v-linux-$a.tar.xz; base=https://nodejs.org/dist/$v
+download_verified "$base/$asset" "$base/SHASUMS256.txt" "$asset" "/tmp/$asset"
+mkdir -p ~/.local/opt ~/.local/bin
+[ -e ~/.local/opt/node-$v ] || record_undo "rm -rf ~/.local/opt/node-$v"
+mkdir -p ~/.local/opt/node-$v && tar -xJf "/tmp/$asset" -C ~/.local/opt/node-$v --strip-components=1
+# Link what the release ships (newer ones no longer include corepack). If one of these names
+# already exists in ~/.local/bin and is not yours, stop and look at it first: never replace it.
+for t in node npm npx corepack; do
+  [ -e ~/.local/opt/node-$v/bin/$t ] || continue
+  [ -e ~/.local/bin/$t ] || [ -L ~/.local/bin/$t ] || record_undo "rm -f ~/.local/bin/$t"
+  ln -sfn ../opt/node-$v/bin/$t ~/.local/bin/$t
+done
+hash -r; node --version
+```
+
+To pin a version, set `v=v26.13.0` (any release listed on nodejs.org) instead of the lookup.
+If you prefer Ubuntu's own (older, but Ubuntu-supported) Node.js, skip the block above and run
+`apt_install nodejs npm`; the script does this with `NODE_FROM_ARCHIVE=1`, and also as a
+fallback if the download fails.
+
+Then the language server:
+
+```bash
 npm config set prefix "$HOME/.local"
 npm config set update-notifier false
 npm config set fund false
 npm config set audit false
 record_undo "npm config delete prefix; npm config delete update-notifier; npm config delete fund; npm config delete audit"
+[ -e ~/.local/lib/node_modules/bash-language-server ] || record_undo "npm uninstall -g bash-language-server"
 npm install -g bash-language-server
 ```
 
-Undo: `npm rm -g <name>` and the `npm config delete ...` line.
+Undo: `npm rm -g <name>`, the `npm config delete ...` line, and
+`rm -rf ~/.local/opt/node-<version>` plus the links `~/.local/bin/{node,npm,npx,corepack}`.
 
 ## B8. Helix editor *(optional: `INSTALL_HELIX`)*
 
@@ -743,6 +807,20 @@ hx --health            # shows which language servers are found
 
 ```bash
 apt_install podman distrobox
+```
+
+Whenever podman is installed, it must never pull images by itself. (The script does
+this here, in the "Containers" step; the same file is also used by D3.) The guard
+removes the file again only if podman worked before it and fails after it; a plain
+container where podman cannot run at all says nothing about the file.
+
+```bash
+f=~/.config/containers/containers.conf
+ok=0; podman info >/dev/null 2>&1 && ok=1
+put "$WS/files/home/.config/containers/containers.conf" "$f"
+if [ "$ok" = 1 ] && ! podman info >/dev/null 2>&1; then
+  echo "podman rejects the file: removing it again"; rm -f "$f"
+fi
 ```
 
 *(optional, off by default: `INSTALL_DOCKER`)* Docker Engine rewrites
@@ -1041,7 +1119,7 @@ Undo: `rm ~/.config/kate/lspclient/settings.json`; the package via APT history.
 
 # Part C. Optional parts
 
-## C1. Embedded part (work profile)
+## C1. Embedded part (work and personal profiles)
 
 *Mirrors the `embedded` module, `modules/embedded/module.sh` and
 `module.conf`, step by step: `step "Embedded toolchain"`, `step "Wireshark"`,
@@ -1055,7 +1133,7 @@ apt_install \
   gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi \
   libstdc++-arm-none-eabi-newlib gcc-riscv64-unknown-elf \
   picolibc-riscv64-unknown-elf gdb-multiarch openocd stlink-tools \
-  dfu-util srecord can-utils sigrok-cli qemu-system-arm qemu-system-misc \
+  dfu-util srecord can-utils sigrok-cli qemu-system-arm qemu-system-misc qemu-system-riscv \
   qemu-system-sparc qemu-user qemu-user-binfmt qemu-utils tio picocom minicom \
   libudev-dev
 ```
@@ -1326,16 +1404,11 @@ podman pull docker.io/library/ubuntu:latest
 record_undo "if podman image exists docker.io/library/ubuntu:latest; then podman rmi docker.io/library/ubuntu:latest; fi"
 ```
 
-Whenever podman is installed (the script does this in the "Containers" step, even if you cache no images), never pull images implicitly (a `podman run`/`distrobox create`
-that names a missing image fails instead of downloading; an explicit
-`podman pull` still works):
-
-```bash
-put "$WS/files/home/.config/containers/containers.conf" ~/.config/containers/containers.conf
-# If podman ran fine before and now fails, it rejects the file: remove it again.
-# (If podman cannot run here at all, e.g. in a container, that says nothing about the file.)
-podman info >/dev/null 2>&1 || echo "podman does not run (or rejects the file): check 'podman info' with and without the file"
-```
+The "never pull images implicitly" file (`containers.conf`) is installed in
+[B9](#b9-containers-optional-install_podman-install_docker), whenever podman is, not only
+when you cache images. A `podman run`/`distrobox create` that names a missing image then
+fails instead of downloading; an explicit `podman pull` (as above) still works. If you
+skipped B9, run its `containers.conf` block now.
 
 ## D4. Enforce the offline environment
 
@@ -1524,6 +1597,7 @@ write down the versions from your manifest and use them next time:
 | Tool | Install a pinned version |
 |---|---|
 | Rust | `rustup toolchain install 1.NN.N` (version from `rustc --version`) |
+| Node.js | set `v=vNN.N.N` in B7 instead of the index lookup (version from `node --version`) |
 | uv tools | `uv tool install --reinstall "ruff==X.Y.Z"` (versions from `uv tool list`) |
 | cargo tools | `cargo install --locked taplo-cli@X.Y.Z` (from `cargo install --list`) |
 | npm tools | `npm install -g bash-language-server@X.Y.Z` (from `npm ls -g`) |
@@ -1555,7 +1629,9 @@ Each section above ended with its undo. In general:
   then `sudo apt history-undo <ID>`); with older APT, read
   `/var/log/apt/history.log` for what was installed.
 - **Tools in your home directory**: `uv tool uninstall <name>`,
-  `cargo uninstall <name>`, `npm rm -g <name>`, `rustup self uninstall`.
+  `cargo uninstall <name>`, `npm rm -g <name>`, `rustup toolchain uninstall <name>`
+  (and `rustup self uninstall` if you installed rustup with `rustup-init`). The blocks
+  above record these for you; the script's `--undo` replays them.
 - **Cache folders**: `rm -rf ~/.local/share/workstation` (templates,
   wheelhouse, crate cache, hashes) and `~/.cargo/registry` for downloaded crates.
 - **Switch the offline lock off** without uninstalling anything:
@@ -1570,14 +1646,16 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` and `zellij` on 24.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
+| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` on 24.04, and `zellij` and `difftastic` on both 24.04 and 26.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
 | `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
-| Prompt shows boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml`. |
+| `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
+| `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
+| `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
-| Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-profile)), or you have not logged out and in since joining. |
-| Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-profile)). |
+| Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |
+| Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-and-personal-profiles)). |
 | Two prompts fight (starship vs Oh My Bash) | Only one may own the prompt; while `~/.bashrc.d/15-oh-my-bash.sh` exists, starship is skipped by `10-workstation.sh`. |
 | A checksum mismatch message | The download differs from what the project published: do not use it. Retry later; if it persists, the release changed under you, so report it to the project. |
 | Something I do not understand | `./setup.sh --explain` describes every step, and the "big picture" section at the top of this page shows where things go. |

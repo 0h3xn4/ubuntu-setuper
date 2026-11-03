@@ -11,6 +11,8 @@ Run these from the setup folder. The profile chosen at install time
 ./setup.sh --manifest    # list all installed software and versions
 ./setup.sh --lock        # pin current versions (locks/<profile>.lock)
 ./setup.sh --upgrade     # move to the newest stable versions, then --lock again
+./setup.sh --undo        # take back an install run (lists every command first, asks before running)
+ws-doctor                # quick, read-only health check (no repository needed)
 ./setup.sh --list-profiles
 ```
 

@@ -61,8 +61,8 @@ jobs:
             DESKTOP_LIBREOFFICE=0 DESKTOP_VLC=0 DESKTOP_GIMP=0 DESKTOP_INKSCAPE=0 DESKTOP_DEJADUP=0 \
             DESKTOP_KEEPASSXC=0 \
             bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --profile ${{ matrix.profile }} </dev/null"
-      # Non-blocking for now ("|| true"): make it blocking after the first green runs,
-      # once it is clear which checks are stable inside a container.
+      # Still non-blocking ("|| true"). Its last run had 0 failures (the QEMU test passes), so it can be
+      # made blocking; the full, authoritative run is the E2E workflow (e2e.yml), which does block.
       - name: Self-test of what was installed
         run: |
           sudo -u tester -H env \

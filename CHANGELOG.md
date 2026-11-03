@@ -20,6 +20,27 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Verified
+- End-to-end run on Ubuntu 26.04.1 LTS (GitHub runner VM and `ubuntu:latest` container, `work` and `personal`):
+  all ten phases pass in all four jobs; self-test 33/36 (VM) and 32/35 (container) passed, 0 failed; Node.js 26
+  from nodejs.org in every job; the RISC-V QEMU test passes.
+
+### Fixed (found by the fifth end-to-end run)
+- 26.04 moved RISC-V emulation out of `qemu-system-misc` into its own package: `qemu-system-riscv` is now in the
+  embedded package list (before, no RISC-V emulator was installed on 26.04 and its self-test was skipped).
+- The E2E test now treats a skipped RISC-V QEMU test as a failure, checks that the lock pins `NODE_LTS_VERSION`
+  and that undo removes `~/.local/opt` and the node/npm/npx links.
+
+### Changed (decisions by the user)
+- **Node.js: the newest upstream LTS wins** over the archive's older one. `node_install` unpacks the release
+  nodejs.org marks as the newest LTS into `~/.local/opt/node-<version>` (linked from `~/.local/bin`), checked
+  against the project's published `SHASUMS256.txt`; no APT repository. `NODE_LTS_VERSION` pins it (the lock
+  does), `NODE_FROM_ARCHIVE=1` or a failed download uses Ubuntu's `nodejs`/`npm`.
+- **`embedded` is part of the `personal` profile** (core + embedded + desktop).
+- **Networked apps may use the network naturally** (the stricter proposed definition was not accepted);
+  the browser/mail decision is: keep Ubuntu's snaps, place only the optional policy files.
+- Everyday desktop apps and languages: the defaults stay.
+
 ### Added (icons)
 - `ls`/`ll`/`la`/`tree` (eza) show file icons when the JetBrains Mono Nerd Font is installed; `ll` is now a plain
   long listing like `ls -l` (use `la` for hidden files). `WS_ICONS=0` switches icons off, `WS_ICONS=1` forces them on.
@@ -48,7 +69,7 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   (opt-in) shell loader is off.
 - The ARM/RISC-V QEMU self-tests now capture stdout and stderr together and log QEMU's exit status
   and version. Cause of the CI failure: QEMU 10.2 prints the program's semihosting output on
-  stderr (exit status was 0); the test only read stdout. Not yet confirmed by a CI run.
+  stderr (exit status was 0); the test only read stdout. Confirmed by the following CI runs.
 - README: new "How well tested is this?" section, Troubleshooting in the contents, `ws-doctor` as
   the quick check in Part E, and the QEMU check in Part E redirects both streams.
 
@@ -57,7 +78,8 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   probe-rs and lazygit: the download is compared with the checksum the project itself publishes and a
   mismatch is refused. The installer scripts for uv, rustup and starship are no longer used.
 - Release tags are read from the redirect of a `latest/download` URL, so no GitHub API call is needed.
-- All package names checked against the real Ubuntu 24.04 archive (only `lazygit` is missing there).
+- All package names checked against the real Ubuntu 24.04 archive (only `lazygit` is missing there);
+  the end-to-end runs then checked them on 26.04 (see the "Fixed" section above).
 
 ## 2026-11-03 — `--full`, Nerd Font, Oh My Bash (PR #4)
 - `./setup.sh --full`: switch on every opt-in system change at once.

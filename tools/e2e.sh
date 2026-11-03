@@ -29,6 +29,10 @@
 #                           (e.g. "System tuning" in a container without sysctl access)
 #   E2E_ALLOW_MISSING       regex of packages allowed to be missing from the archive
 #                           (default: lazygit|zellij|difftastic)
+# Things the test knows about a machine it did not set up itself: if rustup (~/.rustup,
+# ~/.cargo/bin/rustup) already exists before the install, it is not counted as a leftover; the CI VM job
+# purges the runner's preinstalled `gh` (the no-cloud policy forbids it) and the container job removes the
+# image's dpkg excludes (so documentation packages are not stripped). A full run takes ~15 minutes.
 # Exit status: 0 = every phase passed, 1 = at least one failed.
 set -uo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." || exit 1
@@ -144,6 +148,10 @@ ph_selftest() {
   setup --self-test > "$LOG/selftest.log" 2>&1 || rc=$?
   strip < "$LOG/selftest.log" | grep -E 'PASS|FAIL|WARN|SKIP|Self-test:' | sed 's/^/  /' | grep -E 'FAIL|WARN|Self-test:'
   strip < "$LOG/selftest.log" | grep -A8 'FAIL' | head -n 40
+  # A skipped test proves nothing. The RISC-V QEMU test was silently skipped on 26.04 because RISC-V
+  # emulation moved out of qemu-system-misc into its own package: treat that skip as a failure.
+  local skipped; skipped="$(strip < "$LOG/selftest.log" | grep -E 'SKIP.*RISC-V' || true)"
+  if [[ -n $skipped ]]; then echo "UNEXPECTED SKIP: $skipped"; rc=1; fi
   return $rc
 }
 
@@ -200,9 +208,12 @@ ph_lock() {
   grep -c '^  \["' "$lock" | sed 's/^/pins written: /'
   grep -q 'declare -gA UV_PINS' "$lock" || { echo "lock lacks UV_PINS"; bad=1; }
   grep -q 'RUST_TOOLCHAIN:=' "$lock" || { echo "lock lacks the Rust toolchain version"; bad=1; }
+  if [[ "$(readlink "$HOME/.local/bin/node" 2>/dev/null || true)" == */opt/node-v* ]]; then
+    grep -q 'NODE_LTS_VERSION:=v' "$lock" || { echo "lock lacks the Node.js version"; bad=1; }
+  fi
   local checked; checked="$(WORKSTATION_LOCK="$lock" setup --check 2>&1 | strip || true)"   # captured: grep -q on a pipe can SIGPIPE under pipefail
   grep -q 'versions pinned' <<<"$checked" || { echo "--check did not load the lock"; bad=1; }
-  grep -E 'UV_VERSION|HELIX_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
+  grep -E 'UV_VERSION|HELIX_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
   return $bad
 }
 
@@ -231,7 +242,7 @@ ph_leftovers() {
   for p in "$HOME"/.local/bin/{ws-init,ws-doctor,ws-devname,uv,uvx,hx,probe-rs,cargo-flash,cargo-embed,starship,lazygit} \
            "$HOME/.local/share/workstation" "$HOME/.config/helix" "$HOME/.config/uv" "$HOME/.config/kate/lspclient/settings.json" \
            "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$HOME/WORKSTATION-CHEATSHEET.md" \
-           "$HOME/.inputrc" "$HOME/.cargo/bin/rustup" "$HOME/.rustup" /etc/sysctl.d/60-dev-inotify.conf \
+           "$HOME/.inputrc" "$HOME/.cargo/bin/rustup" "$HOME/.rustup" "$HOME/.local/opt" "$HOME"/.local/bin/{node,npm,npx} /etc/sysctl.d/60-dev-inotify.conf \
            /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json; do
     if [[ " ${skip[*]} " == *" $p "* ]]; then continue; fi
     if [[ -d $p ]]; then

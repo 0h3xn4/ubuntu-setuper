@@ -32,14 +32,14 @@ runs (`--check`, `--self-test`, `--manifest`, `--lock`, `--upgrade`) need no
 
 | | What it is |
 |---|---|
-| **core** | Always installed, on every profile: bash setup, Helix + language servers, git tooling, Python/C/C++/Rust, offline docs, privacy hardening, offline caches, and the check / self-test / manifest / lock / undo machinery |
+| **core** | Always installed, on every profile: bash setup, Helix + language servers, git tooling, Python/C/C++/Rust, offline docs, privacy hardening (opt-in, runs after all package installs), offline caches, and the check / self-test / manifest / lock / undo machinery |
 | **embedded** | Cross compilers (ARM, RISC-V), QEMU, OpenOCD and probes, serial/CAN tools, Wireshark, verification tools (CBMC, AFL++, ...), optional SPICE kernels, embedded Rust targets and cargo tools, `ws-devname`, cross-build starter files |
 | **desktop** | LibreOffice, KeePassXC, VLC, GIMP, Inkscape, Déjà Dup, Firefox/Thunderbird policy files, spell-check languages. Each app has its background network features switched off |
 
 | Profile | Modules |
 |---|---|
 | `work` | core + embedded |
-| `personal` | core + desktop (add `embedded` in `profiles/personal.conf` if you want it) |
+| `personal` | core + embedded + desktop (embedded is part of it by your decision; remove `embedded` from `profiles/personal.conf` to leave it out) |
 
 Make your own profile by copying a file in `profiles/`; it only needs
 `PROFILE_MODULES=(...)` and may preset switches.
@@ -141,7 +141,9 @@ is installed but inactive (the summary prints the line to add yourself).
 for your user in `~/.local/share/fonts` (one checksum-verified download from
 the project's GitHub release; the version is pinned by the lock). With
 `SET_GNOME_FONT=1` GNOME's monospace font becomes `JetBrainsMono Nerd Font Mono 11`
-and starship uses its icon preset; otherwise plain-text symbols.
+and starship uses its icon preset; otherwise plain-text symbols. `ls`, `ll`, `la` and
+`tree` (eza) show file icons whenever the font is installed; they only render if your
+terminal uses it. `WS_ICONS=0` switches the icons off, `WS_ICONS=1` forces them on.
 
 **Don't break Ubuntu.** No package is ever removed (`apt --no-remove`) and
 no installed package is upgraded (the setup never runs `apt upgrade`; installs
@@ -157,15 +159,20 @@ desktop module installs no snaps and no Flatpaks.
 software with an LTS line, the newest LTS; otherwise the newest stable
 release. Never betas, release candidates or nightlies. A lock file is a
 deliberate snapshot of "newest at that time"; `--upgrade` moves forward.
+**Node.js** is the one tool with an LTS line that is installed, and there the newest *upstream* LTS
+wins over the archive's older Node.js (your decision): the setup unpacks the release from nodejs.org
+(its index says which is the newest LTS) into `~/.local/opt/node-<version>`, linked from `~/.local/bin`,
+after checking it against the `SHASUMS256.txt` the project publishes. No APT repository is added.
+`NODE_LTS_VERSION` pins a release (the lock does it), `NODE_FROM_ARCHIVE=1` uses Ubuntu's own
+`nodejs`/`npm`, which is also the fallback if the download fails. System components (Python, gcc,
+glibc, systemd) always stay the archive version.
 
-**Checksums.** Files downloaded outside APT (installers, Helix, SPICE
-kernels) are verified against SHA-256 values in the lock file. Without a
-lock, checksums are recorded on first download (trust on first use) and
-pinned by `--lock`. Compare them with the publisher's values if your process
-requires it. Package managers (APT, cargo, uv/pip, npm) verify their own
-downloads. Note: a pinned checksum of a *mutable* URL (e.g. the `rustup`
-installer script) will refuse a later upstream change until you run
-`--upgrade` and re-lock; that is the intended trade-off.
+**Checksums.** Where the project publishes a checksum (uv, rustup-init, starship, lazygit,
+probe-rs, the Nerd Font), the download is compared with *that* and a mismatch is refused. Other
+downloads outside APT (the Helix tarball, SPICE kernels) are verified against SHA-256 values in the
+lock file; without a lock their checksum is recorded on first download (trust on first use) and pinned
+by `--lock`. Compare them with the publisher's values if your process requires it. Package managers
+(APT, cargo, uv/pip, npm) verify their own downloads. See "Downloads and checksums" below.
 
 ## Switching profiles on one machine
 
@@ -187,12 +194,20 @@ desktop module only places policy files for Firefox and Thunderbird.
 |---|---|
 | `tools/check-all.sh [--quick]` | Every check of this repository: `shellcheck`/`bash -n`, JSON/TOML/YAML parsing, README sync, the README's code blocks, `--explain`/`--check` for every profile; without `--quick` also functional tests in a throw-away `HOME` (`ws-init`, `ws-doctor`, `--undo`, manifest diff, the checksum-verified download helper incl. a tamper test, the LibreOffice helper) |
 | `tools/check-readme-sync.sh` | Fails if the README misses a package, tool, home file, step, switch, option or privacy service the script knows about |
-| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine: explain/check, full install, self-test, `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock, `--undo`, leftovers. Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
+| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine: explain/check, full install, self-test (a skipped RISC-V QEMU test counts as a failure), `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock (must pin the Rust toolchain and, when installed, Node.js), `--undo`, leftovers (incl. `~/.local/opt` and the node/npm/npx links). Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
 | `tools/manifest-diff.sh A B` | Compare two manifests (two machines, or manual vs scripted setup), ignoring host, user, CPU, kernel, hashes and dates |
 | `tools/install-hooks.sh` | Enable the git pre-commit hook (`check-all.sh --quick`) in this clone |
 
 CI (`.github/workflows/ci.yml`): `check-all.sh` on every push and PR, then for each profile a
 `--check` against the real archive of the newest Ubuntu LTS and a reduced real install in a container.
+The E2E workflow (`.github/workflows/e2e.yml`, about 10 to 20 minutes per job, started manually (Actions > E2E > Run workflow, or the API's workflow_dispatch on any branch, no pull request needed) or by a PR titled with `[e2e]`)
+runs `tools/e2e.sh` for both profiles on a GitHub runner VM and in an `ubuntu:latest` container. It
+purges the runner's preinstalled `gh` first and removes the container image's dpkg excludes, so the
+machine looks like a normal Ubuntu install. Results of the latest runs: README, "How well tested is this?".
+
+Health check: `ws-doctor` (installed in `~/.local/bin`, read-only, offline, no repository needed)
+reports missing tools, editor and shell setup, and the no-cloud settings in seconds; `--self-test` is
+the full verification.
 
 ## Downloads and checksums
 
