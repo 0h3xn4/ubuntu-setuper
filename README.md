@@ -158,15 +158,28 @@ seconds, without network.
 Be skeptical, and check for yourself; this is what has and has not been verified
 (newest facts first; the details and dates are in `CHANGELOG.md` and `CLAUDE.md`).
 
-- **Real install on the newest Ubuntu LTS (in CI, `ubuntu:latest`):** a reduced
+- **Full end-to-end test on Ubuntu 26.04.1 LTS (in CI, `tools/e2e.sh`):** the
+  *whole* life cycle of both profiles passed in all four jobs (a GitHub runner VM
+  and an `ubuntu:latest` container, each for `work` and `personal`): `--check`
+  against the real archive, a full `--full` install as a normal user with `sudo`,
+  the self-test (32 passed, 0 failed on the VM `work` run; 31 passed, 0 failed in
+  the container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
+  lock, `--undo` of every undo file, and a check that nothing the setup created is
+  left behind (APT packages stay by design). It took three fix rounds to get
+  there; the bugs it found are listed in `CHANGELOG.md` (two package names that
+  changed on 26.04, undo gaps, service handling in containers, an ordering
+  problem in the privacy step). Limits: a container has no running systemd and
+  cannot run podman, so image caching is switched off there; the VM run covers
+  that. No desktop session was involved.
+- **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
   basedpyright via uv, Helix, pre-commit offline, ccache, ARM cross builds,
   OpenOCD, `ws-devname`, ...) and **failed 1**, which turned out to be a mistake
   in the test, not in the setup: QEMU 10 prints the program's semihosting
   output on *stderr*, and the check only read stdout (QEMU's exit status was 0,
-  as expected). The test now reads both streams; that fix has not been run in
-  CI yet. The same run confirmed that `ws-doctor` finds the tools installed in
+  as expected). The test now reads both streams (confirmed later by the full
+  run above). The same run confirmed that `ws-doctor` finds the tools installed in
   `~/.local/bin` without the shell loader.
 - **Package names:** all checked against the real Ubuntu 24.04 archive; only
   `lazygit`, `zellij` and `difftastic` are missing there (the guide and script
@@ -174,11 +187,11 @@ Be skeptical, and check for yourself; this is what has and has not been verified
 - **Downloads:** the checksum checks for uv, rustup, starship, lazygit, probe-rs
   and the Nerd Font were run against the real files, including a deliberately
   wrong checksum, which is refused.
-- **Not yet verified:** the Kate, Nerd Font and Oh My Bash steps inside a full
-  install (they were switched off in CI), the desktop apps' settings (written
+- **Not yet verified:** the desktop apps' settings (written
   from documentation, not from running each app), the Firefox/Thunderbird policy
-  files (do they apply to the snaps? check `about:policies`), Rust and the
-  offline caches in CI, and everything on a real desktop.
+  files (do they apply to the snaps? check `about:policies`), the GNOME
+  settings (`SET_GNOME_FONT`, `SET_GNOME_PRIVACY`) and how the icons look in a
+  real terminal, and the RISC-V QEMU test if it was skipped. Everything on a real desktop.
 
 ## Rules this guide follows
 

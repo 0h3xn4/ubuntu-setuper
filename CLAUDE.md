@@ -218,6 +218,21 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+FULL E2E on Ubuntu 26.04.1 (PR #8, `tools/e2e.sh`): GREEN in all four jobs (VM and `ubuntu:latest` container,
+work and personal), all 10 phases: --check, --full install, self-test (32 passed/0 failed on VM work, 31/0 in
+the container work job), ws-doctor, idempotent re-run, manifest, lock, --undo of every undo file, leftovers.
+It took four runs. Bugs it found in the SETUP: `p7zip-full` -> `7zip`, `qemu-user-static` -> `qemu-user` +
+`qemu-user-binfmt` (both also exist on 24.04); undo records missing for rustup toolchains, cargo tools, uv
+tools, npm globals; `podman rmi` undo not idempotent; `systemctl disable --now` fails without systemd running;
+`containers.conf` only installed with the image cache; privacy hardening ran BEFORE package installs, which
+re-enabled motd-news.timer (it now runs after all installs); the containers.conf guard removed the file
+because `podman info` fails in Docker (it now removes only if podman worked before and fails after).
+Bugs in the TEST: SIGPIPE in the lock phase, runner image ships rustup and `gh` (the VM job purges gh),
+Docker image strips /usr/share/doc (workflow removes dpkg excludes). Limits: the container job runs with
+CACHE_CONTAINER_IMAGES=0 and no systemd; no desktop session (GNOME settings, desktop-app settings and the
+icons in a real terminal are still unverified). The Kate, Nerd Font and Oh My Bash steps DID run (self-test passes).
+Job summaries of green jobs are NOT at the end of get_job_logs (only failures print them): download the
+artifact (api.github.com/repos/OWNER/REPO/actions/artifacts/ID/zip with GITHUB_TOKEN) and read summary.md.
 FIRST REAL CI RUN (PR #5, `ubuntu:latest` = newest LTS, both profiles; jobs green): `--explain`,
 `--check` against the real archive, and a reduced REAL INSTALL as a normal user all worked.
 The self-test on that install (work profile): 20 passed, 1 failed, 1 warning (shell loader
@@ -227,11 +242,11 @@ presets, ws-init, clangd, ruff+basedpyright (uv from the checksum-verified tarba
 gdb-multiarch, OpenOCD configs, ws-devname. The one FAIL, `[embedded] ARM Cortex-M program runs
 in QEMU`, was a TEST bug found from the next run's log (PR #6 diagnostics): QEMU 10.2.1 exits 0
 but prints semihosting output on STDERR, and the test only read stdout. run_qemu_semihost now
-captures both (`> qemu.txt 2>&1`); that fix is NOT yet confirmed by a CI run. ws-doctor wrongly
+captures both (`> qemu.txt 2>&1`); confirmed by the full E2E run. ws-doctor wrongly
 reported tools in ~/.local/bin as missing when the shell loader is off: fixed (it searches
 ~/.local/bin and ~/.cargo/bin itself) and CONFIRMED in the real CI log (31 ok).
-NOT run: Kate, the Nerd Font and Oh My Bash steps in the installer (switched off in CI), the
-RISC-V QEMU test (qemu-system-misc not installed there), Rust, anything on a desktop.
+(In THAT early run Kate, the Nerd Font, Oh My Bash and Rust were switched off or not run; the full E2E above ran
+them. The RISC-V QEMU test is still the one to look at in an E2E summary: it may have been skipped.)
 Fetch CI logs with the github get_job_logs tool (job ids from the PR's check runs).
 
 Also done and checked in the sandbox:
@@ -248,20 +263,18 @@ INSTALL_FRAMA_C handled consistently (needs INSTALL_VERIFICATION);
 ws-devname validates vendor/product/serial/interface before writing a root
 udev rule; OpenOCD example binds to 127.0.0.1.
 
-NOT verified on a real Ubuntu LTS install: nothing has been verified against
-its actual package archive, and the desktop module's app settings are written
-from documentation, not from a run of each app.
+Verified on a real Ubuntu 26.04.1 LTS (see FULL E2E above): package names, a full install of both profiles,
+undo and re-runs. NOT verified: the desktop module's app settings (written from documentation, not from a
+run of each app) and anything needing a desktop session.
 
 ## Open tasks (in order)
-1. Names were checked on 24.04 only. On the latest LTS (26.04): `sudo apt update &&
-   ./setup.sh --profile work --check` and the same for `personal`; fix package names
-   reported NOT AVAILABLE (module.conf / workstation.conf). The CI job does this on
-   `ubuntu:latest` once the workflow has run.
-2. Run `./setup.sh --profile work` in the VM (snapshot first), then
-   `--self-test`; repeat for `personal`.
+1. (DONE by the E2E workflow: names checked on 26.04, only lazygit/zellij/difftastic are absent and handled.)
+2. (DONE in CI for both profiles on a runner VM and a container.) Still worth doing in the user's own
+   VM with a desktop session (snapshot first): `./setup.sh --profile work --full`, then `--self-test`; same
+   for `personal`. Check the icons in `ll` once the terminal uses the Nerd Font.
 3. Assumptions to verify on the real latest LTS (written without being able to test):
    - containers.conf `[engine] pull_policy = "never"` is accepted by podman
-     (cache_images removes the file again if `podman info` fails).
+     (install_podman_conf removes the file again only if podman worked before it and fails after it).
    - (verified) Helix tarball name helix-<ver>-x86_64-linux.tar.xz exists on GitHub.
    - `clangd --check` returns non-zero when the file has errors.
    - QEMU semihosting tests: ARM verified in CI (QEMU 10.2.1: SYS_EXIT 0x20026 -> exit status 0;

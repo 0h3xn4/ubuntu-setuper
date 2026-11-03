@@ -1,7 +1,8 @@
 # Changelog
 
-All notable changes to this repository. Newest first. The setup has not yet been
-run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
+All notable changes to this repository. Newest first. The full life cycle of both profiles
+has been run end to end in CI on Ubuntu 26.04.1 LTS (a VM and a container); it has not yet
+been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
