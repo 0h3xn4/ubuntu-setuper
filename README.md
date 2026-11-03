@@ -82,7 +82,7 @@ only if you want it. The script lists them with their state:
 | `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt, offline lock) | [B10](#b10-shell-bash) | delete the block |
 | `SET_GIT_DEFAULTS` | Global git defaults, only options you have not set | [B11](#b11-git) | `git config --unset` |
 | `INSTALL_OH_MY_BASH` | Oh My Bash from one pinned commit, loaded from `~/.bashrc.d` with its update check off; replaces the starship prompt (not a system change, but opt-in) | [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default) | delete the clone and the file |
-| `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-profile) | `gpasswd -d` |
+| `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-and-personal-profiles) | `gpasswd -d` |
 | `JOIN_WIRESHARK_GROUP` | *(embedded)* lets group `wireshark` capture without root (debconf answer, group) | C1 | `dpkg-reconfigure`, `gpasswd -d` |
 | `DESKTOP_BROWSER_POLICIES` | *(desktop)* new policy files below `/etc/firefox` and `/etc/thunderbird` | [C2](#c2-desktop-part-personal-profile) | delete the files |
 
@@ -111,8 +111,8 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
 | Path | Contents |
 |---|---|
-| `~/.local/bin` | `uv`, `ws-init`, `ws-devname`, `hx` (Helix, if not from the archive), npm tools |
-| `~/.local/opt` | Helix release tarball, if used |
+| `~/.local/bin` | `uv`, `ws-init`, `ws-devname`, `hx` (Helix, if not from the archive), `node`/`npm`/`npx` (links into `~/.local/opt`), npm tools |
+| `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release tarball, if used |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
 | `~/.config/kate` | Kate's language-server settings |
@@ -127,8 +127,9 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
 - **While you set up (allowed):** `apt`; the release downloads for `uv`,
   `rustup`, `starship`, `lazygit` and `probe-rs` (checked against the
-  checksums those projects publish) and the Helix release, only if the archive
-  lacks them; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
+  checksums those projects publish), the Node.js LTS tarball from nodejs.org
+  (checked against its `SHASUMS256.txt`) and the Helix release, only if the archive
+  lacks it; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
   once; the Nerd Font release from GitHub and, if you choose, the Oh My
   Bash clone from GitHub; the three offline caches (PyPI, crates.io, the
   container registry) and, if you choose, the SPICE kernels.
@@ -174,6 +175,9 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   problem in the privacy step). Limits: a container has no running systemd and
   cannot run podman, so image caching is switched off there; the VM run covers
   that. No desktop session was involved.
+  **Since that run** two things changed that no CI run has exercised yet: Node.js now comes
+  from nodejs.org (newest LTS) instead of the archive, and the `personal` profile now
+  includes the embedded part (the green runs above were `personal` = core + desktop only).
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
@@ -246,9 +250,9 @@ machine ends up in the same state.
   function `base_cli` in `setup.sh`*, so you can read the code next to the
   text.
 - **Which parts do I do?** Parts A, B, D and E are the core and are
-  always done. Part C is optional: C1 is the **work** profile (embedded and
-  flight-software tooling), C2 is the **personal** profile (everyday
-  desktop apps). Do either, both or neither. Inside a section, lines marked
+  always done. Part C is optional: C1 is embedded and flight-software tooling
+  (in both the **work** and the **personal** profile), C2 is everyday desktop
+  apps (the **personal** profile). Do either, both or neither. Inside a section, lines marked
   *(optional)* correspond to a switch in `workstation.conf`.
 - **Sections marked [opt-in]** change the system or your login files. Skip
   them unless you want that change; the heading names the switch the script
@@ -702,8 +706,42 @@ the GDB manual (`info gdb`) and, via rustup, the Rust docs (`rustup doc`).
 Installed with npm into your home directory (no root). npm is told not to
 contact the registry for update notices, funding messages or audits.
 
+**Node.js itself: the newest LTS release from nodejs.org, not the archive's.** Ubuntu's
+`nodejs` is older than the newest upstream LTS; this setup prefers the newest LTS (your
+decision) without adding an APT repository (no NodeSource): the project's own tarball is
+unpacked in your home directory and checked against the `SHASUMS256.txt` the project publishes.
+The project's index marks which release is the newest LTS (its "lts" field):
+
 ```bash
-apt_install nodejs npm
+v=$(curl -fsSL https://nodejs.org/dist/index.json | python3 -I -c 'import json, sys
+for r in json.load(sys.stdin):
+    if r.get("lts"):
+        print(r["version"]); break')
+echo "newest LTS: $v"
+case "$(uname -m)" in x86_64) a=x64 ;; aarch64) a=arm64 ;; esac
+asset=node-$v-linux-$a.tar.xz; base=https://nodejs.org/dist/$v
+download_verified "$base/$asset" "$base/SHASUMS256.txt" "$asset" "/tmp/$asset"
+mkdir -p ~/.local/opt ~/.local/bin
+[ -e ~/.local/opt/node-$v ] || record_undo "rm -rf ~/.local/opt/node-$v"
+mkdir -p ~/.local/opt/node-$v && tar -xJf "/tmp/$asset" -C ~/.local/opt/node-$v --strip-components=1
+# Link what the release ships (newer ones no longer include corepack). If one of these names
+# already exists in ~/.local/bin and is not yours, stop and look at it first: never replace it.
+for t in node npm npx corepack; do
+  [ -e ~/.local/opt/node-$v/bin/$t ] || continue
+  [ -e ~/.local/bin/$t ] || [ -L ~/.local/bin/$t ] || record_undo "rm -f ~/.local/bin/$t"
+  ln -sfn ../opt/node-$v/bin/$t ~/.local/bin/$t
+done
+hash -r; node --version
+```
+
+To pin a version, set `v=v26.13.0` (any release listed on nodejs.org) instead of the lookup.
+If you prefer Ubuntu's own (older, but Ubuntu-supported) Node.js, skip the block above and run
+`apt_install nodejs npm`; the script does this with `NODE_FROM_ARCHIVE=1`, and also as a
+fallback if the download fails.
+
+Then the language server:
+
+```bash
 npm config set prefix "$HOME/.local"
 npm config set update-notifier false
 npm config set fund false
@@ -713,7 +751,8 @@ record_undo "npm config delete prefix; npm config delete update-notifier; npm co
 npm install -g bash-language-server
 ```
 
-Undo: `npm rm -g <name>` and the `npm config delete ...` line.
+Undo: `npm rm -g <name>`, the `npm config delete ...` line, and
+`rm -rf ~/.local/opt/node-<version>` plus the links `~/.local/bin/{node,npm,npx,corepack}`.
 
 ## B8. Helix editor *(optional: `INSTALL_HELIX`)*
 
@@ -1073,7 +1112,7 @@ Undo: `rm ~/.config/kate/lspclient/settings.json`; the package via APT history.
 
 # Part C. Optional parts
 
-## C1. Embedded part (work profile)
+## C1. Embedded part (work and personal profiles)
 
 *Mirrors the `embedded` module, `modules/embedded/module.sh` and
 `module.conf`, step by step: `step "Embedded toolchain"`, `step "Wireshark"`,
@@ -1551,6 +1590,7 @@ write down the versions from your manifest and use them next time:
 | Tool | Install a pinned version |
 |---|---|
 | Rust | `rustup toolchain install 1.NN.N` (version from `rustc --version`) |
+| Node.js | set `v=vNN.N.N` in B7 instead of the index lookup (version from `node --version`) |
 | uv tools | `uv tool install --reinstall "ruff==X.Y.Z"` (versions from `uv tool list`) |
 | cargo tools | `cargo install --locked taplo-cli@X.Y.Z` (from `cargo install --list`) |
 | npm tools | `npm install -g bash-language-server@X.Y.Z` (from `npm ls -g`) |
@@ -1606,8 +1646,8 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
-| Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-profile)), or you have not logged out and in since joining. |
-| Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-profile)). |
+| Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |
+| Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-and-personal-profiles)). |
 | Two prompts fight (starship vs Oh My Bash) | Only one may own the prompt; while `~/.bashrc.d/15-oh-my-bash.sh` exists, starship is skipped by `10-workstation.sh`. |
 | A checksum mismatch message | The download differs from what the project published: do not use it. Retry later; if it persists, the release changed under you, so report it to the project. |
 | Something I do not understand | `./setup.sh --explain` describes every step, and the "big picture" section at the top of this page shows where things go. |

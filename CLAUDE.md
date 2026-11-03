@@ -19,12 +19,16 @@ conversation; this file carries that context over.
    are never installed. Runtime enforcement: files/home/.bashrc.d/20-offline.sh,
    uv.toml, containers.conf, lazygit/tealdeer/npm/rustup settings, and the
    desktop module's per-app settings.
-   Definition for inherently networked apps (PROPOSED by Claude, NOT yet
-   confirmed by the user): allowed is traffic the user directs to a
-   destination the user chose (opening a website, fetching mail from their
-   own server, an explicit `podman pull`); not allowed is anything automatic
-   or in the background (telemetry, update checks, crash reports, sync,
-   accounts, recommendations, automatic lookups, implicit downloads).
+   Inherently networked apps (browser, mail): the user did NOT confirm Claude's proposed strict
+   definition ("only traffic the user directs"). Their answer: such apps "of course might have
+   network access, naturally". So the setup does not try to cut off the network use that is the
+   app's purpose (browsing, fetching mail). The hard requirement stays strict for everything the
+   SETUP installs: dev tools, language servers, package managers, no telemetry/update checks/
+   implicit downloads. Per-app hardening already in the desktop module (update checks, metadata
+   lookups, crash reports of everyday apps) stays as is; do not extend it to browser/mail behaviour
+   beyond the optional policy files. Safe Browsing (polls Google) is switched off by the Firefox
+   policy file from before this answer: it is a security trade-off, mention it and ask before
+   changing it either way.
 2. **Don't break Ubuntu.** apt install always with --no-remove --no-upgrade;
    NEVER run `apt upgrade`/`full-upgrade` (the user rejected a system upgrade
    step: updating the system is Ubuntu's business, not this setup's); never edit
@@ -71,10 +75,14 @@ conversation; this file carries that context over.
      `--lock` re-pins. Without a lock, every install gets the newest.
    - Container images: ubuntu:latest (= newest LTS). Older images only as
      deliberate, pinned exceptions.
-   - OPEN QUESTION (ask the user): when the Ubuntu archive ships an older but
-     Canonical-supported version and upstream has a newer LTS/stable release
-     (e.g. Node.js), which wins? Current code prefers the archive (security
-     updates via apt for the release's lifetime, no extra package sources).
+   - DECIDED by the user: when the Ubuntu archive ships an older version and upstream has a
+     newer LTS, the NEWEST UPSTREAM LTS WINS. Implemented for Node.js (the only installed tool with
+     an LTS line): node_install() unpacks the release nodejs.org's index.json marks as newest LTS into
+     ~/.local/opt/node-<ver> (links in ~/.local/bin), checked with fetch_published against the
+     project's SHASUMS256.txt; NO APT repository (no NodeSource). NODE_LTS_VERSION pins (lock),
+     NODE_FROM_ARCHIVE=1 or a failed download falls back to the archive's nodejs/npm (the fallback is
+     recorded in MISSING_FILE so the E2E flags it). NOT extended to tools without an LTS line
+     (uv, Helix, starship still prefer the archive when it has them): ask before changing that.
      Components the OS itself depends on (system Python, gcc, glibc,
      systemd) must ALWAYS stay the archive version under requirement 2.
 
@@ -103,7 +111,8 @@ belong only inside the embedded module.
   (LibreOffice, KeePassXC, VLC, GIMP, Inkscape, Déjà Dup, Firefox/
   Thunderbird policy files, languages).
 - **profiles/<name>.conf**: `PROFILE_MODULES=(...)`, may preset switches.
-  `work` = core + embedded, `personal` = core + desktop. The chosen profile
+  `work` = core + embedded, `personal` = core + embedded + desktop (embedded is in personal by the
+  user's decision; `PROFILE_MODULES=(embedded desktop)`). The chosen profile
   is remembered in ~/.config/workstation/profile.
 - **locks/<profile>.lock** and **locks/<profile>.Cargo.lock**: one per profile.
 - Load order in load_config: lock > profile > workstation.conf > module.conf
@@ -142,14 +151,17 @@ belong only inside the embedded module.
 exists, `WS_ICONS=0|1` overrides. The user likes this look (long listing, folder/file icons, starship `❯`
 prompt) and uses JetBrains Mono Nerd Font in their terminal.
 
-### Open questions for the user
-- Confirm the "no cloud" definition above.
-- Which everyday apps (defaults: LibreOffice, KeePassXC, VLC, GIMP, Inkscape,
-  Déjà Dup; each has a DESKTOP_* switch) and which languages
-  (DESKTOP_LANGUAGES is empty = English only).
-- Browser and email client: keep the Firefox/Thunderbird snaps with the
-  policy files, or something else?
-- Should `embedded` be part of the `personal` profile?
+### Decisions by the user (the former open questions, all answered)
+- No-cloud definition for networked apps: see requirement 1 (they may use the network naturally).
+- Everyday apps and languages: the defaults are fine (LibreOffice, KeePassXC, VLC, GIMP, Inkscape,
+  Déjà Dup; DESKTOP_LANGUAGES empty = English only).
+- Browser and mail: keep Ubuntu's own Firefox/Thunderbird snaps (this setup neither installs nor
+  removes them) and only place the optional policy files (DESKTOP_BROWSER_POLICIES, opt-in), as
+  Claude recommended. Still UNVERIFIED whether the snaps read /etc/<app>/policies/policies.json.
+- `embedded` is part of `personal`.
+- Newest upstream LTS wins over the archive: requirement 4.
+Still open: whether tools WITHOUT an LTS line (uv, Helix, starship) should also prefer upstream over
+an older archive version (today: the archive if it has them, else the project's release).
 
 ## Checks you can run (and CI)
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
@@ -316,7 +328,9 @@ run of each app) and anything needing a desktop session.
      `check-language-support -l <lang>` output.
    - OpenOCD `-c "bindto 127.0.0.1"` is accepted (cheat sheet example).
 4. When the VM runs are clean: `./setup.sh --profile work --lock` and the
-   same for personal, review, commit locks/.
+   same for personal, review, commit locks/. (The lock now also pins NODE_LTS_VERSION.)
+5. The Node.js upstream-LTS path and the personal profile with embedded+desktop have NOT been run in
+   CI yet: open a PR with "[e2e]" in the title and read the four jobs (personal is now the bigger run).
 
 ## Safety rules for Claude Code in this repo
 - Do not run `./setup.sh` (install mode) on the development machine: it uses

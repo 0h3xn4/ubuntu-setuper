@@ -39,7 +39,7 @@ runs (`--check`, `--self-test`, `--manifest`, `--lock`, `--upgrade`) need no
 | Profile | Modules |
 |---|---|
 | `work` | core + embedded |
-| `personal` | core + desktop (add `embedded` in `profiles/personal.conf` if you want it) |
+| `personal` | core + embedded + desktop (embedded is part of it by your decision; remove `embedded` from `profiles/personal.conf` to leave it out) |
 
 Make your own profile by copying a file in `profiles/`; it only needs
 `PROFILE_MODULES=(...)` and may preset switches.
@@ -159,6 +159,13 @@ desktop module installs no snaps and no Flatpaks.
 software with an LTS line, the newest LTS; otherwise the newest stable
 release. Never betas, release candidates or nightlies. A lock file is a
 deliberate snapshot of "newest at that time"; `--upgrade` moves forward.
+**Node.js** is the one tool with an LTS line that is installed, and there the newest *upstream* LTS
+wins over the archive's older Node.js (your decision): the setup unpacks the release from nodejs.org
+(its index says which is the newest LTS) into `~/.local/opt/node-<version>`, linked from `~/.local/bin`,
+after checking it against the `SHASUMS256.txt` the project publishes. No APT repository is added.
+`NODE_LTS_VERSION` pins a release (the lock does it), `NODE_FROM_ARCHIVE=1` uses Ubuntu's own
+`nodejs`/`npm`, which is also the fallback if the download fails. System components (Python, gcc,
+glibc, systemd) always stay the archive version.
 
 **Checksums.** Where the project publishes a checksum (uv, rustup-init, starship, lazygit,
 probe-rs, the Nerd Font), the download is compared with *that* and a mismatch is refused. Other

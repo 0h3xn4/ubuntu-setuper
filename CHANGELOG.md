@@ -20,6 +20,16 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Changed (decisions by the user)
+- **Node.js: the newest upstream LTS wins** over the archive's older one. `node_install` unpacks the release
+  nodejs.org marks as the newest LTS into `~/.local/opt/node-<version>` (linked from `~/.local/bin`), checked
+  against the project's published `SHASUMS256.txt`; no APT repository. `NODE_LTS_VERSION` pins it (the lock
+  does), `NODE_FROM_ARCHIVE=1` or a failed download uses Ubuntu's `nodejs`/`npm`.
+- **`embedded` is part of the `personal` profile** (core + embedded + desktop).
+- **Networked apps may use the network naturally** (the stricter proposed definition was not accepted);
+  the browser/mail decision is: keep Ubuntu's snaps, place only the optional policy files.
+- Everyday desktop apps and languages: the defaults stay.
+
 ### Added (icons)
 - `ls`/`ll`/`la`/`tree` (eza) show file icons when the JetBrains Mono Nerd Font is installed; `ll` is now a plain
   long listing like `ls -l` (use `la` for hidden files). `WS_ICONS=0` switches icons off, `WS_ICONS=1` forces them on.

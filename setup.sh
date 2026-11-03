@@ -456,6 +456,56 @@ helix_version() {
     | awk 'tolower($1) == "location:" { n = split($2, a, "/"); gsub(/\r/, "", a[n]); print a[n]; exit }'
 }
 
+# Node.js: the newest LTS release from nodejs.org (decided by the user: the newest upstream LTS wins over the
+# archive's older Node.js). No APT repository (NodeSource) is added: the project's own tarball is unpacked
+# in your home directory and checked against the SHASUMS256.txt the project publishes.
+node_arch() {
+  case "$(host_arch)" in x86_64) echo x64 ;; aarch64) echo arm64 ;; *) return 1 ;; esac
+}
+# Pinned version (NODE_LTS_VERSION, e.g. v26.13.0), else the newest release the project's index marks "lts".
+node_version() {
+  if [[ -n ${NODE_LTS_VERSION:-} ]]; then echo "$NODE_LTS_VERSION"; return 0; fi
+  curl -fsSL --retry 3 --connect-timeout 20 https://nodejs.org/dist/index.json 2>/dev/null \
+    | python3 -I -c 'import json, sys
+for r in json.load(sys.stdin):
+    if r.get("lts"):
+        print(r["version"]); break'
+}
+NODE_TOOLS=(node npm npx corepack)
+node_install() {
+  local v arch dir base asset tool target opt="$HOME/.local/opt" bin="$HOME/.local/bin"
+  arch="$(node_arch)" || { warn "No Node.js release for $(host_arch)"; return 1; }
+  v="$(node_version || true)"
+  if [[ ! $v =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then warn "Could not determine the newest Node.js LTS release"; return 1; fi
+  dir="$opt/node-$v"
+  if [[ -x $dir/bin/node && "$(readlink -f "$bin/node" 2>/dev/null || true)" == "$dir/bin/node" ]]; then
+    ok "Node.js $v (already installed)"; return 0
+  fi
+  for tool in "${NODE_TOOLS[@]}"; do   # never replace something that is not ours
+    if [[ -e $bin/$tool || -L $bin/$tool ]]; then
+      target="$(readlink "$bin/$tool" 2>/dev/null || true)"
+      case $target in */opt/node-v*) ;; *) warn "$bin/$tool exists and is not from this setup; leaving it alone"; return 1 ;; esac
+    fi
+  done
+  base="https://nodejs.org/dist/$v"; asset="node-$v-linux-$arch.tar.xz"
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/SHASUMS256.txt" "$asset" || return 1
+  mkdir -p "$opt" "$bin"
+  rm -rf "$dir.partial"; mkdir "$dir.partial"
+  tar -xJf "$STATE_DIR/$asset" -C "$dir.partial" --strip-components=1
+  if [[ ! -e $dir ]]; then record_undo "rm -rf ~/.local/opt/node-$v"; fi
+  rm -rf "$dir"; mv "$dir.partial" "$dir"
+  for tool in "${NODE_TOOLS[@]}"; do    # corepack is not shipped by every release: link what exists
+    if [[ ! -e $dir/bin/$tool ]]; then continue; fi
+    if [[ ! -e $bin/$tool && ! -L $bin/$tool ]]; then record_undo "rm -f ~/.local/bin/$tool"; fi
+    ln -sfn "../opt/node-$v/bin/$tool" "$bin/$tool"
+  done
+  for target in "$opt"/node-v*; do      # older releases from an earlier run of this setup
+    if [[ -d $target && $target != "$dir" ]]; then rm -rf "$target"; fi
+  done
+  hash -r
+  ok "Node.js $v (newest LTS) installed in ~/.local/opt, linked from ~/.local/bin"
+}
+
 # ----------------------------------------------------------------------------
 # Modules and the lists they extend
 #
@@ -480,7 +530,7 @@ pkg_groups() {
   if on "$INSTALL_OFFLINE_DOCS"; then echo PKGS_DOCS; fi
   if on "$INSTALL_PYTHON"; then echo PKGS_PYTHON; fi
   if on "$INSTALL_RUST" && on "$INSTALL_CARGO_TOOLS"; then echo PKGS_RUST_BUILD; fi
-  if on "$INSTALL_BASH_LSP"; then echo PKGS_NODE; fi
+  if on "$INSTALL_BASH_LSP" && on "$NODE_FROM_ARCHIVE"; then echo PKGS_NODE; fi
   if on "$INSTALL_PODMAN"; then echo PKGS_PODMAN; fi
   if on "$INSTALL_DOCKER"; then echo PKGS_DOCKER; fi
   module_collect pkg_groups
@@ -902,7 +952,13 @@ rust_toolchain() {
 }
 
 bash_lsp() {
-  apt_install "${PKGS_NODE[@]}"
+  if on "$NODE_FROM_ARCHIVE"; then
+    apt_install "${PKGS_NODE[@]}"
+  elif ! node_install; then
+    warn "Using the Ubuntu archive's Node.js instead (older, but supported by Ubuntu)"
+    echo "Node.js newest LTS from nodejs.org (used the archive's)" >> "$MISSING_FILE"
+    apt_install "${PKGS_NODE[@]}"
+  fi
   have npm || { warn "npm is not available"; return 1; }
   npm config set prefix "$HOME/.local"
   # Stop npm from contacting the registry for update notices, funding, audits.
@@ -1351,6 +1407,9 @@ check_mode() {
     else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest"; fi
   fi
   if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then plan_tool starship starship starship "$(starship_base_url)/$(starship_asset) (checked against the published .sha256)"; fi
+  if on "$INSTALL_BASH_LSP" && ! on "$NODE_FROM_ARCHIVE"; then
+    printf '    %-10s %s\n' "Node.js" "newest LTS (${NODE_LTS_VERSION:-resolved at install time}) from nodejs.org, checked against its published SHASUMS256.txt; the archive's nodejs/npm only as a fallback"
+  fi
   if on "$INSTALL_NERD_FONT"; then printf '    %-10s %s\n' "Nerd Font" "download JetBrainsMono.tar.xz from github.com/ryanoasis/nerd-fonts (${NERD_FONT_VERSION:-newest stable}; checked against the published SHA-256.txt)"; fi
   if on "$INSTALL_OH_MY_BASH"; then printf '    %-10s %s\n' "Oh My Bash" "git clone of ONE commit (${OH_MY_BASH_COMMIT:-current HEAD}) from github.com/ohmybash/oh-my-bash"; fi
   echo
@@ -1966,6 +2025,10 @@ EOF
     if [[ -s $NERD_FONT_DIR/.version ]]; then printf ': "${NERD_FONT_VERSION:=%s}"\n' "$(<"$NERD_FONT_DIR/.version")"; fi
     # shellcheck disable=SC2016
     if [[ -d $OMB_DIR/.git ]]; then printf ': "${OH_MY_BASH_COMMIT:=%s}"\n' "$(git -C "$OMB_DIR" rev-parse HEAD)"; fi
+    # shellcheck disable=SC2016
+    if [[ "$(readlink "$HOME/.local/bin/node" 2>/dev/null || true)" == */opt/node-v* ]]; then
+      printf ': "${NODE_LTS_VERSION:=%s}"\n' "$("$HOME/.local/bin/node" --version)"
+    fi
     module_collect lock_pins
     echo
 
@@ -2192,8 +2255,8 @@ STEP_TOUCHES["Rust toolchain"]="apt build libraries; ~/.rustup and ~/.cargo; net
 STEP_WHY["Offline documentation"]="Reference documentation that works without internet: C/C++ (cppreference), Python, CMake, POSIX, glibc, GDB."
 STEP_TOUCHES["Offline documentation"]="apt packages (docs, man pages)."
 
-STEP_WHY["Bash language server"]="Editor support for shell scripts, installed with npm into your home directory. npm is told not to contact the registry for update notices, funding messages or audits."
-STEP_TOUCHES["Bash language server"]="apt packages (nodejs, npm); ~/.local (npm global prefix); npm settings in ~/.npmrc; network: npm registry."
+STEP_WHY["Bash language server"]="Editor support for shell scripts. It needs Node.js: the newest LTS release from nodejs.org (the archive's is older; no APT repository is added), unpacked in your home directory and checked against the checksum the project publishes. Then the server is installed with npm into your home directory. npm is told not to contact the registry for update notices, funding messages or audits. NODE_FROM_ARCHIVE=1 uses Ubuntu's own nodejs/npm instead."
+STEP_TOUCHES["Bash language server"]="~/.local/opt/node-<version> and links in ~/.local/bin (node, npm, npx, corepack); ~/.local (npm global prefix); npm settings in ~/.npmrc; network: nodejs.org, npm registry. With NODE_FROM_ARCHIVE=1: apt packages nodejs, npm."
 
 STEP_WHY["Helix editor"]="The Helix terminal editor, from the Ubuntu archive or the official release tarball (never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
 STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/*; network: GitHub release only if Helix is not in the archive."
