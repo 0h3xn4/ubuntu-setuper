@@ -44,7 +44,7 @@ while IFS= read -r f; do
 done < <(find files/home modules/*/files/home -type f | sort)
 
 # --- script options a user of the manual should know about -------------------
-for opt in --full --explain --check --undo --dry-run ws-doctor manifest-diff.sh check-all.sh; do need "option" "$opt"; done
+for opt in --full --explain --check --undo --dry-run ws-doctor manifest-diff.sh check-all.sh e2e.sh; do need "option" "$opt"; done
 
 # --- every `step "Title"` in setup.sh and the modules ----------------------
 while IFS= read -r title; do

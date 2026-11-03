@@ -1575,7 +1575,12 @@ go (lint, parsing, README sync, and functional tests in a throw-away home
 directory; `--quick` for the static ones, which the git hook from
 `tools/install-hooks.sh` runs on every commit), and the GitHub workflow in
 `.github/workflows` runs them, plus a real install on the newest Ubuntu LTS,
-for every change. What changed and when is in `CHANGELOG.md`. If you find a difference between this guide and the script,
+for every change. For the complete life cycle, `tools/e2e.sh --profile work
+--i-know-this-machine-is-disposable` does a **full** install (every opt-in on),
+self-test, health check, a second install, manifest, lock, then `--undo` and a
+check that nothing is left behind. Run it in a throw-away VM only (it refuses
+to run as root or without that flag); the "E2E" workflow does it on GitHub
+runners (manually, or on a pull request whose title contains `[e2e]`). What changed and when is in `CHANGELOG.md`. If you find a difference between this guide and the script,
 the script's behaviour is the reference and the guide has a bug; please
 report it.
 

@@ -160,6 +160,11 @@ belong only inside the embedded module.
   must not be worked around. Real installs belong in the CI workflow (container) or in a
   VM of the user's. Do not create users/sudoers entries in the sandbox to attempt it.
 
+- `tools/e2e.sh` = the full end-to-end test (see docs/script-reference.md); the "E2E" workflow
+  runs it on GitHub runner VMs and a newest-LTS container, only manually or for a PR whose title
+  contains "[e2e]". It is the ONLY way to test a real full install (the sandbox cannot). Fetch its
+  logs with get_job_logs; the summary table is at the end of each job's log.
+
 ## Making the setup understandable
 - Every step has a plain-language `STEP_WHY[title]` and `STEP_TOUCHES[title]`
   (core: setup.sh; modules: their module.sh). They are printed during the

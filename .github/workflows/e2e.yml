@@ -1,0 +1,91 @@
+name: E2E (full lifecycle)
+
+# A full end-to-end test: install everything (--full), self-test, health check,
+# idempotent re-install, manifest, lock, then undo and check nothing is left.
+# It is slow (30-60 minutes) and big, so it does NOT run on every change:
+#   - manually (Actions > E2E > Run workflow), or
+#   - on a pull request whose title contains "[e2e]".
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # A real GitHub runner VM: real systemd, real sudo, a real network.
+  e2e-vm:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.title, '[e2e]')
+    name: e2e vm (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [work, personal]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make room (the full setup is large)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Full lifecycle
+        env:
+          E2E_LOG_DIR: ${{ github.workspace }}/e2e-logs
+        run: tools/e2e.sh --profile ${{ matrix.profile }} --i-know-this-machine-is-disposable
+      - name: Job summary
+        if: always()
+        run: cat e2e-logs/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-vm-${{ matrix.profile }}
+          path: e2e-logs
+          retention-days: 7
+
+  # The newest Ubuntu LTS (the Docker image tagged "latest"), no systemd, no desktop.
+  e2e-lts-container:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.title, '[e2e]')
+    name: e2e newest LTS container (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    container: ubuntu:latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [work, personal]
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Prerequisites inside the container
+        run: |
+          apt-get update
+          apt-get install -y sudo git curl ca-certificates python3 jq xz-utils
+      - uses: actions/checkout@v4
+      - name: Normal user with sudo
+        run: |
+          useradd -m -s /bin/bash tester
+          echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester
+          chown -R tester:tester "$GITHUB_WORKSPACE"
+      - name: Full lifecycle
+        # A container cannot pull images through podman, so the image cache is off here.
+        run: |
+          sudo -u tester -H env E2E_LOG_DIR=/home/tester/e2e-logs E2E_SWITCHES="CACHE_CONTAINER_IMAGES=0" \
+            bash -c "cd '$GITHUB_WORKSPACE' && tools/e2e.sh --profile ${{ matrix.profile }} --i-know-this-machine-is-disposable"
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p e2e-logs
+          cp -r /home/tester/e2e-logs/. e2e-logs/ 2>/dev/null || true
+          cat e2e-logs/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-lts-container-${{ matrix.profile }}
+          path: e2e-logs
+          retention-days: 7

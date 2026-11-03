@@ -19,6 +19,13 @@ run end to end on a real Ubuntu LTS install; see `CLAUDE.md` for the open tasks.
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Added (end-to-end test)
+- `tools/e2e.sh` and `.github/workflows/e2e.yml`: the full life cycle of a profile (full install,
+  self-test, ws-doctor, idempotent re-install, manifest, lock, undo, leftovers) on GitHub runner VMs
+  and in a newest-LTS container; manual, or on a PR titled with `[e2e]`.
+- Fix found by reading the code for it: the sysctl drop-in is now recorded for undo as soon as it is
+  written, and failing to apply it (container) only warns.
+
 ### Fixed (found by the first CI run on the newest LTS)
 - `ws-doctor` no longer reports tools in `~/.local/bin` / `~/.cargo/bin` as missing when the
   (opt-in) shell loader is off.

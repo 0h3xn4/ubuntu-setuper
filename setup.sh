@@ -712,9 +712,9 @@ system_tuning() {
   if [[ ! -e $f ]]; then
     printf 'fs.inotify.max_user_watches = 524288\nfs.inotify.max_user_instances = 1024\n' \
       | sudo tee "$f" >/dev/null
-    sudo sysctl -p "$f" >/dev/null
-    record_undo "sudo rm -f $f"
-    ok "Raised inotify limits"
+    record_undo "sudo rm -f $f"       # recorded as soon as the file exists, whatever sysctl does next
+    if sudo sysctl -p "$f" >/dev/null 2>&1; then ok "Raised inotify limits"
+    else warn "Wrote $f but could not apply it now (a container?); it takes effect at the next boot"; fi
   else
     ok "Unchanged: $f"
   fi
