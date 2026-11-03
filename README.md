@@ -24,6 +24,7 @@ lists them all.
 ## Contents
 
 - [The big picture](#the-big-picture): what ends up where, when the network is used, what is opt-in
+- [How well tested is this?](#how-well-tested-is-this)
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
 - [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*
@@ -32,6 +33,7 @@ lists them all.
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
 - [Part E. Verify](#part-e-verify)
 - [Part F. Record, pin and undo](#part-f-record-pin-and-undo)
+- [Troubleshooting](#troubleshooting)
 - [Automated route](#automated-route)
 
 ## The big picture
@@ -145,9 +147,38 @@ boot, coreutils or APT sources. Create accounts or sign in anywhere.
 If you also have the script: `./setup.sh --profile work --explain` prints this
 whole picture for your profile, step by step, and changes nothing;
 `./setup.sh --profile work --check` adds package names and versions. Add
-`--full` to either to see the full setup instead of the default one.
+`--full` to either to see the full setup instead of the default one. Afterwards,
+`ws-doctor` (installed by the setup, also by [B10](#b10-shell-bash)) checks the result in
+seconds, without network.
 
 ---
+
+## How well tested is this?
+
+Be skeptical, and check for yourself; this is what has and has not been verified
+(newest facts first; the details and dates are in `CHANGELOG.md` and `CLAUDE.md`).
+
+- **Real install on the newest Ubuntu LTS (in CI, `ubuntu:latest`):** a reduced
+  install of both profiles worked, as a normal user with `sudo`. Its self-test
+  passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
+  basedpyright via uv, Helix, pre-commit offline, ccache, ARM cross builds,
+  OpenOCD, `ws-devname`, ...) and **failed 1**, which turned out to be a mistake
+  in the test, not in the setup: QEMU 10 prints the program's semihosting
+  output on *stderr*, and the check only read stdout (QEMU's exit status was 0,
+  as expected). The test now reads both streams; that fix has not been run in
+  CI yet. The same run confirmed that `ws-doctor` finds the tools installed in
+  `~/.local/bin` without the shell loader.
+- **Package names:** all checked against the real Ubuntu 24.04 archive; only
+  `lazygit`, `zellij` and `difftastic` are missing there (the guide and script
+  have a fallback for lazygit and skip the others).
+- **Downloads:** the checksum checks for uv, rustup, starship, lazygit, probe-rs
+  and the Nerd Font were run against the real files, including a deliberately
+  wrong checksum, which is refused.
+- **Not yet verified:** the Kate, Nerd Font and Oh My Bash steps inside a full
+  install (they were switched off in CI), the desktop apps' settings (written
+  from documentation, not from running each app), the Firefox/Thunderbird policy
+  files (do they apply to the snaps? check `about:policies`), Rust and the
+  offline caches in CI, and everything on a real desktop.
 
 ## Rules this guide follows
 
@@ -1307,6 +1338,12 @@ memberships, PATH and the shell setup are active, then open a new terminal.
 Run the checks for the parts you installed; each should succeed without
 errors.
 
+**Quick look first:** `ws-doctor` (read-only, offline) lists missing tools,
+missing language servers, shell-setup problems and no-cloud settings that are
+off, with one line each. It also looks in `~/.local/bin` and `~/.cargo/bin`
+when the shell loader is not active, and tells you if those are not on `PATH`.
+The checks below go deeper (they build and run things).
+
 **Core toolchains**
 
 ```bash
@@ -1366,8 +1403,15 @@ done
 arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -O1 -ffreestanding -nostdlib \
   -T "$WS/modules/embedded/files/selftest/arm/lm3s6965.ld" "$WS/modules/embedded/files/selftest/arm/semihost.c" -o /tmp/arm.elf
 timeout 30 qemu-system-arm -M lm3s6965evb -nographic -monitor none -serial none \
-  -semihosting-config enable=on,target=native -kernel /tmp/arm.elf </dev/null | grep "ARM Cortex-M self-test OK"
+  -semihosting-config enable=on,target=native -kernel /tmp/arm.elf </dev/null > /tmp/qemu.txt 2>&1
+echo "QEMU exit status: $?    (0 expected: the program ends with SYS_EXIT / ApplicationExit)"
+cat /tmp/qemu.txt                                    # expect: ARM Cortex-M self-test OK
 ```
+
+Two things matter here. QEMU prints the program's semihosting output on
+**stderr** (QEMU 10.2 on the newest LTS), so redirect both streams (`2>&1`) or
+you will see nothing. And do not pipe through `grep` or `tee`: a pipe hides
+QEMU's own exit status.
 
 **Desktop part (C2).** Re-run the `check` helper for LibreOffice and look at
 the files you installed:
@@ -1531,7 +1575,7 @@ go (lint, parsing, README sync, and functional tests in a throw-away home
 directory; `--quick` for the static ones, which the git hook from
 `tools/install-hooks.sh` runs on every commit), and the GitHub workflow in
 `.github/workflows` runs them, plus a real install on the newest Ubuntu LTS,
-for every change. If you find a difference between this guide and the script,
+for every change. What changed and when is in `CHANGELOG.md`. If you find a difference between this guide and the script,
 the script's behaviour is the reference and the guide has a bug; please
 report it.
 

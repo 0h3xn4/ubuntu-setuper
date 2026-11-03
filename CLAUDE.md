@@ -150,8 +150,8 @@ belong only inside the embedded module.
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
   `tools/install-hooks.sh`). CI (.github/workflows/ci.yml) runs it, then per profile
   `--check` against the real archive of `ubuntu:latest` and a reduced real install. It ran
-  green once (PR #5); its self-test step is still non-blocking ("|| true") because one test
-  failed (see Status): make it blocking once the QEMU test is fixed.
+  green (PR #5, #6); its self-test step is still non-blocking ("|| true") because the QEMU
+  test failed (see Status): make it blocking once a CI run shows that test passing.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
   `./setup.sh --profile X --check` verifies package names for real (only `lazygit` was
   missing on 24.04). It is NOT the latest LTS (26.04), so names may differ there.
@@ -219,11 +219,12 @@ The self-test on that install (work profile): 20 passed, 1 failed, 1 warning (sh
 off, expected), 12 skipped. Passed for real: gcc/clang++/sanitizers, CMake+GoogleTest,
 presets, ws-init, clangd, ruff+basedpyright (uv from the checksum-verified tarball), Helix
 (tarball install, config loads), pre-commit offline, ccache, ws-doctor, ARM cross builds,
-gdb-multiarch, OpenOCD configs, ws-devname. FAILED: `[embedded] ARM Cortex-M program runs in
-QEMU`: the program printed its OK message but the test failed; QEMU's source says SYS_EXIT with
-0x20026 exits 0, so the cause is unknown. run_qemu_semihost now logs QEMU's exit status, stderr
-and version; read it in the next CI run's log. ws-doctor wrongly reported tools in ~/.local/bin as
-missing when the shell loader is off (fixed: it searches ~/.local/bin and ~/.cargo/bin itself).
+gdb-multiarch, OpenOCD configs, ws-devname. The one FAIL, `[embedded] ARM Cortex-M program runs
+in QEMU`, was a TEST bug found from the next run's log (PR #6 diagnostics): QEMU 10.2.1 exits 0
+but prints semihosting output on STDERR, and the test only read stdout. run_qemu_semihost now
+captures both (`> qemu.txt 2>&1`); that fix is NOT yet confirmed by a CI run. ws-doctor wrongly
+reported tools in ~/.local/bin as missing when the shell loader is off: fixed (it searches
+~/.local/bin and ~/.cargo/bin itself) and CONFIRMED in the real CI log (31 ok).
 NOT run: Kate, the Nerd Font and Oh My Bash steps in the installer (switched off in CI), the
 RISC-V QEMU test (qemu-system-misc not installed there), Rust, anything on a desktop.
 Fetch CI logs with the github get_job_logs tool (job ids from the PR's check runs).
@@ -258,9 +259,9 @@ from documentation, not from a run of each app.
      (cache_images removes the file again if `podman info` fails).
    - (verified) Helix tarball name helix-<ver>-x86_64-linux.tar.xz exists on GitHub.
    - `clangd --check` returns non-zero when the file has errors.
-   - QEMU semihosting tests (t_emb_arm_qemu, t_emb_riscv_qemu): vector table,
-     SYS_EXIT semantics (32-bit ARM passes the reason code directly; RV64 a
-     pointer to a 2-word block).
+   - QEMU semihosting tests: ARM verified in CI (QEMU 10.2.1: SYS_EXIT 0x20026 -> exit status 0;
+     semihosting output on stderr, hence 2>&1). RISC-V (t_emb_riscv_qemu: RV64 SYS_EXIT with a
+     2-word block) still unverified: qemu-system-misc was not installed in the CI subset.
    - Doc paths: cppreference under /usr/share/cppreference/doc/html/,
      POSIX man pages as section 3posix.
    - udev properties ID_VENDOR_ID / ID_MODEL_ID / ID_SERIAL_SHORT /
