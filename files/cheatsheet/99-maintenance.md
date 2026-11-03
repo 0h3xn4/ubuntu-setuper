@@ -4,7 +4,8 @@ Run these from the setup folder. The profile chosen at install time
 (`~/.config/workstation/profile`) is remembered; `--profile NAME` overrides it.
 
 ```bash
-./setup.sh --check       # preview what setup would do (changes nothing)
+./setup.sh --explain     # plain-language tour of every step; what is on/off (changes nothing)
+./setup.sh --check       # preview what setup would do, down to packages (changes nothing)
 ./setup.sh --self-test   # verify toolchains and the no-cloud policy
 ./setup.sh --manifest    # list all installed software and versions
 ./setup.sh --lock        # pin current versions (locks/<profile>.lock)

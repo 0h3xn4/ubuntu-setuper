@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# STEP_WHY / STEP_TOUCHES are declared in setup.sh; '~' in descriptions is literal.
+# shellcheck disable=SC2034,SC2088
 # =============================================================================
 #  modules/embedded/module.sh — code of the "embedded" module
 #
@@ -21,6 +23,20 @@
 # =============================================================================
 EMBEDDED_DIR="$MODULE_DIR"
 
+# What each step does (shown during install and by ./setup.sh --explain)
+STEP_WHY["Embedded toolchain"]="Cross compilers for ARM and RISC-V, QEMU emulators, OpenOCD and flash tools for debug probes, serial and CAN tools. With JOIN_SERIAL_GROUPS=1 your user also joins the 'dialout' and 'plugdev' groups so serial ports and probes work without sudo (active after the next login); otherwise they need sudo."
+STEP_TOUCHES["Embedded toolchain"]="apt packages; with JOIN_SERIAL_GROUPS=1 system: adds you to groups dialout and plugdev (sudo)."
+STEP_WHY["Wireshark"]="Packet inspection (for telemetry and bus traffic). With JOIN_WIRESHARK_GROUP=1, members of the 'wireshark' group may capture without root; otherwise capture needs sudo."
+STEP_TOUCHES["Wireshark"]="apt package; with JOIN_WIRESHARK_GROUP=1 system: debconf answer + dpkg-reconfigure wireshark-common, adds you to group wireshark (sudo)."
+STEP_WHY["Verification tools"]="Formal and static verification helpers: CBMC bounded model checker, flawfinder, AFL++ fuzzer, lizard (complexity) and codespell."
+STEP_TOUCHES["Verification tools"]="apt packages; ~/.local (uv tools); network: PyPI."
+STEP_WHY["Embedded GUI tools"]="PulseView, the logic-analyzer GUI."
+STEP_TOUCHES["Embedded GUI tools"]="apt package."
+STEP_WHY["Embedded helpers and templates"]="The 'serial' and 'vcan-up' shell helpers, ws-devname (stable names for USB serial adapters; writes its udev rule only when YOU run it) and the embedded project starter files for 'ws-init --embedded'."
+STEP_TOUCHES["Embedded helpers and templates"]="~/.bashrc.d/30-embedded.sh, ~/.local/bin/ws-devname, ~/.local/share/workstation/templates/embedded."
+STEP_WHY["SPICE generic kernels"]="Downloads NASA NAIF generic SPICE kernels (about 35 MB) and a meta-kernel that loads them."
+STEP_TOUCHES["SPICE generic kernels"]="~/.local/share/workstation/spice; network: naif.jpl.nasa.gov, now."
+
 mod_embedded_pkg_groups() {
   echo PKGS_EMBEDDED
   if on "$INSTALL_GUI_TOOLS"; then echo PKGS_EMBEDDED_GUI; fi
@@ -37,9 +53,13 @@ mod_embedded_home_files() {
 }
 
 mod_embedded_groups() {
-  echo dialout
-  echo plugdev
-  if on "$INSTALL_WIRESHARK"; then echo wireshark; fi
+  if on "$JOIN_SERIAL_GROUPS"; then echo dialout; echo plugdev; fi
+  if on "$INSTALL_WIRESHARK" && on "$JOIN_WIRESHARK_GROUP"; then echo wireshark; fi
+}
+
+mod_embedded_opt_in() {
+  echo "JOIN_SERIAL_GROUPS|add your user to groups dialout and plugdev (serial ports, debug probes without sudo)"
+  echo "JOIN_WIRESHARK_GROUP|let group 'wireshark' capture without root (debconf answer, dpkg-reconfigure, group)"
 }
 
 mod_embedded_uv_tools() {
@@ -75,12 +95,18 @@ mod_embedded_steps() {
 
 embedded_toolchain() {
   apt_install "${PKGS_EMBEDDED[@]}"
-  # Serial ports and USB debug probes without sudo. Probe udev rules from the
-  # packages apply the next time a device is plugged in.
-  add_to_groups dialout plugdev
+  # Serial ports and USB debug probes without sudo (JOIN_SERIAL_GROUPS=1).
+  # Probe udev rules from the packages apply the next time a device is plugged in.
+  if on "$JOIN_SERIAL_GROUPS"; then add_to_groups dialout plugdev
+  else log "JOIN_SERIAL_GROUPS=0: you are not added to dialout/plugdev; serial ports and probes need sudo"; fi
 }
 
 wireshark_setup() {
+  if ! on "$JOIN_WIRESHARK_GROUP"; then
+    apt_install "${PKGS_WIRESHARK[@]}"
+    log "JOIN_WIRESHARK_GROUP=0: capture needs sudo (packet capture for non-root users is not enabled)"
+    return 0
+  fi
   echo "wireshark-common wireshark-common/install-setuid boolean true" \
     | sudo debconf-set-selections
   apt_install "${PKGS_WIRESHARK[@]}"

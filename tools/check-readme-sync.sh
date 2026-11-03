@@ -46,7 +46,7 @@ done < <(find files/home modules/*/files/home -type f | sort)
 # --- every `step "Title"` in setup.sh and the modules ----------------------
 while IFS= read -r title; do
   need "step" "step \"$title\""
-done < <(grep -hoE 'step "[^"]+"' setup.sh modules/*/module.sh | sed 's/^step "//; s/"$//' | grep -vx 'Title' | sort -u)
+done < <(grep -hoE 'step "[^"]+"' setup.sh modules/*/module.sh | sed 's/^step "//; s/"$//' | grep -vx 'Title' | grep -v '^\$' | sort -u)
 
 # --- GNOME settings (schema and key of every gset call) -------------------
 while read -r schema key; do
@@ -55,8 +55,21 @@ while read -r schema key; do
 done < <(grep -hoE '^[[:space:]]*gset org\.[A-Za-z.]+ [a-z-]+' setup.sh modules/*/module.sh | awk '{print $2, $3}' | sort -u)
 
 # --- privacy services -------------------------------------------------------
-units="$(sed -n '/^PRIVACY_UNITS=(/,/)/p' setup.sh | grep -oE '[a-z-]+\.(service|path|timer)')"
+units="$(sed -n '/^UNITS_[A-Z]*=(/,/)/p' setup.sh | grep -oE '[a-z-]+\.(service|path|timer)')"
 for u in $units; do need "service" "$u"; done
+
+# --- every opt-in system-change switch (core table and the modules' opt_in hooks) ---
+while IFS= read -r sw; do need "switch" "$sw"; done < <(
+  { sed -n '/^OPT_IN_CORE=(/,/^)/p' setup.sh | grep -oE '"[A-Z_]+\|' | tr -d '"|';
+    grep -hoE 'echo "[A-Z_]+\|' modules/*/module.sh | sed 's/echo "//; s/|//'; } | sort -u)
+
+# --- every step must have a plain-language description (setup.sh --explain) ---
+for p in work personal; do
+  if ./setup.sh --explain --profile "$p" 2>/dev/null | grep -q 'no description yet'; then
+    echo "profile $p: a step has no STEP_WHY description (see ./setup.sh --explain --profile $p)"
+    missing=$((missing + 1))
+  fi
+done
 
 if (( missing )); then
   echo "$missing item(s) missing: update README.md (and keep it in step with setup.sh)."
