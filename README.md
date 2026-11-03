@@ -14,17 +14,122 @@ tools) and the **desktop** part (everyday apps with their background
 network features switched off). **No installed tool contacts the internet by
 itself after installation.**
 
+**By default this setup does not change Ubuntu itself.** It installs packages
+from the Ubuntu archive and writes new files in your home directory. Every
+change to the system or to your login files (`/etc` drop-ins, services,
+groups, GNOME settings, `~/.bashrc`, global git config) is **opt-in**: off
+unless you choose it, with one switch each. [The big picture](#the-big-picture)
+lists them all.
+
 ## Contents
 
+- [The big picture](#the-big-picture): what ends up where, when the network is used, what is opt-in
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
-- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning, A6 privacy
+- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*
 - [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
 - [Part E. Verify](#part-e-verify)
 - [Part F. Record, pin and undo](#part-f-record-pin-and-undo)
 - [Automated route](#automated-route)
+
+## The big picture
+
+Read this section first. It answers "what does all of this do to my
+machine?" before the step-by-step part shows how.
+
+### The flow
+
+```
+ A Prepare ───► B Core ───────► C Optional parts ──► D Offline caches ──► E Verify ──► F Record
+ check OS       CLI tools        C1 embedded (work)    download now,        self-test    manifest,
+ helpers        C/C++, Python    C2 desktop (personal) use offline later    no-cloud     pin, undo
+ package lists  Rust, Helix      (do either, both,     then lock the dev    checklist
+                containers,      or neither)           package managers
+                shell, git                             (last)
+```
+
+### Three zones: what gets changed
+
+| Zone | What happens there | Needs `sudo`? |
+|---|---|---|
+| **1. Packages** | Programs from the Ubuntu archive are installed with `apt`. Nothing is removed, nothing already installed is upgraded, no repositories or PPAs are added, no snaps or Flatpaks. (APT may still pull newer versions of the *libraries* a new program needs; that is how dependencies work.) | yes, for `apt` |
+| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix if not in the archive, starship), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
+| **3. The system itself** | **Nothing by default.** Only the opt-in changes in the table below, and only the ones you switch on. | yes, per change |
+
+### Opt-in changes to the system and to your login files
+
+All **off by default**. Each has one switch in `workstation.conf` (or a
+profile, or the environment for one run: `TUNE_INOTIFY=1 ./setup.sh`). In
+this guide each one sits in a clearly marked **[opt-in]** section: do it
+only if you want it. The script lists them with their state:
+`./setup.sh --explain`.
+
+| Switch | What it does | Where this guide covers it | Undo |
+|---|---|---|---|
+| `TUNE_INOTIFY` | New file `/etc/sysctl.d/60-dev-inotify.conf`: more file watches, so language servers cope with big source trees | [A5](#a5-system-tuning) | delete the file |
+| `DISABLE_REPORTING_SERVICES` | Disables crash and problem reporting: `apport`, `whoopsie`, `kerneloops` | [A6](#a6-privacy-hardening-at-os-level) | `systemctl enable --now` |
+| `DISABLE_MOTD_NEWS` | Disables `motd-news.timer` (news fetched at login) | A6 | `systemctl enable --now` |
+| `DISABLE_FWUPD_REFRESH` | Disables `fwupd-refresh.timer` (firmware metadata refresh) | A6 | `systemctl enable --now` |
+| `DISABLE_APT_NEWS` | `pro config set apt_news=false` (messages apt fetches from Canonical) | A6 | `pro config set apt_news=true` |
+| `DISABLE_NM_CONNECTIVITY_CHECK` | New file in `/etc/NetworkManager/conf.d/`: no periodic connectivity probe | A6 | delete the file |
+| `SET_GNOME_FONT` | GNOME monospace font JetBrains Mono 11 | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
+| `SET_GNOME_PRIVACY` | GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search in Activities | B13 | `gsettings set` back |
+| `JOIN_DOCKER_GROUP` | Adds you to group `docker` (equivalent to root; only if you install Docker) | [B9](#b9-containers-optional-install_podman-install_docker) | `gpasswd -d` |
+| `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt, offline lock) | [B10](#b10-shell-bash) | delete the block |
+| `SET_GIT_DEFAULTS` | Global git defaults, only options you have not set | [B11](#b11-git) | `git config --unset` |
+| `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-profile) | `gpasswd -d` |
+| `JOIN_WIRESHARK_GROUP` | *(embedded)* lets group `wireshark` capture without root (debconf answer, group) | C1 | `dpkg-reconfigure`, `gpasswd -d` |
+| `DESKTOP_BROWSER_POLICIES` | *(desktop)* new policy files below `/etc/firefox` and `/etc/thunderbird` | [C2](#c2-desktop-part-personal-profile) | delete the files |
+
+If you skip them, everything is still installed and works; you just
+use `sudo` where those changes would have avoided it. **One consequence
+to know about:** without the shell loader (`ENABLE_SHELL_LOADER`), the new
+shell setup is installed but not active: `~/.cargo/bin` is not on your
+`PATH` and the offline lock for `uv`/`pip`/`cargo` does not apply to your
+shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
+
+### Where things end up in your home directory
+
+| Path | Contents |
+|---|---|
+| `~/.local/bin` | `uv`, `ws-init`, `ws-devname`, `hx` (Helix, if not from the archive), npm tools |
+| `~/.local/opt` | Helix release tarball, if used |
+| `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
+| `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
+| `~/.bashrc.d` | shell setup files (`10-workstation.sh`, `20-offline.sh`, `30-embedded.sh`) |
+| `~/.local/share/workstation` | project starter files, Python wheelhouse, Rust crate cache, download checksums, SPICE kernels |
+| `~/WORKSTATION-CHEATSHEET.md` | the cheat sheet (`ws-help`) |
+| `~/workstation-undo.sh`, `~/workstation-manifest-*.txt` | your undo commands, the record of what was installed |
+
+### When the network is used
+
+- **While you set up (allowed):** `apt`; the official installers for `uv`,
+  `rustup`, `starship` and the Helix release, only if the archive lacks
+  them; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
+  once; the three offline caches (PyPI, crates.io, the container registry)
+  and, if you choose, the SPICE kernels.
+- **Afterwards (not allowed unless you ask):** nothing connects by itself.
+  Update checks, telemetry and online lookups of the installed tools are
+  switched off, and `uv`, `pip`, `cargo` and `podman` work only from the
+  local caches. Parts of Ubuntu itself (apt, snapd, time sync) are outside
+  this guide; see [Still network-connected](#still-network-connected-os-level).
+
+### What it never does
+
+Remove a package. Upgrade the system or any package you already have. Edit a
+file that belongs to a package. Overwrite an existing file. Mask a service.
+Add an APT repository or PPA. Install a snap or Flatpak. Touch the kernel,
+boot, coreutils or APT sources. Create accounts or sign in anywhere.
+
+### See it before you do it
+
+If you also have the script: `./setup.sh --profile work --explain` prints this
+whole picture for your profile, step by step, and changes nothing;
+`./setup.sh --profile work --check` adds package names and versions.
+
+---
 
 ## Rules this guide follows
 
@@ -39,6 +144,9 @@ machine ends up in the same state.
    destination *you* chose is fine; anything automatic or in the background
    is not.
 2. **Don't break Ubuntu.**
+   - **Changes to the system itself are opt-in**: off unless you switch
+     them on (table above). By default only `apt` installs and new files in
+     your home directory.
    - Every `apt-get install` uses `--no-remove` (if APT wants to uninstall
      something to resolve a conflict, it aborts instead) and `--no-upgrade`
      (packages that are already installed are not upgraded). This guide
@@ -73,6 +181,9 @@ machine ends up in the same state.
   flight-software tooling), C2 is the **personal** profile (everyday
   desktop apps). Do either, both or neither. Inside a section, lines marked
   *(optional)* correspond to a switch in `workstation.conf`.
+- **Sections marked [opt-in]** change the system or your login files. Skip
+  them unless you want that change; the heading names the switch the script
+  uses for the same thing (all are listed in [the big picture](#the-big-picture)).
 - Some tools may be absent from your Ubuntu release's archive. The
   `apt_install` helper in A2 skips and tells you about missing packages,
   like the script does.
@@ -213,6 +324,9 @@ and merely named. To see what an install would change before doing it:
 
 ## A5. System tuning
 
+> **[opt-in: `TUNE_INOTIFY`]** Skip this section to leave the system's
+> kernel settings alone.
+
 *Mirrors `step "System tuning"`, function `system_tuning`.*
 
 Large source trees (clangd, rust-analyzer, file watchers) need more inotify
@@ -231,28 +345,45 @@ Undo: `sudo rm -f /etc/sysctl.d/60-dev-inotify.conf`.
 
 ## A6. Privacy hardening at OS level
 
-*Mirrors `step "Privacy hardening"`, function `privacy_hardening`
-(switch `HARDEN_PRIVACY`). Skip the whole section to keep Ubuntu's defaults.*
+> **[opt-in: `DISABLE_REPORTING_SERVICES`, `DISABLE_MOTD_NEWS`,
+> `DISABLE_FWUPD_REFRESH`, `DISABLE_APT_NEWS`,
+> `DISABLE_NM_CONNECTIVITY_CHECK`]** Five independent switches: do only the
+> blocks you want. Skip the whole section to keep Ubuntu's defaults.
+
+*Mirrors `step "Privacy hardening"`, function `privacy_hardening`.*
 
 Only services are **disabled** (not masked, not removed) and new drop-in
-files are added, so updates keep working.
+files are added, so updates keep working. These are Ubuntu's own background
+features (reports, news, probes), not tools of this setup, which is why they
+are your choice.
 
 ```bash
-# Crash/problem reporting, kernel oops reports, MOTD news, firmware refresh timer
+# DISABLE_REPORTING_SERVICES: crash/problem reporting, kernel oops reports
 for u in apport.service apport-autoreport.path apport-autoreport.timer \
-         whoopsie.service whoopsie.path kerneloops.service \
-         motd-news.timer fwupd-refresh.timer; do
+         whoopsie.service whoopsie.path kerneloops.service; do
   if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
     sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
   fi
 done
 
-# APT news (messages fetched from Canonical when you run apt)
+# DISABLE_MOTD_NEWS: news fetched at login
+u=motd-news.timer
+if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
+  sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+fi
+
+# DISABLE_FWUPD_REFRESH: periodic firmware metadata refresh
+u=fwupd-refresh.timer
+if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
+  sudo systemctl disable --now "$u" && record_undo "sudo systemctl enable --now $u"
+fi
+
+# DISABLE_APT_NEWS: messages fetched from Canonical when you run apt
 if command -v pro >/dev/null && sudo pro config set apt_news=false; then
   record_undo "sudo pro config set apt_news=true"
 fi
 
-# NetworkManager's periodic connectivity probe: new drop-in file
+# DISABLE_NM_CONNECTIVITY_CHECK: NetworkManager's periodic connectivity probe (new drop-in file)
 f=/etc/NetworkManager/conf.d/99-no-connectivity-check.conf
 if [ -d /etc/NetworkManager/conf.d ] && [ ! -e "$f" ]; then
   printf '[connectivity]\nenabled=false\n' | sudo tee "$f" >/dev/null
@@ -415,7 +546,6 @@ Undo: `cargo uninstall <name>`; `rustup self uninstall`.
 apt_install \
   cppreference-doc-en-html python3-doc cmake-doc manpages-dev \
   manpages-posix manpages-posix-dev glibc-doc gdb-doc
-sudo mandb -q
 ```
 
 You now have, without internet: C/C++ reference (cppreference), Python,
@@ -490,13 +620,15 @@ apt_install podman distrobox
 ```
 
 *(optional, off by default: `INSTALL_DOCKER`)* Docker Engine rewrites
-firewall rules, which can interfere with VPNs, and the `docker` group is
-equivalent to root. Only if you really need it:
+firewall rules, which can interfere with VPNs. Only if you really need it:
 
 ```bash
 apt_install docker.io docker-compose-v2 docker-buildx
-sudo usermod -aG docker "$USER" && record_undo "sudo gpasswd -d $USER docker"
 ```
+
+> **[opt-in: `JOIN_DOCKER_GROUP`]** The `docker` group is equivalent to
+> root. Without it you run `sudo docker ...`. To join it anyway:
+> `sudo usermod -aG docker "$USER" && record_undo "sudo gpasswd -d $USER docker"`
 
 Images and the "never pull implicitly" setting come later, in
 [D3](#d3-container-images-and-pull-policy).
@@ -505,9 +637,15 @@ Images and the "never pull implicitly" setting come later, in
 
 *Mirrors `step "Shell (bash) setup"`, function `shell_setup`.*
 
-**Loader.** A small block in `~/.bashrc` that sources `~/.bashrc.d/*.sh`.
-This is the only edit to a file that Ubuntu created for you (your own
-`~/.bashrc`, not a package-owned file under `/etc`).
+**Loader** *(opt-in: `ENABLE_SHELL_LOADER`)*. A small block in `~/.bashrc`
+that sources `~/.bashrc.d/*.sh`. This is the only edit to a file that Ubuntu
+created for you (your own `~/.bashrc`, not a package-owned file under
+`/etc`). **If you skip it**, you still install the files below, but nothing
+loads them: add this line to `~/.bashrc` yourself when you are ready (or load
+them by hand with `. ~/.bashrc.d/10-workstation.sh`):
+`for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f`.
+Until then `~/.cargo/bin` is not on your `PATH`, and the aliases, prompt and
+offline lock are not active.
 
 ```bash
 mkdir -p ~/.bashrc.d
@@ -579,6 +717,10 @@ you. See [Part F](#part-f-record-pin-and-undo) for the manual equivalents.)
 
 *Mirrors `step "Git setup"`, function `git_setup`.*
 
+> **[opt-in: `SET_GIT_DEFAULTS`]** The block below changes your global git
+> configuration. Skip it to leave `~/.gitconfig` alone. Your identity
+> (`user.name`/`user.email`) is never touched by this guide.
+
 Sets sensible defaults **only where you have not set a value yourself**,
 and the helpers record how to undo each one.
 
@@ -597,12 +739,13 @@ if command -v delta >/dev/null; then
   git_set delta.line-numbers true
 fi
 command -v git-lfs >/dev/null && git lfs install --skip-repo
-# your identity, if not set yet:
-#   git config --global user.name  "Your Name"
-#   git config --global user.email "you@example.org"
 ```
 
-`lazygit` checks GitHub for new versions by default. Turn that off:
+(Your identity, if not set yet: `git config --global user.name "Your Name"`
+and `git config --global user.email "you@example.org"`.)
+
+`lazygit` checks GitHub for new versions by default. Turn that off (always
+done; it is a new file in `~/.config`, not part of the opt-in above):
 
 ```bash
 put "$WS/files/home/.config/lazygit/config.yml" ~/.config/lazygit/config.yml
@@ -630,6 +773,10 @@ starter-file sets are installed.
 
 ## B13. Desktop (GNOME) settings
 
+> **[opt-in: `SET_GNOME_FONT`, `SET_GNOME_PRIVACY`]** Two independent
+> switches: the font line, and the privacy block. Skip this section to keep
+> GNOME's defaults.
+
 *Mirrors `step "Desktop settings"`, function `desktop_tweaks`. Needs a
 logged-in GNOME session. Each `gset` prints and records the previous value.*
 
@@ -638,9 +785,9 @@ gset() {   # gset SCHEMA KEY VALUE
   local old; old="$(gsettings get "$1" "$2")" || return 0
   gsettings set "$1" "$2" "$3" && record_undo "gsettings set $1 $2 $(printf %q "$old")"
 }
-# Ubuntu's default monospace font is small; the terminal follows this setting
+# SET_GNOME_FONT: Ubuntu's default monospace font is small; the terminal follows this setting
 gset org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 11'
-# privacy (skip this block to keep GNOME's defaults; switch HARDEN_PRIVACY)
+# SET_GNOME_PRIVACY
 gset org.gnome.system.location enabled false
 gset org.gnome.desktop.datetime automatic-timezone false
 gset org.gnome.desktop.privacy report-technical-problems false
@@ -675,8 +822,9 @@ apt_install \
   libudev-dev
 ```
 
-Serial ports and USB debug probes without `sudo` need two groups. They take
-effect at your next login:
+> **[opt-in: `JOIN_SERIAL_GROUPS`]** Serial ports and USB debug probes
+> without `sudo` need two groups. Without them, use `sudo`. Group
+> membership takes effect at your next login:
 
 ```bash
 for g in dialout plugdev; do
@@ -686,12 +834,18 @@ for g in dialout plugdev; do
 done
 ```
 
-**Wireshark** *(optional: `INSTALL_WIRESHARK`)*, with capture for members of
-the `wireshark` group instead of root:
+**Wireshark** *(optional: `INSTALL_WIRESHARK`)*:
+
+```bash
+apt_install wireshark
+```
+
+> **[opt-in: `JOIN_WIRESHARK_GROUP`]** Capture for members of the `wireshark`
+> group instead of root. Without it, capture needs `sudo`. This sets a debconf
+> answer, reconfigures the package and adds you to the group:
 
 ```bash
 echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
-apt_install wireshark
 sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common
 record_undo "sudo dpkg-reconfigure wireshark-common   # answer 'No' to disallow non-root capture"
 sudo usermod -aG wireshark "$USER" && record_undo "sudo gpasswd -d $USER wireshark"
@@ -833,8 +987,9 @@ gset org.gnome.DejaDup backend local           # use 'file' if 'local' is not li
 
 *Inkscape* has no automatic network features.
 
-**Firefox and Thunderbird.** On Ubuntu both are *snaps*, so this guide does
-not install them. If you use them, policy files switch off telemetry,
+**Firefox and Thunderbird** *(opt-in: `DESKTOP_BROWSER_POLICIES`; new files
+below `/etc`)*. On Ubuntu both are *snaps*, so this guide does not install
+them. If you use them, policy files switch off telemetry,
 studies, Pocket, accounts, updates, sponsored content, captive-portal
 probes and Safe Browsing. **Safe Browsing is disabled because it contacts
 Google in the background; be careful with downloads and links.** The files
@@ -934,7 +1089,9 @@ put  "$WS/files/home/.bashrc.d/20-offline.sh" ~/.bashrc.d/20-offline.sh
 ```
 
 It exports `UV_OFFLINE=1`, `PIP_NO_INDEX=1`, `CARGO_NET_OFFLINE=true` and
-points uv/pip at the wheelhouse. To fetch something deliberately (for
+points uv/pip at the wheelhouse. It only takes effect in shells that load
+`~/.bashrc.d`, i.e. after the loader from [B10](#b10-shell-bash)
+(opt-in `ENABLE_SHELL_LOADER`) is in place. To fetch something deliberately (for
 example from an internal mirror approved by your IT), override for one
 command only: `UV_OFFLINE=0 uv add <pkg>` or `CARGO_NET_OFFLINE=false cargo update`.
 Remove the file to switch the enforcement off.
@@ -996,7 +1153,7 @@ podman run --rm --network=none docker.io/library/ubuntu:latest true && echo "con
 **Embedded part (C1)**
 
 ```bash
-id -nG | tr ' ' '\n' | grep -E 'dialout|plugdev|wireshark'     # groups active after re-login
+id -nG | tr ' ' '\n' | grep -E 'dialout|plugdev|wireshark'     # only if you chose JOIN_SERIAL_GROUPS / JOIN_WIRESHARK_GROUP
 arm-none-eabi-gcc --version | head -1; riscv64-unknown-elf-gcc --version | head -1
 gdb-multiarch -batch -ex 'set architecture' 2>&1 | grep -E 'armv7e-m|riscv:rv64'
 openocd --version 2>&1 | head -1
@@ -1037,7 +1194,7 @@ import tomllib, os
 l = {x["name"]: x for x in tomllib.load(open(os.path.expanduser("~/.config/helix/languages.toml"), "rb"))["language"]}
 print("json/yaml language servers disabled:", all(l[n].get("language-servers") == [] for n in ("json", "yaml")))
 EOF
-systemctl is-enabled apport.service whoopsie.service motd-news.timer fwupd-refresh.timer 2>&1   # none "enabled" (A6)
+systemctl is-enabled apport.service whoopsie.service motd-news.timer fwupd-refresh.timer 2>&1   # "disabled" only for the A6 switches you chose; otherwise Ubuntu's defaults stay
 ls ~/.config/goa-1.0/accounts.conf 2>&1                        # should not exist (no online accounts)
 ```
 

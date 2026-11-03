@@ -1,4 +1,6 @@
 # shellcheck shell=bash
+# STEP_WHY / STEP_TOUCHES are declared in setup.sh; '~' in descriptions is literal.
+# shellcheck disable=SC2034,SC2088
 # =============================================================================
 #  modules/desktop/module.sh — code of the "desktop" module
 #
@@ -12,6 +14,16 @@ LO_PROFILE_XCU="${XDG_CONFIG_HOME:-$HOME/.config}/libreoffice/4/user/registrymod
 FIREFOX_POLICY=/etc/firefox/policies/policies.json
 THUNDERBIRD_POLICY=/etc/thunderbird/policies/policies.json
 
+# What each step does (shown during install and by ./setup.sh --explain)
+STEP_WHY["Desktop apps"]="Installs the everyday apps you enabled (LibreOffice, KeePassXC, VLC, GIMP, Inkscape, Déjà Dup) as Debian packages from the Ubuntu archive. No snaps, no Flatpak."
+STEP_TOUCHES["Desktop apps"]="apt packages."
+STEP_WHY["Desktop languages"]="Spell-check dictionaries and LibreOffice language packs for the languages in DESKTOP_LANGUAGES, chosen offline by Ubuntu's check-language-support. Does nothing if the setting is empty."
+STEP_TOUCHES["Desktop languages"]="apt packages."
+STEP_WHY["Desktop app settings (no network)"]="Switches off each app's background network features: LibreOffice and GIMP update checks, KeePassXC update check and website-icon downloads, VLC metadata and album-art lookups; restricts Déjà Dup to local or external-disk backups."
+STEP_TOUCHES["Desktop app settings (no network)"]="settings files in ~/.config (new, or one line appended with a backup); GNOME setting org.gnome.DejaDup backend."
+STEP_WHY["Browser and mail policies"]="(Only with DESKTOP_BROWSER_POLICIES=1.) Policy files that switch off telemetry, studies, Pocket, accounts, updates, sponsored content, captive-portal probes and Safe Browsing in Firefox and Thunderbird. Firefox and Thunderbird themselves are not installed (they are snaps on Ubuntu). Existing policy files are never overwritten."
+STEP_TOUCHES["Browser and mail policies"]="system: NEW files /etc/firefox/policies/policies.json and /etc/thunderbird/policies/policies.json (sudo)."
+
 mod_desktop_pkg_groups() {
   if on "$DESKTOP_LIBREOFFICE"; then echo PKGS_DESKTOP_LIBREOFFICE; fi
   if on "$DESKTOP_KEEPASSXC";   then echo PKGS_DESKTOP_KEEPASSXC; fi
@@ -24,6 +36,10 @@ mod_desktop_pkg_groups() {
 mod_desktop_home_files() {
   if on "$DESKTOP_KEEPASSXC"; then echo .config/keepassxc/keepassxc.ini; fi
   if on "$DESKTOP_VLC"; then echo .config/vlc/vlcrc; fi
+}
+
+mod_desktop_opt_in() {
+  echo "DESKTOP_BROWSER_POLICIES|install policy files for Firefox and Thunderbird (NEW files below /etc, never overwritten)"
 }
 
 mod_desktop_manifest_tools() {

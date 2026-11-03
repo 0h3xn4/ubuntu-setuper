@@ -32,6 +32,13 @@ conversation; this file carries that context over.
    updates); only NEW drop-in files in /etc (never overwrite an existing
    one: install_system_file); disable (never mask) services; no changes to
    kernel, boot, coreutils, architecture variants, APT sources.
+   SYSTEM CHANGES ARE OPT-IN (the user decided): by default the setup only
+   runs apt installs and writes NEW files under the home directory. Every
+   change to /etc, services, groups, GNOME settings, ~/.bashrc or global git
+   config has its own switch, OFF by default (OPT_IN_CORE in setup.sh and the
+   modules' `opt_in` hook; listed by --explain/--check/summary). Never add a
+   system-level change without a default-off switch, an entry in the opt_in
+   table, a README section marked [opt-in] and a gated self-test.
 3. **Everything reversible.** Every system/config change calls record_undo.
 4. **Always the latest stable, long-term supported version** (decided by the
    user), for the OS and for software in general:
@@ -87,7 +94,8 @@ belong only inside the embedded module.
 - Module hooks `mod_<module>_<hook>` are called through `module_collect`:
   pkg_groups, steps, home_files, groups, uv_tools, cargo_tools,
   rust_targets, py_packages, rust_crates, check, check_caches, selftests,
-  nocloud_problems, nocloud_warnings, manifest_tools. A module's functions
+  nocloud_problems, nocloud_warnings, manifest_tools, manifest_extra,
+  opt_in (lines "SWITCH|what it does"). A module's functions
   get `MODULE_DIR` at source time (modules store it, e.g. EMBEDDED_DIR).
 - Starter files: files/templates -> ~/.local/share/workstation/templates/
   generic, module files/templates -> templates/<module>/. `ws-init` (a script
@@ -121,6 +129,14 @@ belong only inside the embedded module.
   policy files, or something else?
 - Should `embedded` be part of the `personal` profile?
 
+## Making the setup understandable
+- Every step has a plain-language `STEP_WHY[title]` and `STEP_TOUCHES[title]`
+  (core: setup.sh; modules: their module.sh). They are printed during the
+  install and by `./setup.sh --explain` (changes nothing, no network).
+  tools/check-readme-sync.sh fails if a step has no description.
+- README.md has a "big picture" section (zones, opt-in table, paths, when the
+  network is used, what it never does); keep it consistent with OPT_IN_CORE.
+
 ## Documentation: the README is a MANUAL, mirroring the script
 - README.md is a step-by-step manual setup guide for users who distrust the
   script or want to control every step. Its sections follow the order of
@@ -128,7 +144,7 @@ belong only inside the embedded module.
   automated route (profiles, locks, policies, file table) is documented in
   docs/script-reference.md.
 - Keep them in step: after changing a package/tool list, a home file, a
-  `step`, a `gset` call or PRIVACY_UNITS, update README.md and run
+  `step`, a `gset` call, a UNITS_* array or an opt-in switch, update README.md and run
   `tools/check-readme-sync.sh` (exit 1 = the README misses something). The
   README's code blocks were syntax-checked with bash -n and the helper,
   put/git_set/loader/template/cheat-sheet/LibreOffice/GIMP blocks were run

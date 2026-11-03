@@ -7,6 +7,9 @@
 #    ./setup.sh --profile NAME     Choose the profile (work, personal, or your
 #                                  own file in profiles/). Remembered in
 #                                  ~/.config/workstation/profile afterwards.
+#    ./setup.sh --explain          Plain-language tour of every step this profile would
+#                                  run: what it does, why, and where it changes things.
+#                                  Changes nothing, needs no network. Start here.
 #    ./setup.sh --check            Dry run: shows what would be installed and
 #                                  changed, finds missing packages and
 #                                  conflicts. Changes nothing. Start here.
@@ -60,6 +63,8 @@
 #    locks/<profile>.lock; downloads are verified against SHA-256 checksums;
 #    each run writes a manifest listing every installed package and tool version.
 # =============================================================================
+# The step descriptions show '~' literally on purpose.
+# shellcheck disable=SC2088
 set -Eeuo pipefail
 
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -79,6 +84,7 @@ while (( $# )); do
   case "$1" in
     --upgrade)     UPGRADE=1 ;;
     --check)       MODE=check ;;
+    --explain)     MODE=explain ;;
     --self-test)   MODE=selftest ;;
     --manifest)    MODE=manifest ;;
     --lock)        MODE=lock ;;
@@ -114,6 +120,8 @@ STATE_DIR="$(mktemp -d)"
 MISSING_FILE="$STATE_DIR/missing"
 GROUPS_FILE="$STATE_DIR/groups"
 FAILED_STEPS=()
+EXPLAIN=0                  # 1 = --explain: steps only describe themselves
+declare -A STEP_WHY=() STEP_TOUCHES=()   # plain-language description per step title
 FIRST_RUN_DATA=0
 T_PASS=0; T_FAIL=0; T_SKIP=0; T_WARN=0
 MODULES=()                 # enabled modules, set by load_config
@@ -132,6 +140,7 @@ warn()    { printf '%s !%s %s\n' "$c_yellow" "$c_off" "$*" >&2; }
 die()     { printf '%s ✗%s %s\n' "$c_red" "$c_off" "$*" >&2; exit 1; }
 have()    { command -v "$1" >/dev/null 2>&1; }
 on()      { [[ "$1" == 1 ]]; }
+any_on()  { local v; for v in "$@"; do if [[ $v == 1 ]]; then return 0; fi; done; return 1; }
 
 # Print the elements of the array whose name is given, one per line.
 array_items() { local -n _arr="$1"; if (( ${#_arr[@]} )); then printf '%s\n' "${_arr[@]}"; fi; }
@@ -159,11 +168,27 @@ EOF
   chmod +x "$UNDO_FILE"
 }
 
+# Print what a step does and where it changes things (STEP_WHY / STEP_TOUCHES,
+# defined next to the steps and in the modules).
+describe_step() {
+  local name="$1"
+  if [[ -n ${STEP_WHY[$name]:-} ]]; then
+    printf '%s\n' "${STEP_WHY[$name]}" | fold -s -w 88 | sed 's/ *$//; s/^/    /'
+  elif (( EXPLAIN )); then
+    echo "    (no description yet)"
+  fi
+  if [[ -n ${STEP_TOUCHES[$name]:-} ]]; then
+    printf 'Changes: %s\n' "${STEP_TOUCHES[$name]}" | fold -s -w 88 | sed 's/ *$//; 1!s/^/             /; 1s/^/    /'
+  fi
+}
+
 # Run a setup step in a subshell with strict error handling. A failing step is
 # recorded and reported at the end, but does not abort the remaining steps.
 step() {
   local name="$1"; shift
   section "$name"
+  describe_step "$name"
+  if (( EXPLAIN )); then return 0; fi
   set +e
   ( set -Eeuo pipefail; "$@" )
   local rc=$?
@@ -397,7 +422,7 @@ home_files() {
 # User groups the enabled features need (one per line, unique).
 needed_groups() {
   {
-    if on "$INSTALL_DOCKER"; then echo docker; fi
+    if on "$INSTALL_DOCKER" && on "$JOIN_DOCKER_GROUP"; then echo docker; fi
     module_collect groups
   } | awk '!seen[$0]++'
 }
@@ -607,25 +632,36 @@ disable_units() {
   done
 }
 
-PRIVACY_UNITS=(apport.service apport-autoreport.path apport-autoreport.timer
-               whoopsie.service whoopsie.path kerneloops.service
-               motd-news.timer fwupd-refresh.timer)
+UNITS_REPORTING=(apport.service apport-autoreport.path apport-autoreport.timer
+                 whoopsie.service whoopsie.path kerneloops.service)
+UNITS_MOTD=(motd-news.timer)
+UNITS_FWUPD=(fwupd-refresh.timer)
 NM_CONNECTIVITY_CONF=/etc/NetworkManager/conf.d/99-no-connectivity-check.conf
+
+# Units to disable, according to the switches (one per line).
+enabled_privacy_units() {
+  if on "$DISABLE_REPORTING_SERVICES"; then printf '%s\n' "${UNITS_REPORTING[@]}"; fi
+  if on "$DISABLE_MOTD_NEWS"; then printf '%s\n' "${UNITS_MOTD[@]}"; fi
+  if on "$DISABLE_FWUPD_REFRESH"; then printf '%s\n' "${UNITS_FWUPD[@]}"; fi
+}
 
 privacy_hardening() {
   # Only services are disabled and NEW drop-in files are added. No packages
   # are removed and no package-owned config files are edited, so updates
-  # (including unattended security updates) keep working normally.
-  disable_units "${PRIVACY_UNITS[@]}"
+  # (including unattended security updates) keep working normally. Each part
+  # runs only if its own switch is on.
+  local units
+  mapfile -t units < <(enabled_privacy_units)
+  if (( ${#units[@]} )); then disable_units "${units[@]}"; fi
 
-  if have pro; then
+  if on "$DISABLE_APT_NEWS" && have pro; then
     if sudo pro config set apt_news=false >/dev/null 2>&1; then
       record_undo "sudo pro config set apt_news=true"
       ok "Disabled APT news"
     fi
   fi
 
-  if [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
+  if on "$DISABLE_NM_CONNECTIVITY_CHECK" && [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
     printf '[connectivity]\nenabled=false\n' | sudo tee "$NM_CONNECTIVITY_CONF" >/dev/null
     sudo systemctl reload NetworkManager 2>/dev/null || true
     record_undo "sudo rm -f $NM_CONNECTIVITY_CONF && sudo systemctl reload NetworkManager"
@@ -651,7 +687,6 @@ gui_tools() { apt_install "${PKGS_GUI[@]}"; }
 
 offline_docs() {
   apt_install "${PKGS_DOCS[@]}"
-  sudo mandb -q || true
 }
 
 ensure_uv() {
@@ -772,14 +807,16 @@ containers() {
   if on "$INSTALL_PODMAN"; then apt_install "${PKGS_PODMAN[@]}"; fi
   if on "$INSTALL_DOCKER"; then
     apt_install "${PKGS_DOCKER[@]}"
-    add_to_groups docker
+    if on "$JOIN_DOCKER_GROUP"; then add_to_groups docker; fi
   fi
   return 0
 }
 
 shell_setup() {
   mkdir -p "$HOME/.bashrc.d"
-  if ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
+  if ! on "$ENABLE_SHELL_LOADER"; then
+    log "ENABLE_SHELL_LOADER=0: ~/.bashrc is left alone (see the Summary for the line to add)"
+  elif ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
     cat >> "$HOME/.bashrc" <<'EOF'
 
 # >>> workstation-setup: load ~/.bashrc.d/*.sh >>>
@@ -823,8 +860,15 @@ git_setup() {
     git config --global "$1" "$2"
     record_undo "git config --global --unset $1"
   }
+  # An identity you give explicitly (GIT_NAME / GIT_EMAIL) is always applied.
   if [[ -n "$GIT_NAME"  ]]; then git_set user.name  "$GIT_NAME"; fi
   if [[ -n "$GIT_EMAIL" ]]; then git_set user.email "$GIT_EMAIL"; fi
+  if on "$SET_GIT_DEFAULTS"; then git_defaults; else log "SET_GIT_DEFAULTS=0: global git settings are left alone"; fi
+  # lazygit checks GitHub for new versions by default; turn that off.
+  install_file .config/lazygit/config.yml
+}
+
+git_defaults() {
   git_set init.defaultBranch main
   git_set pull.rebase true
   git_set rerere.enabled true
@@ -839,9 +883,7 @@ git_setup() {
     git_set delta.line-numbers true
   fi
   if have git-lfs; then git lfs install --skip-repo >/dev/null; fi
-  ok "Git configured (existing settings were kept)"
-  # lazygit checks GitHub for new versions by default; turn that off.
-  install_file .config/lazygit/config.yml
+  ok "Git defaults set (existing settings were kept)"
 }
 
 project_templates() {
@@ -856,8 +898,8 @@ desktop_tweaks() {
     return 0
   fi
   # Recent Ubuntu releases use a small default monospace font; the terminal follows this.
-  gset org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 11'
-  if on "$HARDEN_PRIVACY"; then
+  if on "$SET_GNOME_FONT"; then gset org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 11'; fi
+  if on "$SET_GNOME_PRIVACY"; then
     gset org.gnome.system.location enabled false
     gset org.gnome.desktop.datetime automatic-timezone false
     gset org.gnome.desktop.privacy report-technical-problems false
@@ -1083,27 +1125,32 @@ check_mode() {
   fi
   module_collect check_caches
 
-  section "Planned system changes (each recorded in an undo script)"
-  [[ -e /etc/sysctl.d/60-dev-inotify.conf ]] || echo "    new file /etc/sysctl.d/60-dev-inotify.conf (more file watches for language servers)"
+  section "Planned system changes (only the switches that are ON; each recorded in an undo script)"
+  if on "$TUNE_INOTIFY" && [[ ! -e /etc/sysctl.d/60-dev-inotify.conf ]]; then
+    echo "    new file /etc/sysctl.d/60-dev-inotify.conf (more file watches for language servers)"
+  fi
   local -a want_groups=()
   mapfile -t want_groups < <(needed_groups)
   for g in "${want_groups[@]}"; do
     if id -nG "$USER" | grep -qw "$g"; then echo "    group $g: already a member"
     else echo "    group $g: add $USER"; fi
   done
-  if on "$HARDEN_PRIVACY"; then
-    local u state
-    for u in "${PRIVACY_UNITS[@]}"; do
-      state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
-      if [[ $state == enabled ]]; then echo "    service $u: disable"; fi
-    done
-    if [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
-      echo "    new file $NM_CONNECTIVITY_CONF (no connectivity probe)"
-    fi
-    echo "    GNOME: location services, automatic timezone, problem reporting, external search providers off"
+  local u state
+  while IFS= read -r u; do
+    state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
+    if [[ $state == enabled ]]; then echo "    service $u: disable"; fi
+  done < <(enabled_privacy_units)
+  if on "$DISABLE_APT_NEWS"; then echo "    APT news: off ('pro config set apt_news=false')"; fi
+  if on "$DISABLE_NM_CONNECTIVITY_CHECK" && [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
+    echo "    new file $NM_CONNECTIVITY_CONF (no connectivity probe)"
   fi
-  echo "    GNOME: monospace font JetBrains Mono 11"
+  if on "$SET_GNOME_PRIVACY"; then echo "    GNOME: location services, automatic timezone, problem reporting, usage stats, external search providers off"; fi
+  if on "$SET_GNOME_FONT"; then echo "    GNOME: monospace font JetBrains Mono 11"; fi
+  if on "$ENABLE_SHELL_LOADER"; then echo "    ~/.bashrc: one marked block that loads ~/.bashrc.d"; fi
+  if on "$SET_GIT_DEFAULTS"; then echo "    ~/.gitconfig: global git defaults (only options you have not set)"; fi
   module_collect check
+  echo
+  show_opt_in
 
   section "Files in your home directory"
   local rel target src
@@ -1387,13 +1434,18 @@ EOF
     problems+=("offline environment (~/.bashrc.d/20-offline.sh) missing"); fi
   if grep -Eq 'repo:[[:space:]]*https?://' "$TEMPLATE_DIR/generic/.pre-commit-config.yaml" 2>/dev/null; then
     problems+=("pre-commit template references remote repositories"); fi
-  if on "$HARDEN_PRIVACY" && have systemctl; then
-    for u in "${PRIVACY_UNITS[@]}"; do
+  # Only what you switched on is checked; the rest stays as Ubuntu ships it
+  # (listed by './setup.sh --explain').
+  if have systemctl; then
+    while IFS= read -r u; do
       if [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" == enabled ]]; then problems+=("$u is enabled"); fi
-    done
-    if [[ -d /etc/NetworkManager/conf.d && ! -f $NM_CONNECTIVITY_CONF ]]; then
-      problems+=("NetworkManager connectivity check is enabled"); fi
+    done < <(enabled_privacy_units)
   fi
+  if on "$DISABLE_NM_CONNECTIVITY_CHECK" && [[ -d /etc/NetworkManager/conf.d && ! -f $NM_CONNECTIVITY_CONF ]]; then
+    problems+=("NetworkManager connectivity check is enabled"); fi
+  # The runtime offline lock lives in ~/.bashrc.d; without the loader it is not active.
+  if on "$ENFORCE_OFFLINE_ENV" && ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
+    warnings+=("~/.bashrc does not load ~/.bashrc.d, so the offline lock for uv/pip/cargo is not active in new shells (ENABLE_SHELL_LOADER=1, or add the loader yourself)"); fi
   # GNOME Online Accounts (Google, Microsoft, Nextcloud, ...) sync in the background.
   if grep -q '^\[Account' "${XDG_CONFIG_HOME:-$HOME/.config}/goa-1.0/accounts.conf" 2>/dev/null; then
     warnings+=("GNOME Online Accounts: an online account is set up (Settings > Online Accounts); it syncs in the background"); fi
@@ -1686,6 +1738,18 @@ ${c_blue}Next steps${c_off}
      locks/$PROFILE.lock plus locks/$PROFILE.Cargo.lock, so every other machine
      with this profile gets identical versions.
 
+$(if ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then cat <<'SNIP'
+Shell setup is installed but NOT active:
+  ~/.bashrc does not load ~/.bashrc.d (ENABLE_SHELL_LOADER=0). To activate it, add
+  this line to ~/.bashrc yourself (or re-run with ENABLE_SHELL_LOADER=1):
+      for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f
+  Until then: ~/.cargo/bin is not on your PATH, and the aliases, the prompt and the
+  offline lock for uv/pip/cargo are not active.
+SNIP
+fi)
+
+$(show_opt_in)
+
 ${c_yellow}Still network-connected (OS level, outside this script's scope)${c_off}
   Discuss these with IT; they should point at internal infrastructure:
   - apt / unattended-upgrades       -> internal Ubuntu mirror
@@ -1698,6 +1762,149 @@ EOF
 # ============================================================================
 # MAIN
 # ============================================================================
+# ============================================================================
+# SYSTEM CHANGES THAT ARE OFF BY DEFAULT
+# "SWITCH|what it would do". Modules add theirs with the 'opt_in' hook.
+# ============================================================================
+OPT_IN_CORE=(
+  "TUNE_INOTIFY|raise the inotify limits (NEW file /etc/sysctl.d/60-dev-inotify.conf)"
+  "DISABLE_REPORTING_SERVICES|disable crash/problem reporting services (apport, whoopsie, kerneloops)"
+  "DISABLE_MOTD_NEWS|disable the MOTD news timer (motd-news.timer)"
+  "DISABLE_FWUPD_REFRESH|disable the firmware metadata refresh timer (fwupd-refresh.timer)"
+  "DISABLE_APT_NEWS|turn off APT news from Canonical ('pro config set apt_news=false')"
+  "DISABLE_NM_CONNECTIVITY_CHECK|turn off NetworkManager's connectivity probe (NEW file in /etc/NetworkManager/conf.d)"
+  "SET_GNOME_FONT|set the GNOME monospace font to JetBrains Mono 11"
+  "SET_GNOME_PRIVACY|GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search"
+  "JOIN_DOCKER_GROUP|add your user to group 'docker' (only with INSTALL_DOCKER=1; equivalent to root)"
+  "ENABLE_SHELL_LOADER|append ONE marked block to ~/.bashrc that loads ~/.bashrc.d (aliases, PATH, prompt, offline lock)"
+  "SET_GIT_DEFAULTS|set global git defaults (only options you have not set yourself)"
+)
+
+# Print every opt-in change with its state: what is ON is done, what is off is left as is.
+show_opt_in() {
+  local entry var text state
+  local -a entries=("${OPT_IN_CORE[@]}")
+  mapfile -t -O "${#entries[@]}" entries < <(module_collect opt_in)
+  echo "System changes (off by default; one switch each, in workstation.conf, a profile or the environment):"
+  for entry in "${entries[@]}"; do
+    var="${entry%%|*}"; text="${entry#*|}"
+    state="off"; if on "${!var:-0}"; then state="ON "; fi
+    printf '  [%s] %-31s %s\n' "$state" "$var" "$text"
+  done
+}
+
+# ============================================================================
+# WHAT EACH STEP DOES (shown during install and by --explain)
+#   STEP_WHY[title]      what the step does and why, in plain language
+#   STEP_TOUCHES[title]  where it changes things: apt packages, files in ~,
+#                        system files/services (sudo), network use at install
+# Modules add their own entries in their module.sh.
+# ============================================================================
+STEP_WHY["System tuning"]="(Only with TUNE_INOTIFY=1.) Raises the inotify limits so language servers and file watchers can watch large source trees."
+STEP_TOUCHES["System tuning"]="system: one NEW file /etc/sysctl.d/60-dev-inotify.conf (sudo)."
+
+STEP_WHY["Privacy hardening"]="(Only with the DISABLE_* switches.) Stops Ubuntu's own background reporting, one switch each: crash reports, MOTD news, the firmware-refresh timer, APT news, the network connectivity probe. Services are disabled, never masked or removed."
+STEP_TOUCHES["Privacy hardening"]="system, only for the switches that are on: disables services, a NEW file /etc/NetworkManager/conf.d/99-no-connectivity-check.conf, 'pro config set apt_news=false' (sudo)."
+
+STEP_WHY["Base CLI tools"]="Everyday command-line tools (git, ripgrep, fzf, jq, tmux, ...) and the tldr example pages."
+STEP_TOUCHES["Base CLI tools"]="apt packages; ~/.config/tealdeer/config.toml; network: tldr pages, once."
+
+STEP_WHY["C/C++ toolchain"]="Compilers, build systems, debuggers, static analyzers and test frameworks for C and C++."
+STEP_TOUCHES["C/C++ toolchain"]="apt packages; ~/.gdbinit."
+
+STEP_WHY["GUI tools"]="Meld, a visual diff and merge tool."
+STEP_TOUCHES["GUI tools"]="apt package."
+
+STEP_WHY["Python tools"]="uv (package and tool manager) and the Python developer tools (ruff, basedpyright, pre-commit, ...), installed per user. uv is told never to download Python interpreters."
+STEP_TOUCHES["Python tools"]="apt packages; ~/.local (uv and the tools); ~/.config/uv/uv.toml; network: uv installer only if uv is not in the archive, PyPI for the tools."
+
+STEP_WHY["Rust toolchain"]="rustup with the newest stable Rust, the editor components, and cargo tools compiled from source (slow). rustup's self-update is switched off."
+STEP_TOUCHES["Rust toolchain"]="apt build libraries; ~/.rustup and ~/.cargo; network: rustup installer only if not in the archive, Rust servers, crates.io."
+
+STEP_WHY["Offline documentation"]="Reference documentation that works without internet: C/C++ (cppreference), Python, CMake, POSIX, glibc, GDB."
+STEP_TOUCHES["Offline documentation"]="apt packages (docs, man pages)."
+
+STEP_WHY["Bash language server"]="Editor support for shell scripts, installed with npm into your home directory. npm is told not to contact the registry for update notices, funding messages or audits."
+STEP_TOUCHES["Bash language server"]="apt packages (nodejs, npm); ~/.local (npm global prefix); npm settings in ~/.npmrc; network: npm registry."
+
+STEP_WHY["Helix editor"]="The Helix terminal editor, from the Ubuntu archive or the official release tarball (never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
+STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/*; network: GitHub release only if Helix is not in the archive."
+
+STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on)."
+STEP_TOUCHES["Containers"]="apt packages; with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
+
+STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands, written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
+STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship installer only if not in the archive."
+
+STEP_WHY["Git setup"]="Switches lazygit's update check off. With SET_GIT_DEFAULTS=1 it also sets sensible global git defaults, only where you have not set a value yourself; GIT_NAME/GIT_EMAIL are applied if you give them."
+STEP_TOUCHES["Git setup"]="~/.config/lazygit/config.yml; ~/.gitconfig only with SET_GIT_DEFAULTS=1 or GIT_NAME/GIT_EMAIL."
+
+STEP_WHY["Project templates"]="Starter files for new projects (formatter, linter, pre-commit and CMake presets), copied into a project by ws-init without overwriting anything."
+STEP_TOUCHES["Project templates"]="~/.local/share/workstation/templates."
+
+STEP_WHY["Desktop settings"]="(Only with SET_GNOME_FONT=1 and/or SET_GNOME_PRIVACY=1.) A readable monospace font, and GNOME privacy settings: no location services, no automatic time zone, no problem reports or usage stats, no web search in the Activities overview. Needs a desktop session."
+STEP_TOUCHES["Desktop settings"]="GNOME settings of your user (dconf)."
+
+STEP_WHY["Offline cache: Python wheels"]="Downloads a local library of Python packages now, so uv and pip can install them later without network."
+STEP_TOUCHES["Offline cache: Python wheels"]="~/.local/share/workstation/wheelhouse; network: PyPI, now."
+
+STEP_WHY["Offline cache: Rust crates"]="Downloads common Rust crates now, so cargo can build later without network."
+STEP_TOUCHES["Offline cache: Rust crates"]="~/.cargo/registry and ~/.local/share/workstation/rust-offline-cache; network: crates.io, now."
+
+STEP_WHY["Offline cache: container images"]="Pulls the container images now and tells podman never to pull images by itself afterwards."
+STEP_TOUCHES["Offline cache: container images"]="podman image storage in your home directory; ~/.config/containers/containers.conf; network: image registry, now."
+
+# The ordered list of install steps. Used by the real run and by --explain.
+run_steps() {
+  if on "$TUNE_INOTIFY"; then step "System tuning"   system_tuning; fi
+  if any_on "$DISABLE_REPORTING_SERVICES" "$DISABLE_MOTD_NEWS" "$DISABLE_FWUPD_REFRESH" \
+            "$DISABLE_APT_NEWS" "$DISABLE_NM_CONNECTIVITY_CHECK"; then
+    step "Privacy hardening"           privacy_hardening
+  fi
+  step "Base CLI tools"                base_cli
+  if on "$INSTALL_CPP";          then step "C/C++ toolchain"           cpp_toolchain; fi
+  if on "$INSTALL_GUI_TOOLS";    then step "GUI tools"                 gui_tools; fi
+  if on "$INSTALL_PYTHON";       then step "Python tools"              python_tools; fi
+  if on "$INSTALL_RUST";         then step "Rust toolchain"            rust_toolchain; fi
+  if on "$INSTALL_OFFLINE_DOCS"; then step "Offline documentation"     offline_docs; fi
+  if on "$INSTALL_BASH_LSP";     then step "Bash language server"      bash_lsp; fi
+  if on "$INSTALL_HELIX";        then step "Helix editor"              helix_setup; fi
+  step "Containers"                    containers
+  step "Shell (bash) setup"            shell_setup
+  step "Git setup"                     git_setup
+  step "Project templates"             project_templates
+  if any_on "$SET_GNOME_FONT" "$SET_GNOME_PRIVACY"; then step "Desktop settings" desktop_tweaks; fi
+  module_collect steps
+  if on "$CACHE_PYTHON";           then step "Offline cache: Python wheels"     cache_python; fi
+  if on "$CACHE_RUST";             then step "Offline cache: Rust crates"       cache_rust; fi
+  if on "$CACHE_CONTAINER_IMAGES"; then step "Offline cache: container images" cache_images; fi
+}
+
+# --explain: the whole run in plain language. Changes nothing, needs no network.
+explain_mode() {
+  EXPLAIN=1
+  section "What this setup does: profile $PROFILE (modules: core${MODULES[*]:+ }${MODULES[*]})"
+  cat <<EOT
+Steps run in this order, as your normal user; sudo is used only where a step
+says "system". Every step below is skipped or included according to your
+switches. Nothing is installed or changed by --explain.
+EOT
+  run_steps
+  section "In every profile, always"
+  cat <<EOT
+  Never:  remove a package, upgrade the system (no 'apt upgrade'), edit a file
+          owned by a package, mask a service, add an APT repository or PPA,
+          install a snap or Flatpak, or touch kernel, boot, coreutils or APT sources.
+  Always: use apt with --no-remove --no-upgrade, keep an undo script
+          (~/workstation-undo-<time>.sh), verify downloads outside APT by SHA-256,
+          and, once the caches are filled, leave nothing that contacts the internet by itself.
+  Next:   './setup.sh --check' shows the same plan down to package names and
+          versions; './setup.sh' runs it; './setup.sh --self-test' verifies it.
+
+EOT
+  show_opt_in
+}
+
 # Remember the chosen profile so --check/--self-test/--lock default to it.
 remember_profile() {
   local old=""
@@ -1719,6 +1926,7 @@ main() {
   load_config
   case "$MODE" in
     check)    check_mode; return 0 ;;
+    explain)  explain_mode; return 0 ;;
     selftest) mkdir -p "$DATA_DIR"; self_test; return ;;
     manifest) write_manifest; return 0 ;;
     lock)     write_lock; return 0 ;;
@@ -1737,25 +1945,7 @@ main() {
   preflight
   remember_profile
 
-  step "System tuning"                 system_tuning
-  if on "$HARDEN_PRIVACY";       then step "Privacy hardening"         privacy_hardening; fi
-  step "Base CLI tools"                base_cli
-  if on "$INSTALL_CPP";          then step "C/C++ toolchain"           cpp_toolchain; fi
-  if on "$INSTALL_GUI_TOOLS";    then step "GUI tools"                 gui_tools; fi
-  if on "$INSTALL_PYTHON";       then step "Python tools"              python_tools; fi
-  if on "$INSTALL_RUST";         then step "Rust toolchain"            rust_toolchain; fi
-  if on "$INSTALL_OFFLINE_DOCS"; then step "Offline documentation"     offline_docs; fi
-  if on "$INSTALL_BASH_LSP";     then step "Bash language server"      bash_lsp; fi
-  if on "$INSTALL_HELIX";        then step "Helix editor"              helix_setup; fi
-  step "Containers"                    containers
-  step "Shell (bash) setup"            shell_setup
-  step "Git setup"                     git_setup
-  step "Project templates"             project_templates
-  step "Desktop settings"              desktop_tweaks
-  module_collect steps
-  if on "$CACHE_PYTHON";           then step "Offline cache: Python wheels"     cache_python; fi
-  if on "$CACHE_RUST";             then step "Offline cache: Rust crates"       cache_rust; fi
-  if on "$CACHE_CONTAINER_IMAGES"; then step "Offline cache: container images" cache_images; fi
+  run_steps
 
   self_test || true
   write_manifest

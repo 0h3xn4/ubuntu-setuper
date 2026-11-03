@@ -49,6 +49,7 @@ Make your own profile by copying a file in `profiles/`; it only needs
 | Command | Purpose |
 |---|---|
 | `./setup.sh --profile NAME` | Choose the profile (remembered afterwards) |
+| `./setup.sh --explain` | Plain-language tour of every step this profile runs: what it does, why, where it changes things; plus which system changes are on or off. Changes nothing, needs no network |
 | `./setup.sh --check` | Dry run: package availability, conflicts, planned changes |
 | `./setup.sh` | Full installation, then manifest and self-test |
 | `./setup.sh --self-test` | Verify toolchains, offline caches and the no-cloud policy |
@@ -119,6 +120,18 @@ background is not: telemetry, update checks, crash reports, sync, accounts,
 recommendations, automatic lookups (album art, website icons, metadata),
 implicit downloads. Consequence in Firefox: Safe Browsing (which polls Google)
 is switched off by the policy file.
+
+**System changes are opt-in.** By default the setup only installs packages
+and writes new files in your home directory. Everything that touches the
+system or your login files has its own switch, **off by default**:
+`TUNE_INOTIFY`, `DISABLE_REPORTING_SERVICES`, `DISABLE_MOTD_NEWS`,
+`DISABLE_FWUPD_REFRESH`, `DISABLE_APT_NEWS`, `DISABLE_NM_CONNECTIVITY_CHECK`,
+`SET_GNOME_FONT`, `SET_GNOME_PRIVACY`, `JOIN_DOCKER_GROUP`,
+`ENABLE_SHELL_LOADER` (the ~/.bashrc block), `SET_GIT_DEFAULTS`, and the
+modules' `JOIN_SERIAL_GROUPS`, `JOIN_WIRESHARK_GROUP`,
+`DESKTOP_BROWSER_POLICIES`. `--explain`, `--check` and the install summary
+list them with their state. Without `ENABLE_SHELL_LOADER` the shell setup
+is installed but inactive (the summary prints the line to add yourself).
 
 **Don't break Ubuntu.** No package is ever removed (`apt --no-remove`) and
 no installed package is upgraded (the setup never runs `apt upgrade`; installs
