@@ -119,6 +119,22 @@ belong only inside the embedded module.
   policy files, or something else?
 - Should `embedded` be part of the `personal` profile?
 
+## Documentation: the README is a MANUAL, mirroring the script
+- README.md is a step-by-step manual setup guide for users who distrust the
+  script or want to control every step. Its sections follow the order of
+  setup.sh's `step` calls and name the step/function they mirror. The
+  automated route (profiles, locks, policies, file table) is documented in
+  docs/script-reference.md.
+- Keep them in step: after changing a package/tool list, a home file, a
+  `step`, a `gset` call or PRIVACY_UNITS, update README.md and run
+  `tools/check-readme-sync.sh` (exit 1 = the README misses something). The
+  README's code blocks were syntax-checked with bash -n and the helper,
+  put/git_set/loader/template/cheat-sheet/LibreOffice/GIMP blocks were run
+  in a scratch HOME. Changes in behaviour (not just lists) must be mirrored
+  by hand.
+- In the manual, `20-offline.sh` (the runtime lock) is installed LAST (D4);
+  the script installs it early but clears its variables for its own run.
+
 ## Conventions in setup.sh
 - `set -Eeuo pipefail`; each install step runs via `step` in a subshell so one
   failure doesn't abort the run; failures are summarized at the end.
