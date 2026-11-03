@@ -20,6 +20,12 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Fixed (found by the fifth end-to-end run)
+- 26.04 moved RISC-V emulation out of `qemu-system-misc` into its own package: `qemu-system-riscv` is now in the
+  embedded package list (before, no RISC-V emulator was installed on 26.04 and its self-test was skipped).
+- The E2E test now treats a skipped RISC-V QEMU test as a failure, checks that the lock pins `NODE_LTS_VERSION`
+  and that undo removes `~/.local/opt` and the node/npm/npx links.
+
 ### Changed (decisions by the user)
 - **Node.js: the newest upstream LTS wins** over the archive's older one. `node_install` unpacks the release
   nodejs.org marks as the newest LTS into `~/.local/opt/node-<version>` (linked from `~/.local/bin`), checked

@@ -1126,7 +1126,7 @@ apt_install \
   gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi \
   libstdc++-arm-none-eabi-newlib gcc-riscv64-unknown-elf \
   picolibc-riscv64-unknown-elf gdb-multiarch openocd stlink-tools \
-  dfu-util srecord can-utils sigrok-cli qemu-system-arm qemu-system-misc \
+  dfu-util srecord can-utils sigrok-cli qemu-system-arm qemu-system-misc qemu-system-riscv \
   qemu-system-sparc qemu-user qemu-user-binfmt qemu-utils tio picocom minicom \
   libudev-dev
 ```
