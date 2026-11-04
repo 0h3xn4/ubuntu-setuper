@@ -20,6 +20,15 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Added (zsh users)
+- **`./setup.sh --reset-shell`**: for someone who comes from zsh / Oh My Zsh. This setup is for bash (the shell
+  files, the prompt and the offline lock live in `~/.bashrc.d`; zsh never loads them), so the command moves the
+  zsh files (`~/.oh-my-zsh`, `~/.zshrc`, ...) into `~/workstation-shell-backup-<time>/` (nothing is deleted),
+  restores `~/.bashrc` / `~/.profile` from `/etc/skel` if missing, and makes bash the login shell again. It lists
+  every change and asks (`--dry-run`, `--yes`), records everything for `--undo`, and never removes the `zsh`
+  package. README A7 does the same by hand; a unit test (`check-all.sh`) and a new E2E phase (real zsh, real
+  `usermod`) cover it. The E2E phase passed in all four jobs (runner VM and container, `work` and `personal`).
+
 ### Verified
 - End-to-end run on Ubuntu 26.04.1 LTS (GitHub runner VM and `ubuntu:latest` container, `work` and `personal`):
   all ten phases pass in all four jobs; self-test 33/36 (VM) and 32/35 (container) passed, 0 failed; Node.js 26

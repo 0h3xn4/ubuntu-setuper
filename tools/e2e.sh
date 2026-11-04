@@ -17,6 +17,8 @@
 #    8 lock            --lock into a scratch file, then --check loads the pins
 #    9 undo            ./setup.sh --undo --yes (every undo file, newest first)
 #   10 leftovers       nothing the setup created is left behind (except APT packages)
+#   11 reset-shell     a zsh / Oh My Zsh user: real zsh, login shell zsh, then ./setup.sh --reset-shell
+#                      (files moved to a backup folder, login shell back to bash), then --undo (zsh again)
 #
 # DANGER: this installs software, changes services, groups, /etc and your shell
 # files, then undoes what it can. Run it only in a throw-away VM or container.
@@ -57,7 +59,7 @@ done
 if (( PLAN )); then
   echo "Plan for profile '$PROFILE' (nothing is run):"
   printf '  %2d. %s\n' 1 "explain+check" 2 "install (--full)" 3 "self-test" 4 "doctor (fresh interactive shell)" \
-    5 "shell checks" 6 "idempotent re-install" 7 "manifest" 8 "lock" 9 "undo (--undo --yes, all undo files)" 10 "leftovers"
+    5 "shell checks" 6 "idempotent re-install" 7 "manifest" 8 "lock" 9 "undo (--undo --yes, all undo files)" 10 "leftovers" 11 "reset-shell (zsh user, then undo)"
   exit 0
 fi
 
@@ -261,7 +263,44 @@ ph_leftovers() {
 
 if [[ -e $HOME/.rustup || -e $HOME/.cargo/bin/rustup ]]; then E2E_PRE_RUSTUP=1; fi
 
-echo; echo "Running 10 phases (this takes a while: it is a full install)"
+# Last, so it cannot disturb the phases above: someone who comes from zsh. Installs zsh (an APT
+# package: it stays, like every package this test installs), pretends to have Oh My Zsh, makes zsh
+# the login shell, then checks ./setup.sh --reset-shell and --undo against the REAL getent/usermod,
+# and finally puts the login shell back as it was.
+ph_reset_shell() {
+  local me orig bad=0 got backup
+  me="$(id -un)"; orig="$(getent passwd "$me" | cut -d: -f7)"
+  sudo apt-get install -y --no-remove --no-upgrade zsh >/dev/null 2>&1 || { echo "could not install zsh"; return 1; }
+  mkdir -p "$HOME/.oh-my-zsh"; echo omz > "$HOME/.oh-my-zsh/oh-my-zsh.sh"
+  # shellcheck disable=SC2016  # the file must contain $HOME literally
+  echo 'export ZSH="$HOME/.oh-my-zsh"' > "$HOME/.zshrc"; echo hist > "$HOME/.zsh_history"
+  sudo usermod -s /usr/bin/zsh "$me" || { echo "usermod to zsh failed"; return 1; }
+  [[ "$(getent passwd "$me" | cut -d: -f7)" == /usr/bin/zsh ]] || { echo "could not make zsh the login shell"; bad=1; }
+
+  ./setup.sh --reset-shell --dry-run </dev/null >/dev/null 2>&1 || { echo "--reset-shell --dry-run failed"; bad=1; }
+  [[ -e $HOME/.zshrc ]] || { echo "--dry-run moved files"; bad=1; }
+  ./setup.sh --reset-shell --yes </dev/null > "$LOG/reset-shell.log" 2>&1 || { echo "--reset-shell failed"; strip < "$LOG/reset-shell.log" | tail -n 12; bad=1; }
+  got="$(getent passwd "$me" | cut -d: -f7)"
+  [[ $got == /bin/bash ]] || { echo "login shell after reset is '$got', not /bin/bash"; bad=1; }
+  backup="$(find "$HOME" -maxdepth 1 -name 'workstation-shell-backup-*' -type d | head -n1)"
+  [[ -n $backup && -e $backup/.zshrc && -e $backup/.oh-my-zsh/oh-my-zsh.sh && -e $backup/.zsh_history ]] || { echo "zsh files are not in the backup folder"; bad=1; }
+  [[ ! -e $HOME/.zshrc && ! -e $HOME/.oh-my-zsh ]] || { echo "zsh files are still in the home directory"; bad=1; }
+  [[ -e $HOME/.bashrc ]] || { echo "$HOME/.bashrc is missing after the reset"; bad=1; }
+  command -v zsh >/dev/null || { echo "the zsh package was removed (it must stay)"; bad=1; }
+
+  ./setup.sh --undo --yes </dev/null > "$LOG/reset-shell-undo.log" 2>&1 || { echo "--undo of the reset failed"; strip < "$LOG/reset-shell-undo.log" | tail -n 12; bad=1; }
+  got="$(getent passwd "$me" | cut -d: -f7)"
+  [[ $got == /usr/bin/zsh ]] || { echo "login shell after undo is '$got', not /usr/bin/zsh"; bad=1; }
+  [[ -e $HOME/.zshrc && -e $HOME/.oh-my-zsh/oh-my-zsh.sh && ! -d $backup ]] || { echo "undo did not bring the zsh files back"; bad=1; }
+
+  sudo usermod -s "$orig" "$me" || true            # leave the machine's login shell as we found it
+  rm -rf "$HOME/.oh-my-zsh" "$HOME/.zshrc" "$HOME/.zsh_history"
+  [[ "$(getent passwd "$me" | cut -d: -f7)" == "$orig" ]] || { echo "could not restore the original login shell $orig"; bad=1; }
+  (( bad == 0 )) && echo "reset-shell: zsh -> bash -> (undo) zsh worked against the real usermod; original login shell $orig restored"
+  return $bad
+}
+
+echo; echo "Running 11 phases (this takes a while: it is a full install)"
 run_phase "explain+check" ph_explain_check
 run_phase install        ph_install
 run_phase self-test      ph_selftest
@@ -272,6 +311,7 @@ run_phase manifest       ph_manifest
 run_phase lock           ph_lock
 run_phase undo           ph_undo
 run_phase leftovers      ph_leftovers
+run_phase reset-shell    ph_reset_shell
 
 # ------------------------------------------------------------------ summary
 {

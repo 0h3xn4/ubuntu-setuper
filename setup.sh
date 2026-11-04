@@ -35,6 +35,13 @@
 #                                  newest-first, after showing every command and asking.
 #                                  Add --dry-run to only list, --yes to skip the question.
 #                                  Never removes APT packages (see README, Undo).
+#    ./setup.sh --reset-shell      For someone coming from zsh / Oh My Zsh: moves their zsh
+#                                  files into a backup folder (nothing is deleted), makes bash
+#                                  the login shell again and restores ~/.bashrc and ~/.profile
+#                                  from /etc/skel if missing, so this setup (which is for bash)
+#                                  works. Shows every command first and asks (--dry-run only
+#                                  lists, --yes skips the question). Undo: ./setup.sh --undo.
+#                                  The zsh package itself is never removed.
 #    ./setup.sh --list-profiles    Show the available profiles and modules.
 #    ./setup.sh --help
 #
@@ -111,6 +118,7 @@ while (( $# )); do
     --manifest)    MODE=manifest ;;
     --lock)        MODE=lock ;;
     --list-profiles) LIST_PROFILES=1 ;;
+    --reset-shell) MODE=reset-shell ;;
     --undo)        MODE=undo
                    if [[ ${2:-} != "" && ${2:-} != --* ]]; then UNDO_ARG="$2"; shift; fi ;;
     --dry-run)     DRY_RUN=1 ;;
@@ -2343,6 +2351,78 @@ EOT
   show_opt_in
 }
 
+# --reset-shell: this setup is for bash. Someone who comes from zsh (often with Oh My Zsh) can
+# switch over with one command. NOTHING is deleted: their zsh files are MOVED into
+# ~/workstation-shell-backup-<time>/, the login shell goes back to bash, and a missing ~/.bashrc or
+# ~/.profile is copied from /etc/skel. Every step is recorded for --undo. The zsh package stays
+# installed (this setup never removes packages). It is an explicit one-off command, like --undo:
+# it is not part of an install and --full does not turn it on.
+ZSH_FILES=(.oh-my-zsh .zshrc .zshenv .zprofile .zlogin .zlogout .zsh_history .zshrc.pre-oh-my-zsh
+           .p10k.zsh .zsh .zsh_sessions .zcompdump*)
+reset_shell_mode() {
+  local user="${USER:-$(id -un)}" skel="${RESET_SKEL_DIR:-/etc/skel}" old_shell backup f pat m n=0 answer
+  local -a found=() skeleton=() lines=()
+  if [[ "$(id -u)" == 0 ]]; then die "Run this as your normal user, not as root"; fi
+  old_shell="$(getent passwd "$user" 2>/dev/null | cut -d: -f7 || true)"
+  shopt -s nullglob
+  for pat in "${ZSH_FILES[@]}"; do
+    for m in "$HOME"/$pat; do if [[ -e $m || -L $m ]]; then found+=("$m"); fi; done
+  done
+  shopt -u nullglob
+  for f in .bashrc .profile; do
+    if [[ ! -e $HOME/$f && -r $skel/$f ]]; then skeleton+=("$f"); fi
+  done
+  backup="$HOME/workstation-shell-backup-$TIMESTAMP"
+
+  section "Reset the shell: from zsh to bash"
+  echo "Login shell of $user: ${old_shell:-unknown}"
+  if (( ${#found[@]} )); then
+    lines+=("move to $backup/ (nothing is deleted, symlinks are moved as links): $(printf '%s ' "${found[@]##*/}")")
+  fi
+  if [[ ${old_shell##*/} == zsh ]]; then lines+=("sudo usermod -s /bin/bash $user   (login shell; takes effect at your next login)"); fi
+  for f in "${skeleton[@]}"; do lines+=("copy $skel/$f to ~/$f (it was missing; bash needs it)"); done
+  if (( ! ${#lines[@]} )); then ok "Nothing to do: no zsh files in your home directory and your login shell is not zsh"; return 0; fi
+  echo "These changes will be made:"
+  for f in "${lines[@]}"; do n=$((n + 1)); printf '  %d. %s\n' "$n" "$f"; done
+  echo
+  echo "Not touched: the zsh package (this setup never removes packages; to remove it yourself:"
+  echo "  sudo apt remove zsh   (other accounts that use zsh would lose their login shell)),"
+  echo "terminal profiles that start /usr/bin/zsh explicitly, and ZDOTDIR=${ZDOTDIR:-(not set)}."
+  echo
+  if (( DRY_RUN )); then ok "Dry run: nothing was changed"; return 0; fi
+  if (( ! ASSUME_YES )); then
+    [[ -t 0 && -t 1 ]] || die "Not a terminal: add --yes to run without asking"
+    read -rp "Make these changes? [y/N] " answer
+    [[ $answer == [yY] ]] || { echo "Nothing was changed."; return 1; }
+  fi
+
+  init_undo_file
+  if (( ${#found[@]} )); then
+    mkdir -p "$backup"
+    record_undo "rmdir --ignore-fail-on-non-empty $(printf %q "$backup")"   # recorded first, so undone last
+    for f in "${found[@]}"; do
+      record_undo "mv -n $(printf %q "$backup/${f##*/}") $(printf %q "$f")"
+      mv -- "$f" "$backup/"
+      ok "Moved ~/${f##*/} to the backup folder"
+    done
+  fi
+  for f in "${skeleton[@]}"; do
+    record_undo "rm -f $(printf %q "$HOME/$f")"
+    cp -- "$skel/$f" "$HOME/$f"
+    ok "Restored ~/$f from $skel"
+  done
+  if [[ ${old_shell##*/} == zsh ]]; then
+    sudo -v || die "sudo is needed to change the login shell"
+    record_undo "sudo usermod -s $(printf %q "$old_shell") $user"
+    if sudo usermod -s /bin/bash "$user"; then ok "Login shell is now /bin/bash (log out and in again; open terminals keep running zsh)"
+    else warn "Could not change the login shell; do it yourself: sudo usermod -s /bin/bash $user"; fi
+  fi
+  echo
+  ok "Done. Take it back any time with: ./setup.sh --undo $UNDO_FILE"
+  echo "Next: ./setup.sh --profile work --check, then ./setup.sh --profile work   (--full for the shell loader too)."
+  if (( ${#found[@]} )); then echo "Your zsh files are in $backup (delete that folder yourself when you are sure you do not need them)."; fi
+}
+
 # --undo: replay an undo file newest-first. The commands are the ones this setup
 # recorded itself (see record_undo); all of them are shown before anything runs.
 undo_mode() {
@@ -2406,6 +2486,7 @@ remember_profile() {
 main() {
   if (( LIST_PROFILES )); then list_profiles; return 0; fi
   if [[ $MODE == undo ]]; then undo_mode; return; fi
+  if [[ $MODE == reset-shell ]]; then reset_shell_mode; return; fi
   load_config
   case "$MODE" in
     check)    check_mode; return 0 ;;
