@@ -27,7 +27,7 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   restores `~/.bashrc` / `~/.profile` from `/etc/skel` if missing, and makes bash the login shell again. It lists
   every change and asks (`--dry-run`, `--yes`), records everything for `--undo`, and never removes the `zsh`
   package. README A7 does the same by hand; a unit test (`check-all.sh`) and a new E2E phase (real zsh, real
-  `usermod`) cover it.
+  `usermod`) cover it. The E2E phase passed in all four jobs (runner VM and container, `work` and `personal`).
 
 ### Verified
 - End-to-end run on Ubuntu 26.04.1 LTS (GitHub runner VM and `ubuntu:latest` container, `work` and `personal`):

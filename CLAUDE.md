@@ -157,7 +157,8 @@ Deliberate exception to "every system change has a default-off switch in the opt
 mode like --undo, not part of an install, and --full does not turn it on (the usermod only happens because the user
 ran this command and confirmed). Without a reset, zsh sessions never load ~/.bashrc.d, so the offline lock is NOT
 enforced there: that is why the reset exists. Tests: check-all.sh t_reset_shell (fake getent/sudo/id, fake /etc/skel;
-the mode checks `id -u` so a fake id can stand in for a non-root user) and e2e.sh phase 11 (real zsh and usermod).
+the mode checks `id -u` so a fake id can stand in for a non-root user) and e2e.sh phase 11 (real zsh and usermod;
+VERIFIED GREEN in run #11).
 README A7 is the manual version.
 
 ### Terminal look
@@ -260,7 +261,11 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-FULL E2E, LATEST (GitHub run #7, workflow_dispatch on the branch, head c9f4669): GREEN in all four jobs, nothing
+E2E WITH PHASE 11 (GitHub run #11, workflow_dispatch on the branch, head a56737a): GREEN, 11/11 phases in all four jobs.
+Phase 11 = `--reset-shell` with a REAL zsh and REAL `sudo usermod` (VM user "runner", container user "tester"): login
+shell zsh -> bash, files in the backup folder, then `--undo` -> zsh and files back, original shell restored. Self-test
+33/36 (VM work/personal), 32/35 (container), 0 failed; only the expected skips (SPICE, container images).
+FULL E2E, EARLIER (GitHub run #7, workflow_dispatch on the branch, head c9f4669): GREEN in all four jobs, nothing
 hidden: self-test vm-work 33/0, vm-personal 36/0, container-work 32/0, container-personal 35/0 (passed/failed),
 install step 9-19 min across runs (10-13 min in the last), ws-doctor 0 failed, RISC-V QEMU test PASSES, lock pins NODE_LTS_VERSION, leftovers clean (incl.
 ~/.local/opt and node/npm/npx). Node.js v26.13.0 from nodejs.org (node_install) in every job, bash-language-server

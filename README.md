@@ -179,7 +179,11 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   lock (it pins Node.js too), `--undo` of every undo file, and a check that
   nothing the setup created is left behind (APT packages stay by design).
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used in all four
-  jobs**, and the ARM and RISC-V programs run in QEMU. The checks that are skipped
+  jobs**, and the ARM and RISC-V programs run in QEMU. An eleventh phase plays a zsh
+  user: it installs a real `zsh`, makes it the login shell, runs `./setup.sh --reset-shell`
+  (the zsh files go to a backup folder, the login shell becomes bash again, tested
+  against the real `usermod`) and then `--undo` (zsh and the files come back); it passed
+  in all four jobs. The checks that are skipped
   are skipped on purpose (SPICE kernels are off by default; image caching is off in
   a container, which cannot run podman; the VM run covers the rest). It took six
   runs to get here: the bugs found are in `CHANGELOG.md` (package names that
