@@ -26,6 +26,7 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   Oh My Bash. `ws-doctor` warns when `ls`/`ll` are not eza in a new shell and says how to fix it; the E2E shell phase now
   checks the aliases themselves (before it only checked environment variables). README B10/B15, troubleshooting,
   script reference, cheat sheet. For an existing install: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`.
+  Verified by an E2E run (all 11 phases, four jobs) with the real Oh My Bash switched on.
 - The No-cloud self-test failed on a machine where `yaml-language-server` was already installed (not by this
   setup). The message now says where the tool comes from (APT package, npm global, snap, or by hand), how to
   find out and what to check before removing it, and that this setup never installs it. README B16 and the

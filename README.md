@@ -183,7 +183,10 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   user: it installs a real `zsh`, makes it the login shell, runs `./setup.sh --reset-shell`
   (the zsh files go to a backup folder, the login shell becomes bash again, tested
   against the real `usermod`) and then `--undo` (zsh and the files come back); it passed
-  in all four jobs. The checks that are skipped
+  in all four jobs. The shell-setup phase also checks the aliases themselves in a new shell
+  (`ls`, `ll`, `la` must be `eza`, `grep` must be ours) with the real Oh My Bash switched on:
+  that check exists because a real-machine run found Oh My Bash replacing them, which the
+  tests had missed; `ws-doctor` now checks it too. The checks that are skipped
   are skipped on purpose (SPICE kernels are off by default; image caching is off in
   a container, which cannot run podman; the VM run covers the rest). It took six
   runs to get here: the bugs found are in `CHANGELOG.md` (package names that
