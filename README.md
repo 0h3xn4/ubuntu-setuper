@@ -166,7 +166,7 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   *whole* life cycle of both profiles passes in all four jobs (a GitHub runner VM
   and an `ubuntu:latest` container, each for `work` and `personal`; `personal`
   includes the embedded part): `--check` against the real archive, a full `--full`
-  install as a normal user with `sudo` (9 to 11 minutes), the self-test (33 and 36
+  install as a normal user with `sudo` (the install step took 9 to 19 minutes, depending on the runner), the self-test (33 and 36
   checks passed, 0 failed, on the VM for `work` and `personal`; 32 and 35 in the
   container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
   lock (it pins Node.js too), `--undo` of every undo file, and a check that

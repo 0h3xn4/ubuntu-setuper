@@ -181,7 +181,7 @@ an older archive version (today: the archive if it has them, else the project's 
 - `tools/e2e.sh` = the full end-to-end test (see docs/script-reference.md); the "E2E" workflow
   runs it on GitHub runner VMs and a newest-LTS container, only manually or for a PR whose title
   contains "[e2e]" (a push to such a PR cancels its running E2E: batch pushes). It is the ONLY way to
-  test a real full install (the sandbox cannot). It took ~15 min per run. get_job_logs shows the
+  test a real full install (the sandbox cannot). A whole job takes ~12-22 min (the install step 9-19 min, depending on the runner). get_job_logs shows the
   summary table at the end of a FAILED job's log only; for green jobs download the artifact
   (api.github.com/repos/OWNER/REPO/actions/artifacts/ID/zip with $GITHUB_TOKEN) and read summary.md.
   A docs-only change does not need an E2E: leave "[e2e]" out of its PR title.
@@ -248,7 +248,7 @@ projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, pr
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
 FULL E2E, LATEST (GitHub run #7, workflow_dispatch on the branch, head c9f4669): GREEN in all four jobs, nothing
 hidden: self-test vm-work 33/0, vm-personal 36/0, container-work 32/0, container-personal 35/0 (passed/failed),
-install 9-11 min, ws-doctor 0 failed, RISC-V QEMU test PASSES, lock pins NODE_LTS_VERSION, leftovers clean (incl.
+install step 9-19 min across runs (10-13 min in the last), ws-doctor 0 failed, RISC-V QEMU test PASSES, lock pins NODE_LTS_VERSION, leftovers clean (incl.
 ~/.local/opt and node/npm/npx). Node.js v26.13.0 from nodejs.org (node_install) in every job, bash-language-server
 installed with its npm; personal = core + embedded + desktop. Remaining skips are expected (SPICE kernels off by
 default; container images off in the container jobs). The run before it (#6, head 8fb892a) was green too but its

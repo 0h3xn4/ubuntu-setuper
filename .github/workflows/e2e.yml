@@ -2,7 +2,7 @@ name: E2E (full lifecycle)
 
 # A full end-to-end test: install everything (--full), self-test, health check,
 # idempotent re-install, manifest, lock, then undo and check nothing is left.
-# It is slow (30-60 minutes) and big, so it does NOT run on every change:
+# It is slow (about 12 to 22 minutes per job) and big, so it does NOT run on every change:
 #   - manually (Actions > E2E > Run workflow), or
 #   - on a pull request whose title contains "[e2e]".
 on:
