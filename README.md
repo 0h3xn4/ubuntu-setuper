@@ -27,7 +27,7 @@ lists them all.
 - [How well tested is this?](#how-well-tested-is-this)
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
-- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*
+- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*, A7 coming from zsh *(only if you use zsh)*
 - [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
@@ -145,6 +145,13 @@ Remove a package. Upgrade the system or any package you already have. Edit a
 file that belongs to a package. Overwrite an existing file. Mask a service.
 Add an APT repository or PPA. Install a snap or Flatpak. Touch the kernel,
 boot, coreutils or APT sources. Create accounts or sign in anywhere.
+
+### Coming from zsh?
+
+This setup is for bash. If you use zsh or Oh My Zsh, run `./setup.sh --reset-shell` first (or do
+[A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh) by hand): it moves your zsh files into a
+backup folder (nothing is deleted), makes bash your login shell again and records everything for
+`./setup.sh --undo`.
 
 ### See it before you do it
 
@@ -506,6 +513,55 @@ GNOME-level privacy settings (location, automatic time zone, problem
 reports, web search in the Activities overview) are in [B13](#b13-desktop-gnome-settings).
 
 Undo: the `record_undo` lines above; the commands are in `~/workstation-undo.sh`.
+
+## A7. Coming from zsh or Oh My Zsh *(only if you use zsh)*
+
+*Mirrors `./setup.sh --reset-shell`, function `reset_shell_mode`.*
+
+Everything in this guide is for **bash**: the aliases, the prompt, the history settings, the
+`fzf`/`zoxide`/`direnv`/`starship` hooks and above all the offline lock for `uv`, `pip` and `cargo`
+(D4) live in `~/.bashrc.d` and are loaded by `~/.bashrc`. A zsh session never reads them, so in zsh
+the tools are installed but the shell experience and **the offline protection are missing**.
+If you use zsh (often with Oh My Zsh) and want this setup, the simplest honest route is to go back
+to bash first. This section is that "factory reset" for the shell. **Nothing is deleted**: your zsh
+files are *moved* into a backup folder, and every step is recorded for undo. Do it once, before
+Part B; skip it if you already use bash.
+
+```bash
+# 1. Move the zsh files (Oh My Zsh included) into a timestamped backup folder, never delete them
+backup=~/workstation-shell-backup-$(date +%Y%m%d-%H%M%S); mkdir -p "$backup"
+record_undo "rmdir --ignore-fail-on-non-empty '$backup'"            # recorded first, so undone last
+shopt -s nullglob
+for f in ~/.oh-my-zsh ~/.zshrc ~/.zshenv ~/.zprofile ~/.zlogin ~/.zlogout ~/.zsh_history \
+         ~/.zshrc.pre-oh-my-zsh ~/.p10k.zsh ~/.zsh ~/.zsh_sessions ~/.zcompdump*; do
+  [ -e "$f" ] || [ -L "$f" ] || continue                              # a symlink (dotfile manager) is moved as a link
+  record_undo "mv -n '$backup/${f##*/}' '$f'"
+  mv -- "$f" "$backup/"
+done
+shopt -u nullglob
+
+# 2. Bash needs ~/.bashrc and ~/.profile: copy the Ubuntu defaults only if they are missing
+for f in .bashrc .profile; do
+  [ -e ~/$f ] || { cp /etc/skel/$f ~/$f && record_undo "rm -f ~/$f"; }
+done
+
+# 3. Login shell back to bash (a system change: it edits your entry in /etc/passwd, with sudo)
+old=$(getent passwd "$USER" | cut -d: -f7)
+case "$old" in
+  */zsh) record_undo "sudo usermod -s $old $USER"; sudo usermod -s /bin/bash "$USER" ;;
+esac
+```
+
+The login shell changes at your **next login** (open terminals keep running zsh); log out and in
+again. The **zsh package is not removed** (this guide never removes packages); if you want it gone
+as well: `sudo apt remove zsh` (other accounts that use zsh would lose their login shell). Not
+touched: terminal profiles that start `/usr/bin/zsh` explicitly (change that in the terminal's
+settings), and a custom `ZDOTDIR`. Your files stay in the backup folder until you delete it yourself.
+
+With the script it is one command that lists everything first and asks:
+`./setup.sh --reset-shell` (`--dry-run` only lists, `--yes` skips the question). Take it back with
+`./setup.sh --undo` (it is the newest undo file). Oh My Zsh's own update checks, by the way, are
+the kind of automatic network traffic this setup avoids; after the reset there is no Oh My Zsh.
 
 ---
 
@@ -1653,6 +1709,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
+| I use zsh / Oh My Zsh and the aliases, the prompt or the offline lock are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
 | Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |
 | Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-and-personal-profiles)). |
@@ -1683,7 +1740,7 @@ directory; `--quick` for the static ones, which the git hook from
 for every change. For the complete life cycle, `tools/e2e.sh --profile work
 --i-know-this-machine-is-disposable` does a **full** install (every opt-in on),
 self-test, health check, a second install, manifest, lock, then `--undo` and a
-check that nothing is left behind. Run it in a throw-away VM only (it refuses
+check that nothing is left behind (and, as a last phase, a zsh user's `--reset-shell` and its undo). Run it in a throw-away VM only (it refuses
 to run as root or without that flag); the "E2E" workflow does it on GitHub
 runners (manually, or on a pull request whose title contains `[e2e]`). What changed and when is in `CHANGELOG.md`. If you find a difference between this guide and the script,
 the script's behaviour is the reference and the guide has a bug; please

@@ -146,6 +146,20 @@ belong only inside the embedded module.
 - GNOME Online Accounts: leave unconfigured; the self-test WARNS (status 78,
   not a failure) if an account exists.
 
+### zsh / Oh My Zsh users (`--reset-shell`)
+The setup is BASH-ONLY (decided by the user: "the user would rather want to get rid of zsh ... some kind of factory
+reset in order to be able to use your setup", i.e. NO zsh support). `./setup.sh --reset-shell` (reset_shell_mode)
+moves the zsh dotfiles (ZSH_FILES) into ~/workstation-shell-backup-<time>/ (never deletes; symlinks move as links),
+copies a missing ~/.bashrc and ~/.profile from /etc/skel, and `sudo usermod -s /bin/bash` if the login shell is zsh.
+It lists everything and asks (--dry-run, --yes), records every step for --undo (backup rmdir recorded FIRST so it runs
+last), and NEVER removes the zsh package (requirement 2: no package removal; it only prints the apt command).
+Deliberate exception to "every system change has a default-off switch in the opt_in table": it is an explicit one-off
+mode like --undo, not part of an install, and --full does not turn it on (the usermod only happens because the user
+ran this command and confirmed). Without a reset, zsh sessions never load ~/.bashrc.d, so the offline lock is NOT
+enforced there: that is why the reset exists. Tests: check-all.sh t_reset_shell (fake getent/sudo/id, fake /etc/skel;
+the mode checks `id -u` so a fake id can stand in for a non-root user) and e2e.sh phase 11 (real zsh and usermod).
+README A7 is the manual version.
+
 ### Terminal look
 `ls`/`ll`/`la`/`tree` are eza; icons (`--icons=auto`) are on when ~/.local/share/fonts/JetBrainsMonoNerdFont
 exists, `WS_ICONS=0|1` overrides. The user likes this look (long listing, folder/file icons, starship `❯`

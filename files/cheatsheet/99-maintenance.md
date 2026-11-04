@@ -13,6 +13,7 @@ Run these from the setup folder. The profile chosen at install time
 ./setup.sh --upgrade     # move to the newest stable versions, then --lock again
 ./setup.sh --undo        # take back an install run (lists every command first, asks before running)
 ws-doctor                # quick, read-only health check (no repository needed)
+./setup.sh --reset-shell # coming from zsh / Oh My Zsh? moves the zsh files to a backup, bash becomes your login shell (undoable)
 ./setup.sh --list-profiles
 ```
 

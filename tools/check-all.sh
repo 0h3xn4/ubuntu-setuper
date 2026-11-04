@@ -8,7 +8,7 @@
 # Static:      bash -n and shellcheck on all shell files, JSON/TOML/YAML parse,
 #              README <-> script sync (tools/check-readme-sync.sh), the README's
 #              bash code blocks parse, '--explain' works for both profiles.
-# Functional:  ws-init, ws-doctor, --undo, manifest-diff, the checksum-verified
+# Functional:  ws-init, ws-doctor, --undo, --reset-shell, manifest-diff, the checksum-verified
 #              download helper (including a tamper test), the LibreOffice helper.
 # Exit status: 0 = all passed, 1 = at least one check failed.
 set -uo pipefail
@@ -145,6 +145,31 @@ t_undo() {
   [[ ! -e $h/s/a && ! -e $h/s/b ]] && compgen -G "$h/workstation-undo-1.sh.done-*" >/dev/null
 }
 check "--undo: dry run changes nothing, --yes replays and renames the file" t_undo
+
+# --reset-shell, with a fake getent (login shell = zsh), a fake sudo (just logs), a fake id (not root)
+# and a fake /etc/skel: zsh files are moved (not deleted), bash files come back, and --undo restores all.
+t_reset_shell() {
+  local d="$TMP/rs" h skel out
+  h="$d/home"; skel="$d/skel"; mkdir -p "$h/.oh-my-zsh" "$skel" "$d/bin"
+  echo omz > "$h/.oh-my-zsh/x"; echo z > "$h/.zshrc"; echo hist > "$h/.zsh_history"; echo keep > "$h/.bash_aliases"
+  echo b > "$skel/.bashrc"; echo p > "$skel/.profile"
+  printf '#!/bin/sh\necho "tester:x:1000:1000::/home/tester:/usr/bin/zsh"\n' > "$d/bin/getent"
+  printf '#!/bin/sh\necho "$*" >> "%s/sudo.log"\n' "$d" > "$d/bin/sudo"
+  # shellcheck disable=SC2016  # the fake commands must keep their $1 / $* literally
+  printf '#!/bin/sh\ncase "$1" in -u) echo 1000;; -un) echo tester;; *) /usr/bin/id "$@";; esac\n' > "$d/bin/id"
+  chmod +x "$d"/bin/*
+  local -a e=(HOME="$h" USER=tester PATH="$d/bin:$PATH" RESET_SKEL_DIR="$skel")
+  out="$(env "${e[@]}" ./setup.sh --reset-shell --dry-run 2>&1)" || return 1
+  [[ $out == *'Dry run'* && -e $h/.zshrc && ! -e $h/.bashrc ]] || return 1
+  env "${e[@]}" ./setup.sh --reset-shell --yes >/dev/null 2>&1 || return 1
+  [[ ! -e $h/.zshrc && ! -e $h/.oh-my-zsh && -e $h/.bashrc && -e $h/.profile && -e $h/.bash_aliases ]] || return 1
+  grep -q 'usermod -s /bin/bash tester' "$d/sudo.log" || return 1
+  compgen -G "$h/workstation-shell-backup-*/.zshrc" >/dev/null || return 1
+  env "${e[@]}" ./setup.sh --undo --yes >/dev/null 2>&1 || return 1
+  [[ -e $h/.zshrc && -e $h/.oh-my-zsh/x && ! -e $h/.bashrc && -e $h/.bash_aliases ]] || return 1
+  grep -q 'usermod -s /usr/bin/zsh tester' "$d/sudo.log"
+}
+check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell
 
 t_manifest_diff() {
   printf '## Key tools\ngcc 13\n## APT packages\ngit\t1\tamd64\n' > "$TMP/ma"
