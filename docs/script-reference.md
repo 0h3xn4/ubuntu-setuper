@@ -200,7 +200,7 @@ desktop module only places policy files for Firefox and Thunderbird.
 
 CI (`.github/workflows/ci.yml`): `check-all.sh` on every push and PR, then for each profile a
 `--check` against the real archive of the newest Ubuntu LTS and a reduced real install in a container.
-The E2E workflow (`.github/workflows/e2e.yml`, about 10 to 20 minutes per job, started manually (Actions > E2E > Run workflow, or the API's workflow_dispatch on any branch, no pull request needed) or by a PR titled with `[e2e]`)
+The E2E workflow (`.github/workflows/e2e.yml`, about 12 to 22 minutes per job, started manually (Actions > E2E > Run workflow, or the API's workflow_dispatch on any branch, no pull request needed) or by a PR titled with `[e2e]`)
 runs `tools/e2e.sh` for both profiles on a GitHub runner VM and in an `ubuntu:latest` container. It
 purges the runner's preinstalled `gh` first and removes the container image's dpkg excludes, so the
 machine looks like a normal Ubuntu install. Results of the latest runs: README, "How well tested is this?".

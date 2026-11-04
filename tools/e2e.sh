@@ -32,7 +32,7 @@
 # Things the test knows about a machine it did not set up itself: if rustup (~/.rustup,
 # ~/.cargo/bin/rustup) already exists before the install, it is not counted as a leftover; the CI VM job
 # purges the runner's preinstalled `gh` (the no-cloud policy forbids it) and the container job removes the
-# image's dpkg excludes (so documentation packages are not stripped). A full run takes ~15 minutes.
+# image's dpkg excludes (so documentation packages are not stripped). A full run takes about 12 to 22 minutes (the install step 9 to 19).
 # Exit status: 0 = every phase passed, 1 = at least one failed.
 set -uo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." || exit 1
