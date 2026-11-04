@@ -118,7 +118,7 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 | `~/.config/kate` | Kate's language-server settings |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
-| `~/.bashrc.d` | shell setup files (`10-workstation.sh`, `15-oh-my-bash.sh`, `20-offline.sh`, `30-embedded.sh`) |
+| `~/.bashrc.d` | shell setup files, loaded in name order (`10-workstation.sh`, `15-oh-my-bash.sh`, `16-aliases.sh`, `20-offline.sh`, `30-embedded.sh`) |
 | `~/.local/share/workstation` | project starter files, Python wheelhouse, Rust crate cache, download checksums, SPICE kernels |
 | `~/WORKSTATION-CHEATSHEET.md` | the cheat sheet (`ws-help`) |
 | `~/workstation-undo.sh`, `~/workstation-manifest-*.txt` | your undo commands, the record of what was installed |
@@ -927,15 +927,19 @@ EOF
 fi
 ```
 
-**Files.** `10-workstation.sh` sets PATH, history, aliases, `fzf`/`zoxide`/
+**Files.** `10-workstation.sh` sets PATH, history, `fzf`/`zoxide`/
 `direnv`/`starship` integration, the offline-documentation shortcuts
-(`cppref`, `pydocs`, ...) and `ws-help`. `.inputrc` adds history search on
+(`cppref`, `pydocs`, ...) and `ws-help`. `16-aliases.sh` holds the everyday aliases
+(`ls`/`ll`/`la`/`tree` through `eza` with icons, `grep`, `bat`, `fd`, `lg`); it is a
+separate file because it must load *after* Oh My Bash (B15), which otherwise replaces
+`ls`, `ll`, `la` and `grep` with its own. `.inputrc` adds history search on
 the arrow keys. `ws-init` copies project starter files (B12). Read them
 before installing.
 
 ```bash
 less "$WS/files/home/.bashrc.d/10-workstation.sh"
 put "$WS/files/home/.bashrc.d/10-workstation.sh" ~/.bashrc.d/10-workstation.sh
+put "$WS/files/home/.bashrc.d/16-aliases.sh"     ~/.bashrc.d/16-aliases.sh
 put "$WS/files/home/.inputrc"                    ~/.inputrc
 put "$WS/files/home/.local/bin/ws-init"          ~/.local/bin/ws-init 755
 put "$WS/files/home/.local/bin/ws-doctor"        ~/.local/bin/ws-doctor 755
@@ -1077,7 +1081,7 @@ It is not in the Ubuntu archive, so it comes from the project's GitHub
 release. It is installed for **your user only** (no system font directory).
 The script runs this right after B1; the order does not matter.
 
-**File icons in `ls`/`ll`.** `10-workstation.sh` gives `eza` (installed in B1) file
+**File icons in `ls`/`ll`.** `16-aliases.sh` gives `eza` (installed in B1) file
 icons (`--icons=auto`) whenever this font's directory exists, so `ll` looks like
 a long listing with a folder/file-type icon per entry. The icons only render if your
 **terminal** uses the font: GNOME Terminal > Preferences > your profile > Custom font >
@@ -1716,6 +1720,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` on 24.04, and `zellij` and `difftastic` on both 24.04 and 26.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
 | `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
+| `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |

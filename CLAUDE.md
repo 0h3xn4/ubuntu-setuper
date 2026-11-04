@@ -235,6 +235,11 @@ an older archive version (today: the archive if it has them, else the project's 
 - Use `if ...; then ...; fi`, not `cmd && cmd`, in functions run under set -e.
 - Never pipe into `grep -q` under pipefail (SIGPIPE makes the pipeline fail): capture into a variable
   first. This bit three times (ws-init test, check-all, the E2E lock phase).
+- Files in ~/.bashrc.d load in NAME order: 10-workstation (env, history, integrations), 15-oh-my-bash (opt-in),
+  16-aliases (everyday aliases), 20-offline. Aliases MUST come after Oh My Bash: it defines its own ls/ll/la/l/grep
+  (lib/directories.sh, lib/grep.sh, ls init function) while loading and silently replaces earlier ones (found on the
+  user's real machine; the E2E now asserts the aliases, ws-doctor checks them). install_file never overwrites an
+  existing file, so an old 10-workstation.sh keeps its aliases and the new 16 file adds the right ones.
 - Order matters for services: anything that disables a unit (privacy_hardening) runs AFTER all package
   installs, because a dependency can switch its timer back on. Every `record_undo` must be recorded
   BEFORE the thing that can fail, and only for what THIS run created (check "did it exist?" first).

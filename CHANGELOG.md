@@ -21,6 +21,11 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
 ### Fixed (found by the first run on a real machine)
+- **Oh My Bash replaced the `ls`/`ll`/`la`/`grep` aliases** (no eza, no icons, a plain `ls -lh`): it defines its own
+  while it loads, after `10-workstation.sh`. The aliases now live in `~/.bashrc.d/16-aliases.sh`, which loads after
+  Oh My Bash. `ws-doctor` warns when `ls`/`ll` are not eza in a new shell and says how to fix it; the E2E shell phase now
+  checks the aliases themselves (before it only checked environment variables). README B10/B15, troubleshooting,
+  script reference, cheat sheet. For an existing install: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`.
 - The No-cloud self-test failed on a machine where `yaml-language-server` was already installed (not by this
   setup). The message now says where the tool comes from (APT package, npm global, snap, or by hand), how to
   find out and what to check before removing it, and that this setup never installs it. README B16 and the

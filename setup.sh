@@ -549,6 +549,7 @@ pkg_groups() {
 # features install. The cheat sheet is generated, see install_cheatsheet.
 home_files() {
   echo .bashrc.d/10-workstation.sh
+  echo .bashrc.d/16-aliases.sh
   echo .inputrc
   echo .local/bin/ws-init
   echo .local/bin/ws-doctor
@@ -1158,6 +1159,7 @@ EOF
   fi
 
   install_file .bashrc.d/10-workstation.sh
+  install_file .bashrc.d/16-aliases.sh      # after 15-oh-my-bash.sh on purpose: Oh My Bash replaces ls/ll/la/grep
   if on "$ENFORCE_OFFLINE_ENV"; then install_file .bashrc.d/20-offline.sh; fi
   install_file .inputrc
   install_file .local/bin/ws-init 755
