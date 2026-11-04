@@ -1173,6 +1173,13 @@ used. Keep it that way:
 for s in vscode-json-languageserver yaml-language-server; do command -v "$s" && echo "REMOVE $s: it fetches schemas online"; done
 ```
 
+This setup never installs them, but they may already be on your machine (an earlier `npm install -g`,
+an APT package, a snap, another editor's tooling). The self-test's *No-cloud policy* check then
+reports them, with where each one comes from. To find out yourself:
+`readlink -f "$(command -v yaml-language-server)"`, then `dpkg -S <that path>` (APT package),
+`npm ls -g` (npm global) or `snap list` (snap). Remove it with the tool that installed it, after
+checking what else needs it (`apt rdepends --installed <package>`); the setup itself never removes anything.
+
 Undo: `rm ~/.config/kate/lspclient/settings.json`; the package via APT history.
 
 ---
@@ -1714,6 +1721,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | I use zsh / Oh My Zsh and the aliases, the prompt or the offline lock are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
+| Self-test: "No-cloud policy ... yaml-language-server (or vscode-json-languageserver) is installed" | That language server fetches JSON/YAML schemas from the internet and Kate would use it. This setup never installs it, so it was already on your machine; the message says where it comes from. Remove it with the tool that installed it ([B16](#b16-kate-editor-optional-install_kate-default-on)), or keep it knowingly. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
 | Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |
 | Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-and-personal-profiles)). |
