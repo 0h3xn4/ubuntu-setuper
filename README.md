@@ -107,6 +107,31 @@ shell setup is installed but not active: `~/.cargo/bin` is not on your
 `PATH` and the offline lock for `uv`/`pip`/`cargo` does not apply to your
 shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
+### Which Ubuntu releases do I need?
+
+**24.04 LTS or 26.04 LTS: your choice, no upgrade required.** Both are verified: every package name
+checked against that release's real archive, and the full end-to-end test (a real `--full` install,
+undo and all) run on each in CI. The tools that come from Ubuntu are whatever your release ships
+(Canonical keeps them patched); everything that comes from upstream (Node.js LTS, uv, Rust, Helix,
+starship, probe-rs, the Nerd Font) is the newest version on either release. What differs:
+
+| | Ubuntu 24.04 LTS | Ubuntu 26.04 LTS |
+|---|---|---|
+| Python / GCC / clang+clangd / CMake | 3.12 / 13 / 18 / 3.28 | 3.14 / 15 / 21 / 4.2 |
+| QEMU / GDB / OpenOCD | 8.2 / 15.1 / 0.12 | 10.2 / 17.1 / 0.12 |
+| Kate (editor) | 23.08 | 25.12 |
+| Podman / eza / fzf | 4.9 / 0.18 / 0.44 | 5.7 / 0.23 / 0.67 |
+| Node.js in the archive (only a fallback) | 18 (end of life: the upstream LTS is used instead) | 22 |
+| RISC-V emulator | in `qemu-system-misc` | separate package `qemu-system-riscv` |
+| `lazygit` | not in the archive: taken from its release | in the archive |
+| `zellij`, `difftastic` | not in the archive: skipped | not in the archive: skipped |
+| `apt history-undo` (undoing APT installs) | not available (APT 2.7) | available (APT 3) |
+
+The setup handles these differences itself (skips a package that does not exist on your release,
+takes `lazygit` from its release, installs Node.js from nodejs.org on both). Releases older than
+24.04 are refused: their tools are too old. A release newer than 26.04 asks for confirmation:
+run `./setup.sh --check` first.
+
 ### Where things end up in your home directory
 
 | Path | Contents |
@@ -169,32 +194,36 @@ seconds, without network.
 Be skeptical, and check for yourself; this is what has and has not been verified
 (newest facts first; the details and dates are in `CHANGELOG.md` and `CLAUDE.md`).
 
-- **Full end-to-end test on Ubuntu 26.04.1 LTS (in CI, `tools/e2e.sh`):** the
-  *whole* life cycle of both profiles passes in all four jobs (a GitHub runner VM
-  and an `ubuntu:latest` container, each for `work` and `personal`; `personal`
-  includes the embedded part): `--check` against the real archive, a full `--full`
-  install as a normal user with `sudo` (the install step took 9 to 19 minutes, depending on the runner), the self-test (33 and 36
-  checks passed, 0 failed, on the VM for `work` and `personal`; 32 and 35 in the
-  container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
-  lock (it pins Node.js too), `--undo` of every undo file, and a check that
-  nothing the setup created is left behind (APT packages stay by design).
-  **Node.js 26 (the newest LTS) from nodejs.org is installed and used in all four
-  jobs**, and the ARM and RISC-V programs run in QEMU. An eleventh phase plays a zsh
-  user: it installs a real `zsh`, makes it the login shell, runs `./setup.sh --reset-shell`
-  (the zsh files go to a backup folder, the login shell becomes bash again, tested
-  against the real `usermod`) and then `--undo` (zsh and the files come back); it passed
-  in all four jobs. The shell-setup phase also checks the aliases themselves in a new shell
-  (`ls`, `ll`, `la` must be `eza`, `grep` must be ours) with the real Oh My Bash switched on:
-  that check exists because a real-machine run found Oh My Bash replacing them, which the
-  tests had missed; `ws-doctor` now checks it too. The checks that are skipped
-  are skipped on purpose (SPICE kernels are off by default; image caching is off in
-  a container, which cannot run podman; the VM run covers the rest). It took six
-  runs to get here: the bugs found are in `CHANGELOG.md` (package names that
-  changed on 26.04, undo gaps, service handling in containers, an ordering problem
-  in the privacy step), and one was only visible by reading a green run's log: a
-  RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation into its
-  own package (`qemu-system-riscv`). The E2E test now fails on such a skip. No
-  desktop session was involved in any of this.
+- **Full end-to-end test on Ubuntu 24.04 LTS and 26.04 LTS (in CI, `tools/e2e.sh`):**
+  the *whole* life cycle of both profiles passes on **both releases**, in a GitHub runner
+  VM and in an Ubuntu container, for `work` and `personal` (eight jobs; `personal` includes
+  the embedded part): `--check` against the real archive, a full `--full` install as a normal
+  user with `sudo`, the self-test (33 and 36 checks passed on the VM for `work` and `personal`,
+  32 and 35 in the container, 0 failed, on 24.04 and 26.04 alike), `ws-doctor` in a fresh
+  shell, an idempotent second run, manifest, lock (it pins Node.js too), `--undo` of every
+  undo file, and a check that nothing the setup created is left behind (APT packages stay by
+  design). Two full eight-job runs on the final code base: in the first, seven jobs passed
+  and one (24.04 container, `personal`) hit a transient GitHub download error, which exposed
+  two real bugs (an optional `lazygit` download aborting its step, and a silent fallback to
+  unverified downloads); both are fixed and the second run passed all eight. The install
+  step took 10 to 19 minutes, once 51 minutes on a slow runner.
+  **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
+  (the 24.04 archive has Node 18, which is end of life), and the ARM and RISC-V programs run
+  in QEMU (RISC-V through `qemu-system-misc` on 24.04, `qemu-system-riscv` on 26.04). An
+  eleventh phase plays a zsh user: it installs a real `zsh`, makes it the login shell, runs
+  `./setup.sh --reset-shell` (the zsh files go to a backup folder, the login shell becomes bash
+  again, tested against the real `usermod`) and then `--undo` (zsh and the files come back).
+  The shell-setup phase also checks the aliases themselves in a new shell (`ls`, `ll`, `la`
+  must be `eza`, `grep` must be ours) with the real Oh My Bash switched on: that check exists
+  because a real-machine run found Oh My Bash replacing them, which the tests had missed;
+  `ws-doctor` now checks it too. The checks that are skipped are skipped on purpose (SPICE
+  kernels are off by default; image caching is off in a container, which cannot run podman; the
+  VM run covers the rest). The bugs found on the way are in `CHANGELOG.md` (package names that
+  changed on 26.04, undo gaps, service handling in containers, an ordering problem in the
+  privacy step, Kate's ignored language-server settings), and one was only visible by reading a
+  green run's log: a RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation
+  into its own package. The E2E test now fails on such a skip. No desktop session was involved
+  in any of this.
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
@@ -252,9 +281,11 @@ machine ends up in the same state.
 3. **Everything reversible.** Each section ends with an **Undo** line. The
    helpers in A2 also append the undo commands for the files you create to
    `~/workstation-undo.sh`.
-4. **Latest stable, long-term-supported versions.** Latest Ubuntu LTS; for
-   software with an LTS line the newest LTS; otherwise the newest stable
-   release. Never betas, release candidates or nightlies.
+4. **Latest stable, long-term-supported versions.** Ubuntu: the newest LTS, or any
+   older LTS release this guide supports (24.04 and 26.04 today): you do **not**
+   have to upgrade your system to use it. For software with an LTS line the
+   newest LTS; otherwise the newest stable release. Never betas, release
+   candidates or nightlies.
 5. **Verify what you download outside APT.** Where the project publishes a
    checksum (uv, rustup, starship, Nerd Fonts, probe-rs, lazygit) the guide
    compares the download with *that* checksum and refuses a mismatch. For the
@@ -300,16 +331,17 @@ echo "$VERSION"          # must contain "LTS"
 uname -m                 # x86_64 expected; other architectures lack some packages
 ```
 
-You need an Ubuntu **LTS** release, and it should be the **latest** LTS.
-After A3 installs `distro-info` you can check this offline:
+You need an Ubuntu **LTS** release that this guide supports: **24.04 or 26.04**
+(see [Which Ubuntu releases](#which-ubuntu-releases-do-i-need)). You do **not**
+need to upgrade to the newest one. Check yours:
 
 ```bash
-ubuntu-distro-info --lts           # codename of the latest LTS
-echo "$VERSION_CODENAME"           # yours: the two must be equal
+echo "$VERSION_ID"                 # 24.04 or 26.04 (the supported releases)
 ```
 
-If yours is older, upgrade first (`sudo do-release-upgrade`; LTS-to-LTS
-upgrades are offered once the new release's first point release is out).
+Older releases (22.04 and before) are too old for the tools used here (for
+example Python 3.11+ is needed); a non-LTS release or a newer LTS than 26.04 has not
+been verified, so check every package name before you rely on it.
 Also make sure you can use `sudo`, and run this guide from a logged-in
 desktop session (A6 and B13 change GNOME settings).
 
@@ -1168,10 +1200,13 @@ apt_install kate
 put "$WS/files/home/.config/kate/lspclient/settings.json" ~/.config/kate/lspclient/settings.json
 ```
 
-The settings file points Kate's built-in language-server client at the same
-local servers Helix uses: basedpyright and ruff (Python), cmake-language-server,
-taplo (TOML). Kate merges it over its own defaults, which already cover
-clangd, rust-analyzer and bash-language-server. Kate's defaults for JSON and
+The settings file points Kate's built-in language-server client at local
+servers: basedpyright (Python), cmake-language-server, taplo (TOML). Kate supports
+exactly **one** server per language (checked in the source of both Kate versions
+involved: 23.08 on Ubuntu 24.04 and 25.12 on 26.04), so Python gets basedpyright here;
+Helix, which can run several, also uses ruff. Each entry is a flat `command` list:
+a nested `servers` map inside a language is silently ignored by Kate. Kate merges the file
+over its own defaults, which already cover clangd, rust-analyzer and bash-language-server. Kate's defaults for JSON and
 YAML would use `vscode-json-languageserver` and `yaml-language-server`, which
 download schemas from the internet; they are not installed, so they are not
 used. Keep it that way:

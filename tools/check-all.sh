@@ -169,6 +169,34 @@ t_reset_shell() {
   [[ -e $h/.zshrc && -e $h/.oh-my-zsh/x && ! -e $h/.bashrc && -e $h/.bash_aliases ]] || return 1
   grep -q 'usermod -s /usr/bin/zsh tester' "$d/sudo.log"
 }
+# The release logic: which Ubuntu releases are supported (24.04 and 26.04 are; nobody has to upgrade), and which
+# packages exist only on newer ones. A fake os-release stands in for /etc/os-release.
+t_os_check() {
+  local d="$TMP/os" bad=0 out
+  mkdir -p "$d"
+  case_() { # case_ ID VERSION_ID VERSION EXPECT_PROBLEM_REGEX ('' = no problem, supported)
+    printf 'ID=%s\nVERSION_ID="%s"\nVERSION="%s"\nPRETTY_NAME="test"\n' "$1" "$2" "$3" > "$d/os-release"
+    out="$(OS_RELEASE_FILE="$d/os-release" bash -c 'source <(head -n -1 ./setup.sh); SUPPORTED_UBUNTU="24.04 26.04"; os_check; echo "PROBLEM=$OS_PROBLEM"; echo "VERIFIED=$OS_VERIFIED"' 2>&1)"
+    if [[ -z $4 ]]; then
+      [[ $out == *"PROBLEM="$'\n'* && $out == *"VERIFIED=1"* ]] || { echo "$1 $2: expected supported, got: $out"; bad=1; }
+    else
+      grep -q -E "$4" <<<"$out" || { echo "$1 $2: expected /$4/, got: $out"; bad=1; }
+    fi
+  }
+  case_ ubuntu 24.04 "24.04.5 LTS (Noble Numbat)" ''
+  case_ ubuntu 26.04 "26.04.1 LTS (Resolute)" ''
+  case_ ubuntu 22.04 "22.04.5 LTS (Jammy Jellyfish)" 'older than the oldest'
+  case_ ubuntu 28.04 "28.04 LTS (Future)" 'newer than any release'
+  case_ ubuntu 25.10 "25.10 (Questing Quokka)" 'not a long-term support'
+  case_ debian 12 "12 (bookworm)" 'for Ubuntu'
+  # packages that exist only from a newer release on
+  printf 'ID=ubuntu\nVERSION_ID="24.04"\nVERSION="24.04 LTS"\n' > "$d/os-release"
+  OS_RELEASE_FILE="$d/os-release" bash -c 'source <(head -n -1 ./setup.sh); source ./workstation.conf; ! pkg_applies qemu-system-riscv && pkg_applies qemu-system-misc' >/dev/null 2>&1 || { echo "24.04: qemu-system-riscv must be skipped, qemu-system-misc kept"; bad=1; }
+  printf 'ID=ubuntu\nVERSION_ID="26.04"\nVERSION="26.04 LTS"\n' > "$d/os-release"
+  OS_RELEASE_FILE="$d/os-release" bash -c 'source <(head -n -1 ./setup.sh); source ./workstation.conf; pkg_applies qemu-system-riscv' >/dev/null 2>&1 || { echo "26.04: qemu-system-riscv must be installed"; bad=1; }
+  return $bad
+}
+check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell
 
 t_manifest_diff() {
@@ -195,9 +223,16 @@ t_published_checksum() {
     [[ -s $tmp/ok.bin ]] || exit 11
     fetch_published "file://$tmp/pay.bin" "$tmp/evil.bin" "file://$tmp/bad.sha" pay.bin >/dev/null 2>&1 && exit 12
     [[ ! -e $tmp/evil.bin ]] || exit 13
+    # The project publishes a checksum but it cannot be fetched: refuse (no silent trust-on-first-use) ...
+    FETCH_SUMS_TRIES=1 FETCH_SUMS_DELAY=0 fetch_published "file://$tmp/pay.bin" "$tmp/noverify.bin" "file://$tmp/does-not-exist.sha" pay.bin >/dev/null 2>&1 && exit 14
+    [[ ! -e $tmp/noverify.bin ]] || exit 15
+    # ... unless the lock file pins the SHA-256 of that download
+    DOWNLOAD_SHA256["file://$tmp/pay.bin"]="$(sha256sum "$tmp/pay.bin" | cut -d" " -f1)"
+    FETCH_SUMS_TRIES=1 FETCH_SUMS_DELAY=0 fetch_published "file://$tmp/pay.bin" "$tmp/pinned.bin" "file://$tmp/does-not-exist.sha" pay.bin >/dev/null 2>&1 || exit 16
+    [[ -s $tmp/pinned.bin ]] || exit 17
     exit 0' _ "$REPO" "$LIB" "$TMP"
 }
-check "fetch_published accepts the right checksum and refuses a wrong one" t_published_checksum
+check "fetch_published: right checksum accepted, wrong or unreachable one refused (no silent trust-on-first-use)" t_published_checksum
 
 t_lo_helper() {
   local x="$TMP/lo.xcu" py=modules/desktop/files/lo_update_check.py

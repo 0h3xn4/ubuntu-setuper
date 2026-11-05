@@ -23,16 +23,18 @@ jobs:
       - name: tools/check-all.sh
         run: tools/check-all.sh
 
-  # The real thing: the setup on the newest Ubuntu LTS (the Docker image tagged
-  # "latest" is always the newest LTS). The script refuses to run as root, so a
-  # normal user with sudo does the work, exactly like on a workstation.
+  # The real thing: the setup on every supported Ubuntu LTS (24.04 and the newest:
+  # the Docker image tagged "latest" is always the newest LTS). The script refuses to
+  # run as root, so a normal user with sudo does the work, exactly like on a workstation.
   ubuntu-lts:
     needs: checks
+    name: ubuntu ${{ matrix.ubuntu }} (${{ matrix.profile }})
     runs-on: ubuntu-latest
-    container: ubuntu:latest
+    container: ubuntu:${{ matrix.ubuntu }}
     strategy:
       fail-fast: false
       matrix:
+        ubuntu: ["24.04", "latest"]
         profile: [work, personal]
     env:
       DEBIAN_FRONTEND: noninteractive
