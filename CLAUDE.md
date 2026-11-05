@@ -217,6 +217,14 @@ sandbox). The user's `uv python install` stays blocked (python-downloads = "neve
 Terminal: the user "occasionally" uses Terminator; a spaced-out-letters screenshot (apt output) came from a terminal whose font is not a true
 monospace; README troubleshooting has the Terminator steps (profile font = JetBrainsMono Nerd Font Mono). Not reproducible from here.
 
+### Older installs keep older settings files (found on the user's real machine: the quiet-basedpyright self-test FAILED)
+install_file never overwrites, so a NEW default in a shipped settings file never reaches an existing install. migrate_user_json (setup.sh) adds the MISSING keys
+(recursive, python edit, every value the user set stays) to ~/.config/kate/lspclient/settings.json and ~/.config/kate/formatting/settings.json, with a backup under
+~/.local/share/workstation/settings-backups/<ts>/ and an undo record BEFORE the change; migrate_helix_basedpyright appends the Helix block only if the user set no
+typeCheckingMode and restores the file if the result does not parse. When you add a default to a shipped settings file, make sure an existing install receives it
+(this path), and that the self-test checks the INSTALLED file, as t_basedpyright_default does. The user's machine also still has an npm-global yaml-language-server
+(/usr/local): t_nocloud_policy FAILS on it by design; only the user can remove it.
+
 ### Kate plugins (found on the user's real machine: "all the plugins were missing")
 Kate (23.08 and 25.12, source checked) enables only 8 plugins by default (katefiletree, katesearch, kateproject, tabswitcher,
 textfilter, externaltools, lspclient, katekonsole) and stores the choice PER SESSION in the group `[Kate Plugins]` of
