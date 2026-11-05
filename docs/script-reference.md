@@ -49,7 +49,7 @@ Make your own profile by copying a file in `profiles/`; it only needs
 | Command | Purpose |
 |---|---|
 | `./setup.sh --profile NAME` | Choose the profile (remembered afterwards) |
-| `./setup.sh --undo [FILE]` | Take back an install run: replays the newest `~/workstation-undo-*.sh` (or FILE) newest-first after listing every command and asking. `--dry-run` only lists, `--yes` skips the question. Never removes APT packages. Works on the manual guide's `~/workstation-undo.sh` too |
+| `./setup.sh --undo [FILE]` | Take back an install run: replays the newest `~/workstation-setup/workstation-undo-*.sh` (or FILE) newest-first after listing every command and asking. `--dry-run` only lists, `--yes` skips the question. Never removes APT packages. Works on the manual guide's `~/workstation-setup/workstation-undo.sh` too (and on undo files that earlier versions left in `~`) |
 | `./setup.sh --reset-shell` | For someone coming from **zsh / Oh My Zsh** (this setup is for bash): moves their zsh files (`~/.oh-my-zsh`, `~/.zshrc`, `~/.zshenv`, `~/.zsh_history`, ...) into `~/workstation-shell-backup-<time>/` (nothing is deleted; symlinks are moved as links), copies `~/.bashrc` / `~/.profile` from `/etc/skel` if missing, and makes bash the login shell (`sudo usermod -s /bin/bash`, effective at the next login). Lists every change first and asks (`--dry-run` only lists, `--yes` skips the question); `./setup.sh --undo` takes it back. The `zsh` package is never removed. An explicit one-off command like `--undo`: not part of an install, and `--full` does not turn it on |
 | `./setup.sh --full` | The **full setup**: switch on every opt-in system change (services, `/etc` drop-ins, groups, GNOME settings, `~/.bashrc` loader, git defaults, browser policies). Switches you set yourself in the environment still win. Also `FULL_SETUP=1`. Asks for confirmation in a terminal. Combine with `--explain`/`--check` to preview. Pass it to `--self-test` too so the extra changes are verified |
 | `./setup.sh --explain` | Plain-language tour of every step this profile runs: what it does, why, where it changes things; plus which system changes are on or off. Changes nothing, needs no network |
@@ -83,10 +83,18 @@ Precedence of settings: environment > lock (versions only) > profile >
 `workstation.conf` > module defaults. For example
 `INSTALL_DOCKER=1 ./setup.sh` overrides everything for one run.
 
+**The records folder.** Everything the setup writes for you to read goes into one folder, `~/workstation-setup/`
+(`WS_OUT_DIR=/some/folder` in the environment picks another one): the cheat sheet `WORKSTATION-CHEATSHEET.md`,
+`workstation-undo-<time>.sh`, `workstation-manifest-<time>.txt` with `workstation-manifest-latest.txt`, and
+`workstation-setup-<time>.log`. Earlier versions left these loose in `~`; an install run moves them in (never overwriting
+anything there). The setup never edits your existing `~/.bashrc.d/10-workstation.sh`; if that earlier version still looks for
+`~/WORKSTATION-CHEATSHEET.md`, a link is left there (recorded for `--undo`) and can be deleted once you replace the file.
+The `--reset-shell` backup folder (`~/workstation-shell-backup-<time>/`) stays where it is: it holds your own zsh files.
+
 ### Starter files in projects
 
 `ws-init` copies the generic starter files (editorconfig, clang-format/tidy,
-clangd, pre-commit, ruff, host CMake presets) into the current project and
+clangd, pre-commit, ruff, `pyrightconfig.json` with the Python type-checker level "standard", host CMake presets) into the current project and
 never overwrites. Modules add their own set: `ws-init --embedded` also copies
 CMake cross toolchain files and ARM/RISC-V presets (included from
 `CMakePresets.json`). `ws-init --list` shows what is installed.
@@ -105,18 +113,23 @@ CMake cross toolchain files and ARM/RISC-V presets (included from
 
 APT packages are not pinned (that would block Ubuntu security updates); each
 machine's exact package versions are recorded in its manifest
-(`~/workstation-manifest-latest.txt`), so two machines can be compared with
+(`~/workstation-setup/workstation-manifest-latest.txt`), so two machines can be compared with
 `diff`.
 
 ## Policies (fixed, no switch, every profile)
 
 **No cloud.** Downloading during installation is allowed. Afterwards, no tool
 contacts external services: cloud-connected tools aren't installed, update
-checks and telemetry are disabled, and uv/pip/cargo/podman work only from
-local caches filled during installation (see `files/home/.bashrc.d/20-offline.sh`).
+checks and telemetry are disabled by the tools' own settings, and podman never pulls an image on its own.
+**You are never blocked from the network** (your decision): a command you type yourself (`uv add`, `uv pip install`,
+`cargo add`, `podman pull`) works. The local caches (wheelhouse, crate cache, images) are filled during installation for
+a machine that will have no network. The strict lock that limits `uv`, `pip` and `cargo` to those caches
+(`files/home/.bashrc.d/20-offline.sh`, `ENFORCE_OFFLINE_ENV=1`) is opt-in, for air-gapped or policy machines; it also blocks
+what you type yourself, because it is an environment setting of your terminal. An install that predates this decision
+may still have the file: `rm ~/.bashrc.d/20-offline.sh`.
 The shell files in `~/.bashrc.d` load in name order: `10-workstation.sh` (PATH, history, integrations),
 `15-oh-my-bash.sh` (opt-in), `16-aliases.sh` (the everyday aliases; after Oh My Bash on purpose, because
-Oh My Bash replaces `ls`/`ll`/`la`/`grep`), `20-offline.sh` (the offline lock).
+Oh My Bash replaces `ls`/`ll`/`la`/`grep`), `20-offline.sh` (the opt-in strict offline lock).
 The self-test verifies this, including one check per desktop app.
 
 For apps that are networked by nature (browser, mail): traffic *you* direct to
@@ -155,7 +168,7 @@ use `--no-upgrade`), no
 package-owned config file is edited, and kernel, boot, coreutils and APT
 sources are untouched. Only new files are added in `/etc`, existing ones are
 never overwritten. Every change is recorded in
-`~/workstation-undo-<timestamp>.sh`. Debs from the Ubuntu archive only: the
+`~/workstation-setup/workstation-undo-<timestamp>.sh`. Debs from the Ubuntu archive only: the
 desktop module installs no snaps and no Flatpaks.
 
 **Ubuntu releases.** `SUPPORTED_UBUNTU` in `workstation.conf` lists the LTS releases the setup is
@@ -177,15 +190,16 @@ after checking it against the `SHASUMS256.txt` the project publishes. No APT rep
 `NODE_LTS_VERSION` pins a release (the lock does it), `NODE_FROM_ARCHIVE=1` uses Ubuntu's own
 `nodejs`/`npm`, which is also the fallback if the download fails. System components (Python, gcc,
 glibc, systemd) always stay the archive version.
-**uv, Helix and starship** (no LTS line) follow the same rule, also your decision: the newest *upstream*
+**uv, Helix, starship, rustup and lazygit** (no LTS line) follow the same rule, also your decision: the newest *upstream*
 release wins over an older archive package. Each is unpacked into your home directory (`~/.local/bin`; Helix in
 `~/.local/opt/helix-<version>`, linked from `~/.local/bin/hx`), uv and starship after checking the checksum
-their project publishes, Helix on trust-on-first-use because it publishes none. `UV_VERSION`, `HELIX_VERSION` and
-`STARSHIP_VERSION` pin a release (the lock does it); `UV_FROM_ARCHIVE=1`, `HELIX_FROM_ARCHIVE=1` and
-`STARSHIP_FROM_ARCHIVE=1` prefer Ubuntu's package; `ALLOW_CURL_INSTALLERS=0` forbids the downloads (Ubuntu's package
+their project publishes, Helix on trust-on-first-use because it publishes none. `UV_VERSION`, `HELIX_VERSION`,
+`STARSHIP_VERSION`, `RUSTUP_VERSION` and `LAZYGIT_VERSION` pin a release (the lock does it); `UV_FROM_ARCHIVE=1`,
+`HELIX_FROM_ARCHIVE=1`, `STARSHIP_FROM_ARCHIVE=1`, `RUSTUP_FROM_ARCHIVE=1` and `LAZYGIT_FROM_ARCHIVE=1` prefer Ubuntu's package; `ALLOW_CURL_INSTALLERS=0` forbids the downloads (Ubuntu's package
 is used). Ubuntu's package is also the fallback if a download fails, and then the summary lists it as "newest
 release (used the archive's)". A tool you already have is left alone; `--upgrade` installs the newest release in
-`~/.local/bin`, in front of any package from Ubuntu (never removed). `rustup` and `lazygit` still prefer the archive.
+`~/.local/bin` (rustup: `~/.cargo/bin`, updated in place), in front of any package from Ubuntu (never removed). rustup is
+`rustup-init` with its published `.sha256`; the Rust toolchain itself is always the newest stable (`RUST_TOOLCHAIN`).
 
 **Checksums.** Where the project publishes a checksum (uv, rustup-init, starship, lazygit,
 probe-rs, the Nerd Font, Node.js), the download is compared with *that* and a mismatch is refused. If the
@@ -242,4 +256,4 @@ mismatch is refused (`fetch_published`): uv, rustup (`rustup-init`), starship, t
 (`SHA-256.txt`), probe-rs and lazygit (`checksums.txt`). For the rest (the Helix tarball) the
 SHA-256 is recorded on first use and pinned by `--lock` (`fetch_verified`). The release tag of a
 `latest/download` URL is read from its redirect, so no GitHub API call is needed. `PROBE_RS_PREBUILT=0`
-compiles probe-rs with cargo instead; `lazygit` is taken from its release where the archive has none.
+compiles probe-rs with cargo instead; `lazygit` is taken from its release (the newest upstream release wins over the archive's).

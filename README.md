@@ -57,7 +57,7 @@ machine?" before the step-by-step part shows how.
 | Zone | What happens there | Needs `sudo`? |
 |---|---|---|
 | **1. Packages** | Programs from the Ubuntu archive are installed with `apt`. Nothing is removed, nothing already installed is upgraded, no repositories or PPAs are added, no snaps or Flatpaks. (APT may still pull newer versions of the *libraries* a new program needs; that is how dependencies work.) | yes, for `apt` |
-| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix, starship; the newest upstream release wins over Ubuntu's older package), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
+| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix, starship, lazygit; the newest upstream release wins over Ubuntu's older package), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
 | **3. The system itself** | **Nothing by default.** Only the opt-in changes in the table below, and only the ones you switch on. | yes, per change |
 
 ### Opt-in changes to the system and to your login files
@@ -79,7 +79,7 @@ only if you want it. The script lists them with their state:
 | `SET_GNOME_FONT` | GNOME monospace font: JetBrainsMono Nerd Font Mono 11 (JetBrains Mono 11 without B14) | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
 | `SET_GNOME_PRIVACY` | GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search in Activities | B13 | `gsettings set` back |
 | `JOIN_DOCKER_GROUP` | Adds you to group `docker` (equivalent to root; only if you install Docker) | [B9](#b9-containers-optional-install_podman-install_docker) | `gpasswd -d` |
-| `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt, offline lock) | [B10](#b10-shell-bash) | delete the block |
+| `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt) | [B10](#b10-shell-bash) | delete the block |
 | `SET_GIT_DEFAULTS` | Global git defaults, only options you have not set | [B11](#b11-git) | `git config --unset` |
 | `INSTALL_OH_MY_BASH` | Oh My Bash from one pinned commit, loaded from `~/.bashrc.d` with its update check off; replaces the starship prompt (not a system change, but opt-in) | [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default) | delete the clone and the file |
 | `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-and-personal-profiles) | `gpasswd -d` |
@@ -104,7 +104,7 @@ If you skip them, everything is still installed and works; you just
 use `sudo` where those changes would have avoided it. **One consequence
 to know about:** without the shell loader (`ENABLE_SHELL_LOADER`), the new
 shell setup is installed but not active: `~/.cargo/bin` is not on your
-`PATH` and the offline lock for `uv`/`pip`/`cargo` does not apply to your
+`PATH` and the aliases and prompt do not apply to your
 shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
 ### Which Ubuntu releases do I need?
@@ -123,12 +123,12 @@ starship, probe-rs, the Nerd Font) is the newest version on either release. What
 | Podman / eza / fzf | 4.9 / 0.18 / 0.44 | 5.7 / 0.23 / 0.67 |
 | Node.js in the archive (only a fallback) | 18 (end of life: the upstream LTS is used instead) | 22 |
 | RISC-V emulator | in `qemu-system-misc` | separate package `qemu-system-riscv` |
-| `lazygit` | not in the archive: taken from its release | in the archive |
+| `lazygit` | not in the archive (taken from its release on both) | older in the archive (the release is used on both) |
 | `zellij`, `difftastic` | not in the archive: skipped | not in the archive: skipped |
 | `apt history-undo` (undoing APT installs) | not available (APT 2.7) | available (APT 3) |
 
 The setup handles these differences itself (skips a package that does not exist on your release,
-takes `lazygit` from its release, installs Node.js from nodejs.org on both). Releases older than
+takes `lazygit` from its release on both, installs Node.js from nodejs.org on both). Releases older than
 24.04 are refused: their tools are too old. A release newer than 26.04 asks for confirmation:
 run `./setup.sh --check` first.
 
@@ -140,13 +140,12 @@ run `./setup.sh --check` first.
 | `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release (one folder per version) |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
-| `~/.config/kate` | Kate's language-server settings |
+| `~/.config/kate`, `~/.local/share/kate` | Kate's language-server and formatting settings; its plugin selection (the `[Kate Plugins]` group of the session files) |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
 | `~/.bashrc.d` | shell setup files, loaded in name order (`10-workstation.sh`, `15-oh-my-bash.sh`, `16-aliases.sh`, `20-offline.sh`, `30-embedded.sh`) |
 | `~/.local/share/workstation` | project starter files, Python wheelhouse, Rust crate cache, download checksums, SPICE kernels |
-| `~/WORKSTATION-CHEATSHEET.md` | the cheat sheet (`ws-help`) |
-| `~/workstation-undo.sh`, `~/workstation-manifest-*.txt` | your undo commands, the record of what was installed |
+| `~/workstation-setup/` | **one folder for everything the setup writes for you to read**: `WORKSTATION-CHEATSHEET.md` (`ws-help`), `workstation-undo-<time>.sh` (your undo commands), `workstation-manifest-<time>.txt` plus `workstation-manifest-latest.txt` (the record of what was installed) and `workstation-setup-<time>.log`. Nothing of this sits loose in `~`; `WS_OUT_DIR=/some/folder ./setup.sh` picks another folder. Earlier versions left these files in `~`: the next run moves them here and never overwrites anything. |
 
 ### When the network is used
 
@@ -160,8 +159,11 @@ run `./setup.sh --check` first.
   container registry) and, if you choose, the SPICE kernels.
 - **Afterwards (not allowed unless you ask):** nothing connects by itself.
   Update checks, telemetry and online lookups of the installed tools are
-  switched off, and `uv`, `pip`, `cargo` and `podman` work only from the
-  local caches. Parts of Ubuntu itself (apt, snapd, time sync) are outside
+  switched off by their own settings (and `podman` never pulls an image on its own).
+  **You are never blocked from the network**: when you type `uv add`, `uv pip install`,
+  `cargo add` or `podman pull` yourself, it works. (A strict lock that limits `uv`, `pip` and
+  `cargo` to the local caches exists for air-gapped or policy machines: [D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default),
+  off by default.) Parts of Ubuntu itself (apt, snapd, time sync) are outside
   this guide; see [Still network-connected](#still-network-connected-os-level).
 
 ### What it never does
@@ -208,10 +210,16 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   unverified downloads); both are fixed and the second run passed all eight. The install
   step took 10 to 19 minutes, once 51 minutes on a slow runner.
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
-  (the 24.04 archive has Node 18, which is end of life). **uv and Helix come from their projects' releases
-  too** (checked in all eight jobs: uv 0.13.7 and Helix 25.07.1 landed in `~/.local`, none fell back to Ubuntu's
-  package); a third eight-job run on the code with the upstream-first rule passed all 12 phases everywhere (self-test
-  33 and 36 passed on the VM, 32 and 35 in the container, 0 failed). The ARM and RISC-V programs run
+  (the 24.04 archive has Node 18, which is end of life). **uv, Helix, lazygit and rustup come from their
+  projects' releases too** (checked in every job: uv 0.13.7, Helix 25.07.1 and lazygit 0.66.2 landed in `~/.local`, rustup
+  1.29.3 in `~/.cargo` in the container jobs (a runner VM ships its own rustup, which the setup leaves alone); none fell back
+  to Ubuntu's package). The latest full run (eight jobs, 12 phases each, on the final code) passed everywhere: self-test 33
+  and 36 passed in the container (`work`, `personal`) and 34 and 37 on the VM, 0 failed. It checks, against the real
+  programs, that a default install does **not** block `uv`/`cargo` in a new shell (the strict offline lock is opt-in), that
+  Kate starts with its plugin set (every plugin exists in Kate 23.08 and 25.12 and is switched on), that `ws-pyformat` formats
+  with the real ruff, and that the real `basedpyright-langserver`, started the way Kate does, is quiet on a small untyped
+  file. One earlier run lost the probe-rs download to GitHub's HTTP 504 in five of eight jobs at the same moment (a GitHub
+  hiccup, handled as designed: the step was reported as failed); downloads now retry for about a minute. The ARM and RISC-V programs run
   in QEMU (RISC-V through `qemu-system-misc` on 24.04, `qemu-system-riscv` on 26.04). An
   eleventh phase plays a zsh user: it installs a real `zsh`, makes it the login shell, runs
   `./setup.sh --reset-shell` (the zsh files go to a backup folder, the login shell becomes bash
@@ -241,8 +249,8 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   run above). The same run confirmed that `ws-doctor` finds the tools installed in
   `~/.local/bin` without the shell loader.
 - **Package names:** all checked against the real Ubuntu 24.04 and 26.04
-  archives. Only `lazygit` (24.04 only), `zellij` and `difftastic` are missing
-  (the guide and script have a fallback for lazygit and skip the others).
+  archives. Only `zellij` and `difftastic` are missing (skipped); `lazygit`, which is missing from
+  24.04's archive, is no longer a package at all: it comes from its release.
   26.04 renamed or split three packages, which the lists now use: `7zip` (was
   `p7zip-full`), `qemu-user` + `qemu-user-binfmt` (was `qemu-user-static`) and
   `qemu-system-riscv` (split from `qemu-system-misc`; on 24.04 it does not exist and
@@ -286,7 +294,7 @@ machine ends up in the same state.
      coreutils or APT sources.
 3. **Everything reversible.** Each section ends with an **Undo** line. The
    helpers in A2 also append the undo commands for the files you create to
-   `~/workstation-undo.sh`.
+   `~/workstation-setup/workstation-undo.sh`.
 4. **Latest stable, long-term-supported versions.** Ubuntu: the newest LTS, or any
    older LTS release this guide supports (24.04 and 26.04 today): you do **not**
    have to upgrade your system to use it. For software with an LTS line the
@@ -318,9 +326,8 @@ machine ends up in the same state.
 - Some tools may be absent from your Ubuntu release's archive. The
   `apt_install` helper in A2 skips and tells you about missing packages,
   like the script does.
-- Do the steps in order. In particular, **D4 (lock-down) comes last** on
-  purpose: it makes your shell refuse downloads, which would break the
-  downloads in the earlier steps.
+- Do the steps in order. D4 (the strict offline lock) is **optional and off by default**: you are not
+  blocked from the network. If you do choose it, do it **last**, because it makes your shell refuse downloads.
 
 ---
 
@@ -364,7 +371,8 @@ cat > ~/ws-manual-helpers.sh <<'EOF'
 # Source this file:  . ~/ws-manual-helpers.sh   (run from the repository root first: export WS=$PWD)
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 WS="${WS:-$PWD}"
-UNDO="$HOME/workstation-undo.sh"
+UNDO="$HOME/workstation-setup/workstation-undo.sh"
+mkdir -p "$HOME/workstation-setup"
 [ -e "$UNDO" ] || { printf '#!/usr/bin/env bash\n# Undo commands, newest last. REVIEW before running; run lines in reverse order.\n' > "$UNDO"; chmod +x "$UNDO"; }
 record_undo() { printf '%s\n' "$*" >> "$UNDO"; }
 
@@ -448,7 +456,7 @@ Notes:
   tarball): it records the SHA-256 of what you downloaded, so compare it
   with the publisher's value if your process requires it; keep
   `~/.local/share/workstation/download-hashes.txt` as your record.
-- `ws-manual-helpers.sh` and `workstation-undo.sh` are your own records;
+- `ws-manual-helpers.sh` and `~/workstation-setup/workstation-undo.sh` are your own records;
   keep them.
 
 ## A3. Package lists and prerequisites
@@ -557,16 +565,16 @@ fi
 GNOME-level privacy settings (location, automatic time zone, problem
 reports, web search in the Activities overview) are in [B13](#b13-desktop-gnome-settings).
 
-Undo: the `record_undo` lines above; the commands are in `~/workstation-undo.sh`.
+Undo: the `record_undo` lines above; the commands are in `~/workstation-setup/workstation-undo.sh`.
 
 ## A7. Coming from zsh or Oh My Zsh *(only if you use zsh)*
 
 *Mirrors `./setup.sh --reset-shell`, function `reset_shell_mode`.*
 
 Everything in this guide is for **bash**: the aliases, the prompt, the history settings, the
-`fzf`/`zoxide`/`direnv`/`starship` hooks and above all the offline lock for `uv`, `pip` and `cargo`
-(D4) live in `~/.bashrc.d` and are loaded by `~/.bashrc`. A zsh session never reads them, so in zsh
-the tools are installed but the shell experience and **the offline protection are missing**.
+`fzf`/`zoxide`/`direnv`/`starship` hooks (and the optional strict offline lock of D4, if you
+chose it) live in `~/.bashrc.d` and are loaded by `~/.bashrc`. A zsh session never reads them, so in zsh
+the tools are installed but the shell experience is missing (and the strict lock, if you chose it, does not apply).
 If you use zsh (often with Oh My Zsh) and want this setup, the simplest honest route is to go back
 to bash first. This section is that "factory reset" for the shell. **Nothing is deleted**: your zsh
 files are *moved* into a backup folder, and every step is recorded for undo. Do it once, before
@@ -621,7 +629,7 @@ apt_install \
   git git-lfs wget unzip zip 7zip xz-utils zstd rsync tree file \
   distro-info htop btop jq yq ripgrep fd-find bat eza zoxide fzf direnv \
   tealdeer hyperfine entr just tmux bash-completion shellcheck shfmt \
-  yamllint git-delta lazygit moreutils pv ncdu libxml2-utils \
+  yamllint git-delta moreutils pv ncdu libxml2-utils \
   fonts-jetbrains-mono wl-clipboard xclip
 ```
 
@@ -632,9 +640,12 @@ setup in B10 adds the familiar aliases.)
 `wl-clipboard` (Wayland) and `xclip` (X11) are what Helix uses to reach the
 system clipboard (`Space y` / `Space p`).
 
-**lazygit** is not in every Ubuntu release (it is missing in 24.04). If
-`apt_install` reported it as not in the archive, take it from the project's
-release, checked against the `checksums.txt` the project publishes:
+**lazygit**: **the newest upstream release wins** over Ubuntu's package (your decision, as for Node.js
+in B7; it is missing from the 24.04 archive and older in 26.04's), so it is not in the `apt_install` list above. Take it
+from the project's release, checked against the `checksums.txt` the project publishes. The script falls back
+to Ubuntu's package (`apt_install lazygit`) only if the download fails; `LAZYGIT_FROM_ARCHIVE=1` prefers it; an existing
+lazygit is left alone, and `--upgrade` installs the newest release in `~/.local/bin`. `LAZYGIT_VERSION` (the lock) pins a
+release: use `.../releases/download/<tag>` as `base`.
 
 ```bash
 command -v lazygit || {
@@ -744,13 +755,14 @@ Undo: `uv tool uninstall <name>` for each tool; `rm -f ~/.local/bin/uv ~/.local/
 
 *Mirrors `step "Rust toolchain"`, function `rust_toolchain`.*
 
-**rustup**: from the archive if available, else `rustup-init` itself, checked
-against the `.sha256` the Rust project publishes (instead of the
+**rustup**: **the newest upstream release wins** over Ubuntu's package (your decision, as for Node.js
+in B7): `rustup-init` itself, checked against the `.sha256` the Rust project publishes (instead of the
 `sh.rustup.rs` script that downloads it). `--default-toolchain none`
-installs only rustup itself; `--no-modify-path` leaves your shell files alone.
+installs only rustup itself; `--no-modify-path` leaves your shell files alone. The script falls back to Ubuntu's
+package (`apt_install rustup`) only if the download fails; `RUSTUP_FROM_ARCHIVE=1` prefers it; an existing rustup is
+left alone. `RUSTUP_VERSION` (the lock) pins a release: use `.../rustup/archive/<version>/<arch>/rustup-init`.
 
 ```bash
-command -v rustup || apt_install rustup
 command -v rustup || {
   url=https://static.rust-lang.org/rustup/dist/$(uname -m)-unknown-linux-gnu/rustup-init
   download_verified "$url" "$url.sha256" rustup-init /tmp/rustup-init
@@ -886,11 +898,13 @@ SHA-256 and the lock pins it afterwards). The script falls back to Ubuntu's pack
 (`apt_install helix`) only if the download fails; `HELIX_FROM_ARCHIVE=1` prefers it; an existing Helix is
 left alone, and `--upgrade` installs the newest release in `~/.local/bin`, in front of any package from Ubuntu.
 
-Configuration. `languages.toml` does two important things: it disables the
+Configuration. `languages.toml` does three important things: it disables the
 JSON and YAML language servers (their defaults download schemas from the
-internet; highlighting still works, validate with `jq`/`yamllint`), and it
+internet; highlighting still works, validate with `jq`/`yamllint`), it
 stops C/C++ auto-formatting on save so legacy code does not produce huge
-diffs.
+diffs, and it sets the Python type checker (basedpyright) to the **"standard"** level
+(see the note on levels in [B16](#b16-kate-editor-optional-install_kate-default-on)). Helix reads
+the file when it starts, so a Helix that is already open needs a restart.
 
 ```bash
 put "$WS/files/home/.config/helix/config.toml"    ~/.config/helix/config.toml
@@ -945,8 +959,7 @@ created for you (your own `~/.bashrc`, not a package-owned file under
 loads them: add this line to `~/.bashrc` yourself when you are ready (or load
 them by hand with `. ~/.bashrc.d/10-workstation.sh`):
 `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f`.
-Until then `~/.cargo/bin` is not on your `PATH`, and the aliases, prompt and
-offline lock are not active.
+Until then `~/.cargo/bin` is not on your `PATH`, and the aliases and the prompt are not active.
 
 ```bash
 mkdir -p ~/.bashrc.d
@@ -982,8 +995,8 @@ put "$WS/files/home/.local/bin/ws-init"          ~/.local/bin/ws-init 755
 put "$WS/files/home/.local/bin/ws-doctor"        ~/.local/bin/ws-doctor 755
 ```
 
-(`20-offline.sh`, the runtime no-cloud lock, is installed last, in
-[D4](#d4-enforce-the-offline-environment).)
+(`20-offline.sh`, the optional strict offline lock, is not part of the default install; see
+[D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default).)
 
 **Prompt (starship)** *(optional: `INSTALL_STARSHIP`; skip it if you use
 Oh My Bash, [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default))*.
@@ -1006,18 +1019,19 @@ if command -v starship >/dev/null && [ ! -e ~/.config/starship.toml ]; then
 fi
 ```
 
-**Cheat sheet.** `ws-help` shows `~/WORKSTATION-CHEATSHEET.md`. It is
+**Cheat sheet.** `ws-help` shows `~/workstation-setup/WORKSTATION-CHEATSHEET.md`. It is
 assembled from the core part, one part for each optional part you install
 (C1/C2), and the maintenance part. Do this now for the core and **repeat
 it after C1/C2** with their parts added (the commented lines):
 
 ```bash
+mkdir -p ~/workstation-setup
 {
   cat "$WS/files/cheatsheet/00-core.md"
   # echo; cat "$WS/modules/embedded/files/cheatsheet.md"    # after C1
   # echo; cat "$WS/modules/desktop/files/cheatsheet.md"     # after C2
   echo; cat "$WS/files/cheatsheet/99-maintenance.md"
-} > ~/WORKSTATION-CHEATSHEET.md
+} > ~/workstation-setup/WORKSTATION-CHEATSHEET.md
 ```
 
 (The maintenance part describes `setup.sh` commands; they are optional for
@@ -1068,7 +1082,8 @@ put "$WS/files/home/.config/lazygit/config.yml" ~/.config/lazygit/config.yml
 
 These are reference copies that `ws-init` copies into your projects
 (`.editorconfig`, `.clang-format`, `.clang-tidy`, `.clangd`, an
-**offline-only** pre-commit config, `ruff.toml`, host CMake presets). They
+**offline-only** pre-commit config, `ruff.toml`, `pyrightconfig.json` (the Python type-checker level, see
+[B16](#b16-kate-editor-optional-install_kate-default-on)), host CMake presets). They
 live in `~/.local/share/workstation/templates/generic/`:
 
 ```bash
@@ -1195,12 +1210,56 @@ Flatpak), and being a KDE program it brings in a set of KDE libraries. Skip
 this section on a machine without a desktop. In Kate's build files (checked in
 its repository) I found no telemetry or update-check dependency; only use its
 "download"/"get new" buttons if you accept an online request. The script runs
-this after Helix; the order does not matter.
+this after Helix; the order does not matter. `konsole-kpart` (about 2 MB) is what Kate's built-in
+terminal panel (the *Terminal* tab at the bottom) needs; Kate only *suggests* it, so APT does not install it on its
+own, and without it the panel says "Konsole not installed". It is the embedded terminal part, not the Konsole
+application, and it has no network features.
 
 ```bash
-apt_install kate
+apt_install kate konsole-kpart
 put "$WS/files/home/.config/kate/lspclient/settings.json" ~/.config/kate/lspclient/settings.json
+put "$WS/files/home/.config/kate/formatting/settings.json" ~/.config/kate/formatting/settings.json
+put "$WS/files/home/.local/bin/ws-pyformat" ~/.local/bin/ws-pyformat 755
 ```
+
+**Plugins.** Kate ships about 30 plugins but switches on only 8 by default (documents tree, search,
+projects, tab switcher, text filter, external tools, LSP client, terminal), and it keeps the choice **per
+session**. The script switches on a set for C/C++/Rust/Python/embedded work, in addition: **Build** (cmake, ninja,
+make, with the compiler errors parsed), **CMake Tools**, **Debugger** (gdb), **Symbol Viewer**, **Snippets**,
+**Formatting** (clang-format and friends, on request), **Git Blame** (your local git), **File System Browser** and
+**Colored Brackets**. It keeps two OFF on purpose, whatever the session says: **Compiler Explorer** (sends your code
+to godbolt.org) and **XML Validation** (runs `xmllint` without `--nonet`, so it can fetch the schemas a document
+names). All the others stay as they are. Nothing in the switched-on set contacts the internet (checked in Kate's
+source; Snippets' "Get new snippets" button only does so when you press it).
+
+**Formatting.** The Format plugin formats a file **when you save it** unless told otherwise, which would
+reformat your code, JSON and XML behind your back; and for Python it only knows `autopep8`, which is not installed
+(Kate then shows "autopep8 is not installed, please install it to be able to format this document!" on every
+save). `~/.config/kate/formatting/settings.json` therefore turns format-on-save **off** (for `clang-format` too, which
+switches it on for itself) so you format when you ask (the *Tools > Format* entries), and points Kate's `autopep8` entry
+at `~/.local/bin/ws-pyformat`, a three-line script that formats with **ruff**, the formatter your `pre-commit` hooks
+and `ruff format` use. C/C++ uses `clang-format`, Rust `rustfmt`, JSON `jq`, as Kate has it. Turn format-on-save back on in
+that file (`"formatOnSave": true`) if you want it.
+
+By hand: *Settings > Configure Kate > Plugins*, tick the ones above. The script does the same by editing the
+`[Kate Plugins]` group (keys like `katebuildplugin=true`, the plugin's file name) of
+`~/.local/share/kate/anonymous.katesession` (the session you get when you just start Kate) and of your named sessions
+in `~/.local/share/kate/sessions/*.katesession`. It changes only those keys, backs each file up under
+`~/.local/share/workstation/kate-backups/` first, and `--undo` restores it. **Quit Kate first**: it rewrites these
+files when it quits. A session you create later starts with Kate's 8 defaults again; switch the plugins on there once
+the same way.
+
+**How strict is the Python checker?** The Python server is **basedpyright**, and its own default level,
+"recommended", is very strict: ordinary, working, untyped code (and anything built on a library that ships no type
+hints, such as pandas without `pandas-stubs`) shows a page of red errors such as "Type of ... is unknown" and "Type
+annotation is missing for parameter ...". Both editors are therefore given the level **"standard"** (pyright's own
+default), for every project: in Kate through the `settings` block of the Python entry in the settings file below, in
+Helix through `languages.toml`. A project that wants more says so itself and wins: `pyrightconfig.json` (which
+`ws-init` copies into new projects, containing `"typeCheckingMode": "standard"`) or a `[tool.basedpyright]` section in
+`pyproject.toml`, with `"recommended"`, `"strict"` or `"all"`. The command line `basedpyright` reads the project file
+only, so it also needs that file (or `basedpyright --level`) to be as relaxed as the editors. The self-test starts the
+real language server the way Kate does (both Kate versions pass settings differently) and checks that a small untyped
+but working file comes out clean.
 
 The settings file points Kate's built-in language-server client at local
 servers: basedpyright (Python), cmake-language-server, taplo (TOML). Kate supports
@@ -1224,7 +1283,7 @@ reports them, with where each one comes from. To find out yourself:
 `npm ls -g` (npm global) or `snap list` (snap). Remove it with the tool that installed it, after
 checking what else needs it (`apt rdepends --installed <package>`); the setup itself never removes anything.
 
-Undo: `rm ~/.config/kate/lspclient/settings.json`; the package via APT history.
+Undo: `rm ~/.config/kate/lspclient/settings.json ~/.config/kate/formatting/settings.json ~/.local/bin/ws-pyformat`; the package via APT history.
 
 ---
 
@@ -1456,10 +1515,11 @@ Re-do the cheat sheet command in B10 with the `desktop` line enabled.
 
 ---
 
-# Part D. Offline caches and lock-down
+# Part D. Offline caches and the optional strict lock
 
-Everything below is **downloaded now, used offline later**. After D4,
-`uv`, `pip`, `cargo` and `podman` work only from these local caches.
+Everything below is **downloaded now, available offline later** (useful on a machine that will have no
+network). **You are not blocked from the network**: `uv`, `pip`, `cargo` and `podman` work as usual and fetch
+what you ask for. Only if you choose the strict lock in D4 do they work from these local caches alone.
 
 ## D1. Python wheelhouse *(optional: `CACHE_PYTHON`)*
 
@@ -1521,11 +1581,17 @@ when you cache images. A `podman run`/`distrobox create` that names a missing im
 fails instead of downloading; an explicit `podman pull` (as above) still works. If you
 skipped B9, run its `containers.conf` block now.
 
-## D4. Enforce the offline environment
+## D4. The strict offline lock *(optional: `ENFORCE_OFFLINE_ENV`, **off by default**)*
 
 *Mirrors `files/home/.bashrc.d/20-offline.sh` (switch `ENFORCE_OFFLINE_ENV`).
 The script installs it early but clears these variables for its own run; by
 hand, install it **last**.*
+
+**You do not need this section.** By default you are never blocked from the network: `uv add`,
+`uv pip install`, `cargo add`, `pip install` fetch what *you* ask for, and the tools' own background
+network features (update checks, telemetry, implicit Python or image downloads) stay switched off by
+their own settings. The lock below is for an air-gapped or policy machine. Be aware of what it does: it is
+an environment setting of your terminal, so it also blocks the commands you type yourself.
 
 ```bash
 less "$WS/files/home/.bashrc.d/20-offline.sh"
@@ -1535,10 +1601,10 @@ put  "$WS/files/home/.bashrc.d/20-offline.sh" ~/.bashrc.d/20-offline.sh
 It exports `UV_OFFLINE=1`, `PIP_NO_INDEX=1`, `CARGO_NET_OFFLINE=true` and
 points uv/pip at the wheelhouse. It only takes effect in shells that load
 `~/.bashrc.d`, i.e. after the loader from [B10](#b10-shell-bash)
-(opt-in `ENABLE_SHELL_LOADER`) is in place. To fetch something deliberately (for
-example from an internal mirror approved by your IT), override for one
+(opt-in `ENABLE_SHELL_LOADER`) is in place. With the lock on, override for one
 command only: `UV_OFFLINE=0 uv add <pkg>` or `CARGO_NET_OFFLINE=false cargo update`.
-Remove the file to switch the enforcement off.
+Remove the file (`rm ~/.bashrc.d/20-offline.sh`) and open a new terminal to switch the lock off; an older
+install of this setup had it on by default, so you may have it: the setup never deletes your files.
 
 ---
 
@@ -1646,7 +1712,7 @@ npm config get update-notifier                                 # false
 grep 'pull_policy = "never"'  ~/.config/containers/containers.conf
 grep '^export DISABLE_AUTO_UPDATE=true' ~/.bashrc.d/15-oh-my-bash.sh   # only if you did B15
 fc-list : family | grep 'JetBrainsMono Nerd Font Mono'                 # only if you did B14
-env | grep -E '^(UV_OFFLINE|PIP_NO_INDEX|CARGO_NET_OFFLINE)='  # all three set (D4)
+env | grep -E '^(UV_OFFLINE|PIP_NO_INDEX|CARGO_NET_OFFLINE)='  # only with the strict lock of D4: all three set; by default none
 grep -Eq 'repo:[[:space:]]*https?://' ~/.local/share/workstation/templates/generic/.pre-commit-config.yaml || echo "pre-commit template: local hooks only"
 python3 -I - <<'EOF'
 import tomllib, os
@@ -1677,7 +1743,8 @@ be fully isolated; they should point at internal infrastructure:
 file you can keep and `diff` against another machine:
 
 ```bash
-m=~/workstation-manifest-$(date +%Y%m%d).txt
+mkdir -p ~/workstation-setup
+m=~/workstation-setup/workstation-manifest-$(date +%Y%m%d).txt
 {
   echo "# Manifest $(date -u)"; . /etc/os-release; echo "$PRETTY_NAME, kernel $(uname -r)"
   echo "## Tools"; for t in gcc g++ clang clangd cmake ninja gdb python3 uv ruff rustc cargo rust-analyzer hx node npm podman git; do
@@ -1691,7 +1758,7 @@ m=~/workstation-manifest-$(date +%Y%m%d).txt
   echo "## Downloads outside APT"; sort -u ~/.local/share/workstation/download-hashes.txt
   echo "## APT packages"; dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' | sort
 } > "$m" 2>&1
-ln -sf "$m" ~/workstation-manifest-latest.txt
+ln -sf "$m" ~/workstation-setup/workstation-manifest-latest.txt
 ```
 
 To compare two machines (or a manual and a scripted setup):
@@ -1730,11 +1797,12 @@ the pins), run Part E, then record a new manifest.
 Each section above ended with its undo. In general:
 
 - **Files you created with `put`/`put_system`**, **gsettings**, **git
-  settings**, **services**, **npm config**, **groups**: `~/workstation-undo.sh`
+  settings**, **services**, **npm config**, **groups**: `~/workstation-setup/workstation-undo-<time>.sh`
   contains one command per change, newest last. See them newest first with
-  `grep -vE '^(#|set -x)' ~/workstation-undo.sh | tac`, then run the lines you
+  `grep -vE '^(#|set -x)' ~/workstation-setup/workstation-undo-*.sh | tac`, then run the lines you
   want. With the script it is one command that shows everything first and
-  asks before it runs anything: `./setup.sh --undo ~/workstation-undo.sh`
+  asks before it runs anything: `./setup.sh --undo` (the newest file in that folder;
+  or `./setup.sh --undo FILE`)
   (add `--dry-run` to only list).
 - **Packages from APT**: use APT's history on newer APT (`apt history-list`,
   then `sudo apt history-undo <ID>`); with older APT, read
@@ -1745,8 +1813,8 @@ Each section above ended with its undo. In general:
   above record these for you; the script's `--undo` replays them.
 - **Cache folders**: `rm -rf ~/.local/share/workstation` (templates,
   wheelhouse, crate cache, hashes) and `~/.cargo/registry` for downloaded crates.
-- **Switch the offline lock off** without uninstalling anything:
-  `rm ~/.bashrc.d/20-offline.sh`.
+- **Switch the strict offline lock off** (older installs had it on by default) without uninstalling anything:
+  `rm ~/.bashrc.d/20-offline.sh`, then open a new terminal.
 
 ---
 
@@ -1757,15 +1825,17 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` on 24.04, and `zellij` and `difftastic` on both 24.04 and 26.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
+| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `zellij` and `difftastic` on both 24.04 and 26.04). Skip it, or take the project's own release if it has one. |
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
-| `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
+| `uv`, `pip` or `cargo` refuse to download ("network disabled") | You have the strict offline lock ([D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default)): an older install of this setup had it on by default. Remove it: `rm ~/.bashrc.d/20-offline.sh` and open a new terminal. Or override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
 | `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |
+| Terminal text looks **spaced out** (a gap after every letter), in Terminator or another terminal | The terminal's font is not a true monospace font for that program, or its profile uses a different font than your main terminal. In **Terminator**: right-click > *Preferences* > *Profiles* > *General* > untick *Use the system fixed width font* and pick *JetBrainsMono Nerd Font Mono* (the exact name; not the plain *Nerd Font*, not a *Propo* variant), size 11. Check what is configured with `grep -n font ~/.config/terminator/config`, and what the system calls "monospace" with `fc-match monospace`. If only one window is affected it is that window's profile; if all are, it is the profile you edited. Close the terminal and open a new one after changing it. |
+| Kate or Helix show a page of Python errors on working code ("Type of ... is unknown", "Type annotation is missing ...") | basedpyright's own default level, "recommended", is very strict. This setup sets "standard" in both editors, but an older install keeps its old settings files (the setup never overwrites yours): `install -m 644 files/home/.config/kate/lspclient/settings.json ~/.config/kate/lspclient/` for Kate (quit Kate first), and add the `[language-server.basedpyright.config.basedpyright]` block from `files/home/.config/helix/languages.toml` to `~/.config/helix/languages.toml` for Helix. For one project: put `{"typeCheckingMode": "standard"}` in its `pyrightconfig.json`. A library without type hints (pandas) also needs its stubs: `uv pip install pandas-stubs`. |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
-| I use zsh / Oh My Zsh and the aliases, the prompt or the offline lock are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
+| I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
 | Self-test: "No-cloud policy ... yaml-language-server (or vscode-json-languageserver) is installed" | That language server fetches JSON/YAML schemas from the internet and Kate would use it. This setup never installs it, so it was already on your machine; the message says where it comes from. Remove it with the tool that installed it ([B16](#b16-kate-editor-optional-install_kate-default-on)), or keep it knowingly. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
 | Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |

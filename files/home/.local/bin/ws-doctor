@@ -103,8 +103,9 @@ if [[ -f $HOME/.bashrc.d/15-oh-my-bash.sh ]]; then
   chk "$HOME/.bashrc.d/15-oh-my-bash.sh" '^export DISABLE_AUTO_UPDATE=true' "Oh My Bash update check is off"
 fi
 if [[ -f $HOME/.bashrc.d/20-offline.sh ]]; then
-  if [[ ${UV_OFFLINE:-} == 1 && ${CARGO_NET_OFFLINE:-} == true ]]; then pass "offline lock is active in this shell (uv, pip, cargo)"
-  else warn "offline lock file exists but is not active in this shell (open a new terminal?)"; fi
+  # The strict lock is opt-in (ENFORCE_OFFLINE_ENV=1). If it is installed, say what it does to YOU.
+  if [[ ${UV_OFFLINE:-} == 1 && ${CARGO_NET_OFFLINE:-} == true ]]; then pass "strict offline lock is ON: uv, pip and cargo cannot use the network in this shell (rm ~/.bashrc.d/20-offline.sh to remove it)"
+  else warn "strict offline lock file exists but is not active in this shell (open a new terminal?)"; fi
 fi
 if grep -q '^\[Account' "$(cfg)/goa-1.0/accounts.conf" 2>/dev/null; then
   warn "a GNOME Online Account is set up: it syncs in the background"

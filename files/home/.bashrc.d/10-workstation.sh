@@ -83,7 +83,8 @@ rustdocs()  { rustup doc --std; }
 
 # Show the workstation cheat sheet (works offline).
 ws-help() {
-  local f="$HOME/WORKSTATION-CHEATSHEET.md"
+  local f="${WS_OUT_DIR:-$HOME/workstation-setup}/WORKSTATION-CHEATSHEET.md"
+  [[ -r $f ]] || f="$HOME/WORKSTATION-CHEATSHEET.md"     # where earlier versions of this setup put it
   [[ -r $f ]] || { echo "Cheat sheet not found: $f"; return 1; }
   if command -v batcat >/dev/null; then
     batcat --paging=always --language=md "$f"

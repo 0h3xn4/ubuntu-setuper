@@ -3,7 +3,12 @@
     "python": {
       "command": ["basedpyright-langserver", "--stdio"],
       "url": "https://github.com/DetachHead/basedpyright",
-      "highlightingModeRegex": "^Python$"
+      "highlightingModeRegex": "^Python$",
+      "settings": {
+        "basedpyright": {
+          "typeCheckingMode": "standard"
+        }
+      }
     },
     "cmake": {
       "command": ["cmake-language-server"],

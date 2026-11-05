@@ -1,0 +1,9 @@
+{
+  "formatOnSave": false,
+  "clang-format": {
+    "formatOnSave": false
+  },
+  "autopep8": {
+    "command": ["ws-pyformat"]
+  }
+}

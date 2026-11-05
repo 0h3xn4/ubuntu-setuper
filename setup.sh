@@ -31,7 +31,7 @@
 #                                  versions, run the self-test. Then review and
 #                                  re-pin with --lock.
 #    ./setup.sh --undo [FILE]      Take back what an install run did: replays the undo
-#                                  file (newest ~/workstation-undo-*.sh by default)
+#                                  file (newest ~/workstation-setup/workstation-undo-*.sh by default)
 #                                  newest-first, after showing every command and asking.
 #                                  Add --dry-run to only list, --yes to skip the question.
 #                                  Never removes APT packages (see README, Undo).
@@ -70,7 +70,8 @@
 #    Never removes packages (apt --no-remove), never upgrades installed ones
 #    (no 'apt upgrade'; apt --no-upgrade), never edits package-owned
 #    config files, never touches kernel, boot, coreutils or APT sources.
-#    Every change is recorded in ~/workstation-undo-<timestamp>.sh.
+#    Every change is recorded in ~/workstation-setup/workstation-undo-<timestamp>.sh
+#    (that folder also holds the manifest, the log and the cheat sheet; WS_OUT_DIR changes it).
 #
 #  VERSIONS
 #    Ubuntu 24.04 LTS or 26.04 LTS (SUPPORTED_UBUNTU in workstation.conf): both are
@@ -148,8 +149,12 @@ RUST_CACHE_DIR="$DATA_DIR/rust-offline-cache"
 HASH_DB="$DATA_DIR/download-hashes.txt"
 SELFTEST_DIR="$DATA_DIR/selftest"
 SELFTEST_FILE="$DATA_DIR/selftest-results.txt"
-LOG_FILE="$HOME/workstation-setup-$TIMESTAMP.log"
-UNDO_FILE="$HOME/workstation-undo-$TIMESTAMP.sh"
+# The records of a run (undo script, manifest, log) and the generated cheat sheet live in ONE folder, not loose in
+# your home directory. WS_OUT_DIR (environment) picks another folder.
+OUT_DIR="${WS_OUT_DIR:-$HOME/workstation-setup}"
+CHEATSHEET_FILE="$OUT_DIR/WORKSTATION-CHEATSHEET.md"
+LOG_FILE="$OUT_DIR/workstation-setup-$TIMESTAMP.log"
+UNDO_FILE="$OUT_DIR/workstation-undo-$TIMESTAMP.sh"
 MANIFEST_FILE=""
 STATE_DIR="$(mktemp -d)"
 MISSING_FILE="$STATE_DIR/missing"
@@ -186,6 +191,7 @@ first_line() { timeout 15 "$@" 2>&1 | head -n1 || true; }
 record_undo() { printf '%s\n' "$*" >> "$UNDO_FILE"; }
 
 init_undo_file() {
+  mkdir -p "$OUT_DIR"
   cat > "$UNDO_FILE" <<EOF
 #!/usr/bin/env bash
 # Undo script for workstation-setup, run at $TIMESTAMP
@@ -378,7 +384,7 @@ add_to_groups() {
 fetch_verified() {
   local url="$1" dest="$2" tmp sum pinned
   tmp="$(mktemp)"
-  if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$tmp"; then
+  if ! curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$url" -o "$tmp"; then
     rm -f "$tmp"; warn "Download failed: $url"; return 1
   fi
   sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
@@ -410,7 +416,7 @@ fetch_verified() {
 fetch_published() {
   local url="$1" dest="$2" sumurl="$3" name="${4:-}" tmp sums expected actual
   tmp="$(mktemp)"
-  if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$tmp"; then
+  if ! curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$url" -o "$tmp"; then
     rm -f "$tmp"; warn "Download failed: $url"; return 1
   fi
   # The project publishes this checksum, so it MUST be reachable. A network hiccup is retried; if it still fails
@@ -418,7 +424,7 @@ fetch_published() {
   # tampered file accepted). Only a SHA-256 pinned in the lock file can stand in for it.
   local try=1 tries="${FETCH_SUMS_TRIES:-4}" delay="${FETCH_SUMS_DELAY:-3}"
   sums=""
-  while ! sums="$(curl -fsSL --retry 3 --connect-timeout 20 "$sumurl" 2>/dev/null)" && (( try < tries )); do
+  while ! sums="$(curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$sumurl" 2>/dev/null)" && (( try < tries )); do
     sleep $(( try * delay )); try=$(( try + 1 ))
   done
   if [[ -z $sums ]]; then
@@ -468,7 +474,14 @@ uv_base_url() {
   if [[ -n ${UV_VERSION:-} ]]; then echo "https://github.com/astral-sh/uv/releases/download/$UV_VERSION"
   else echo "https://github.com/astral-sh/uv/releases/latest/download"; fi
 }
-rustup_init_url() { echo "https://static.rust-lang.org/rustup/dist/$(host_arch)-unknown-linux-gnu/rustup-init"; }
+rustup_init_url() {   # the newest release, or RUSTUP_VERSION (the lock) from the project's archive of releases
+  if [[ -n ${RUSTUP_VERSION:-} ]]; then echo "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/$(host_arch)-unknown-linux-gnu/rustup-init"
+  else echo "https://static.rust-lang.org/rustup/dist/$(host_arch)-unknown-linux-gnu/rustup-init"; fi
+}
+lazygit_base_url() {
+  if [[ -n ${LAZYGIT_VERSION:-} ]]; then echo "https://github.com/jesseduffield/lazygit/releases/download/$LAZYGIT_VERSION"
+  else echo "https://github.com/jesseduffield/lazygit/releases/latest/download"; fi
+}
 starship_asset() { echo "starship-$(host_arch)-unknown-linux-gnu.tar.gz"; }
 starship_base_url() {
   if [[ -n ${STARSHIP_VERSION:-} ]]; then echo "https://github.com/starship/starship/releases/download/$STARSHIP_VERSION"
@@ -543,7 +556,7 @@ node_arch() {
 # Pinned version (NODE_LTS_VERSION, e.g. v26.13.0), else the newest release the project's index marks "lts".
 node_version() {
   if [[ -n ${NODE_LTS_VERSION:-} ]]; then echo "$NODE_LTS_VERSION"; return 0; fi
-  curl -fsSL --retry 3 --connect-timeout 20 https://nodejs.org/dist/index.json 2>/dev/null \
+  curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 https://nodejs.org/dist/index.json 2>/dev/null \
     | python3 -I -c 'import json, sys
 for r in json.load(sys.stdin):
     if r.get("lts"):
@@ -626,7 +639,7 @@ home_files() {
   echo .config/lazygit/config.yml
   echo .config/tealdeer/config.toml
   if on "$INSTALL_OH_MY_BASH"; then echo .bashrc.d/15-oh-my-bash.sh; fi
-  if on "$INSTALL_KATE"; then echo .config/kate/lspclient/settings.json; fi
+  if on "$INSTALL_KATE"; then echo .config/kate/lspclient/settings.json; echo .config/kate/formatting/settings.json; echo .local/bin/ws-pyformat; fi
   if on "$ENFORCE_OFFLINE_ENV"; then echo .bashrc.d/20-offline.sh; fi
   if on "$INSTALL_CPP"; then echo .gdbinit; fi
   if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
@@ -681,7 +694,8 @@ cheatsheet_content() {
 }
 install_cheatsheet() {
   local FORCE_CONFIG=1
-  cheatsheet_content | write_config "$HOME/WORKSTATION-CHEATSHEET.md"
+  mkdir -p "$OUT_DIR"
+  cheatsheet_content | write_config "$CHEATSHEET_FILE"
 }
 
 # ----------------------------------------------------------------------------
@@ -923,24 +937,26 @@ privacy_hardening() {
   fi
 }
 
-# lazygit is not in every Ubuntu release (not in 24.04). Fallback: its release
-# tarball, checked against the checksums.txt the project publishes. The version
-# is read from that file, so no API call is needed.
-lazygit_fallback() {
-  have lazygit && return 0
-  apt_has lazygit && return 0
-  on "$ALLOW_CURL_INSTALLERS" || return 0
-  local base="https://github.com/jesseduffield/lazygit/releases/latest/download" arch=x86_64 asset
+# lazygit from its release tarball, checked against the checksums.txt the project publishes. The version
+# is read from that file (the asset name carries it), so no API call is needed. The newest stable release,
+# or LAZYGIT_VERSION (the lock). Not in the 24.04 archive at all; the 26.04 archive has an older one.
+lazygit_installed_version() { "$1" --version 2>/dev/null | sed -n 's/.*version=\([^,]*\),.*/\1/p' | head -n1 || true; }
+lazygit_install_upstream() {
+  local base arch=x86_64 asset ver bin="$HOME/.local/bin" fresh=0; base="$(lazygit_base_url)"
   if [[ $(host_arch) == aarch64 ]]; then arch=arm64; fi
   # Not fatal: a failed curl in this pipeline (pipefail) used to abort the whole calling step.
-  asset="$(curl -fsSL --retry 3 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
+  asset="$(curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
            | awk -v a="_linux_$arch.tar.gz" 'index($2, a) { print $2; exit }' || true)"
-  [[ -n $asset ]] || { warn "Could not find a lazygit release for this CPU (or the download failed)"; return 1; }
-  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/checksums.txt" "$asset"
-  mkdir -p "$HOME/.local/bin"
-  tar -xzf "$STATE_DIR/$asset" -C "$HOME/.local/bin" lazygit
-  record_undo "rm -f ~/.local/bin/lazygit"
-  ok "Installed lazygit from the project's release (not in the Ubuntu archive)"
+  if [[ -z $asset ]]; then warn "Could not find a lazygit release for this CPU (or the download failed)"; return 1; fi
+  ver="${asset#lazygit_}"; ver="${ver%%_*}"
+  if [[ -x $bin/lazygit && "$(lazygit_installed_version "$bin/lazygit")" == "$ver" ]]; then ok "lazygit $ver is the newest stable release"; return 0; fi
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/checksums.txt" "$asset" || return 1
+  mkdir -p "$bin" || return 1
+  if [[ ! -e $bin/lazygit && ! -L $bin/lazygit ]]; then fresh=1; fi
+  if (( fresh )); then record_undo "rm -f ~/.local/bin/lazygit"; fi
+  tar -xzf "$STATE_DIR/$asset" -C "$bin" lazygit || return 1
+  hash -r
+  ok "lazygit $ver installed in ~/.local/bin (the newest upstream release)"
 }
 
 base_cli() {
@@ -948,10 +964,11 @@ base_cli() {
   # The settings that switch things OFF come before anything that needs the network, so a failed download
   # can never leave the privacy configuration unwritten.
   if have tldr; then install_file .config/tealdeer/config.toml; fi
-  # lazygit is optional where the archive lacks it (24.04): a failed download is reported, never fatal.
-  if ! lazygit_fallback; then
-    warn "lazygit was not installed (download failed); re-run ./setup.sh later"
-    echo "lazygit (not installed: download failed)" >> "$MISSING_FILE"
+  # lazygit: the newest upstream release wins over the archive's older one (26.04) or none (24.04). A failed
+  # download is reported, never fatal.
+  if ! install_upstream_first lazygit lazygit lazygit_install_upstream "$LAZYGIT_FROM_ARCHIVE" lazygit; then
+    warn "lazygit was not installed; re-run ./setup.sh later"
+    echo "lazygit (not installed)" >> "$MISSING_FILE"
   fi
   if have tldr; then
     # Fetch the example pages ONCE now; auto-update stays off afterwards.
@@ -1019,17 +1036,25 @@ python_tools() {
   done
 }
 
+# rustup-init itself, checked against the .sha256 the Rust project publishes (instead of the sh.rustup.rs script
+# that downloads it). --default-toolchain none installs only rustup; --no-modify-path leaves your shell files alone.
+# On a machine that has rustup in ~/.cargo already (--upgrade) the same command updates it in place and leaves the
+# toolchains alone. (Ubuntu's rustup package, if installed, is never touched: its binary stays in /usr/bin.)
+rustup_install_upstream() {
+  local init="$STATE_DIR/rustup-init" bin="$HOME/.cargo/bin/rustup" ver fresh=0
+  fetch_published "$(rustup_init_url)" "$init" "$(rustup_init_url).sha256" "rustup-init" || return 1
+  chmod +x "$init" || return 1
+  ver="$("$init" --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+  if [[ -n $ver ]] && binary_is_version "$bin" "$ver"; then ok "rustup $ver is the newest stable release"; return 0; fi
+  if [[ ! -e $bin ]]; then fresh=1; fi
+  if (( fresh )); then record_undo "rustup self uninstall -y"; fi
+  "$init" -y --no-modify-path --default-toolchain none || return 1
+  hash -r
+  ok "rustup $("$bin" --version 2>/dev/null | awk 'NR == 1 { print $2 }') installed in ~/.cargo/bin (the newest upstream release)"
+}
+
 rust_toolchain() {
-  if ! have rustup && apt_has rustup; then apt_install rustup; fi
-  if ! have rustup; then
-    on "$ALLOW_CURL_INSTALLERS" || { warn "rustup is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
-    # rustup-init itself, checked against the .sha256 the Rust project publishes
-    # (instead of the sh.rustup.rs script that downloads it).
-    fetch_published "$(rustup_init_url)" "$STATE_DIR/rustup-init" "$(rustup_init_url).sha256" "rustup-init"
-    chmod +x "$STATE_DIR/rustup-init"
-    "$STATE_DIR/rustup-init" -y --no-modify-path --default-toolchain none
-    record_undo "rustup self uninstall -y"
-  fi
+  install_upstream_first rustup rustup rustup_install_upstream "$RUSTUP_FROM_ARCHIVE" rustup || return 1
   # The archive's rustup has no self-uninstall, so undo what we add: the toolchain (with its
   # components and targets) and, if this run creates it, the ~/.rustup directory itself.
   # (Decided before 'rustup set ...' below, which already creates ~/.rustup/settings.toml.)
@@ -1090,6 +1115,95 @@ bash_lsp() {
   npm install -g "${specs[@]}"
 }
 
+# Set keys in ONE group of a KConfig (.ini style) file and touch nothing else.
+#   kconfig_set [--check] FILE GROUP KEY=VALUE...
+# Creates the file or the group if needed. With --check nothing is written: exit 0 = it would change, 10 = already as asked.
+kconfig_set() {
+  python3 -I - "$@" <<'PY'
+import os, sys, tempfile
+args = sys.argv[1:]
+check = args and args[0] == "--check"
+if check:
+    args = args[1:]
+path, group, *pairs = args
+kv = dict(p.split("=", 1) for p in pairs)
+lines = open(path, encoding="utf-8").read().splitlines() if os.path.exists(path) else []
+header = "[" + group + "]"
+out, in_group, found, done = [], False, False, set()
+def flush():
+    for k, v in kv.items():
+        if k not in done:
+            out.append(f"{k}={v}")
+            done.add(k)
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        if in_group:
+            flush()
+        in_group = stripped == header
+        found = found or in_group
+        out.append(line)
+        continue
+    if in_group and "=" in line:
+        key = line.split("=", 1)[0].strip()
+        if key in kv:
+            out.append(f"{key}={kv[key]}")
+            done.add(key)
+            continue
+    out.append(line)
+if in_group:
+    flush()
+if not found:
+    if out and out[-1].strip():
+        out.append("")
+    out.append(header)
+    flush()
+new = "\n".join(out) + "\n"
+old = ("\n".join(lines) + "\n") if lines else None
+if new == old:
+    sys.exit(10)
+if check:
+    sys.exit(0)
+d = os.path.dirname(path) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".kconfig-")
+with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    fh.write(new)
+if os.path.exists(path):
+    os.chmod(tmp, os.stat(path).st_mode & 0o777)
+os.replace(tmp, path)
+PY
+}
+
+# Switch Kate's plugins on or off (KATE_PLUGINS_ON / KATE_PLUGINS_OFF). Kate keeps this per SESSION, in
+# ~/.local/share/kate/anonymous.katesession (the session you get when you just start Kate) and
+# ~/.local/share/kate/sessions/*.katesession (named ones), group [Kate Plugins]. Only those keys are changed; every other
+# setting in those files stays. Each file is backed up first and the undo restores it. A session created later starts with
+# Kate's 8 defaults again: Settings > Configure Kate > Plugins, or copy the keys.
+kate_plugins() {
+  local dir="$HOME/.local/share/kate" f p bdir="$DATA_DIR/kate-backups/$TIMESTAMP" rc
+  local -a files=("$dir/anonymous.katesession") pairs=()
+  for f in "$dir"/sessions/*.katesession; do if [[ -f $f ]]; then files+=("$f"); fi; done
+  for p in "${KATE_PLUGINS_ON[@]}"; do pairs+=("$p=true"); done
+  for p in "${KATE_PLUGINS_OFF[@]}"; do pairs+=("$p=false"); done
+  if pgrep -x kate >/dev/null 2>&1; then
+    warn "Kate is running: it rewrites its session files when it quits and would undo the plugin settings. Quit Kate and run ./setup.sh again."
+  fi
+  for f in "${files[@]}"; do
+    rc=0; kconfig_set --check "$f" "Kate Plugins" "${pairs[@]}" || rc=$?
+    if (( rc == 10 )); then ok "Kate plugins already set in ${f/#$HOME/~}"; continue; fi
+    if (( rc != 0 )); then warn "Could not read ${f/#$HOME/~} (exit $rc); left alone"; continue; fi
+    if [[ -e $f ]]; then   # the undo record comes BEFORE the change, and only for what this run changes
+      mkdir -p "$bdir" && cp -p "$f" "$bdir/${f##*/}"
+      record_undo "cp -p $(printf %q "$bdir/${f##*/}") $(printf %q "$f")"
+    else
+      record_undo "rm -f $(printf %q "$f")"
+    fi
+    kconfig_set "$f" "Kate Plugins" "${pairs[@]}"
+    ok "Kate plugins set in ${f/#$HOME/~} (${#KATE_PLUGINS_ON[@]} on, ${#KATE_PLUGINS_OFF[@]} off on purpose)"
+  done
+}
+
 kate_setup() {
   apt_install "${PKGS_KATE[@]}"
   # Language servers for Kate's LSP client: ours (basedpyright, ruff, cmake, taplo) in
@@ -1097,6 +1211,10 @@ kate_setup() {
   # over Kate's built-in settings by Kate itself. JSON/YAML servers are not installed
   # on purpose: their defaults download schemas from the internet.
   install_file .config/kate/lspclient/settings.json
+  # The Format plugin runs on SAVE by default and only knows autopep8 for Python: format on request only, with ruff.
+  install_file .config/kate/formatting/settings.json
+  install_file .local/bin/ws-pyformat 755
+  kate_plugins
 }
 
 nice_to_have() { apt_install "${PKGS_NICE_TO_HAVE[@]}"; }
@@ -1532,7 +1650,8 @@ check_mode() {
 
   section "Tools installed outside APT"
   if on "$INSTALL_PYTHON"; then plan_tool uv uv uv "$(uv_base_url)/$(uv_asset) (checked against the published .sha256)" "$UV_FROM_ARCHIVE"; fi
-  if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "$(rustup_init_url) (checked against the published .sha256)"; fi
+  if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "$(rustup_init_url) (checked against the published .sha256)" "$RUSTUP_FROM_ARCHIVE"; fi
+  plan_tool lazygit lazygit lazygit "$(lazygit_base_url)/lazygit_<version>_linux_$(host_arch).tar.gz (checked against the published checksums.txt)" "$LAZYGIT_FROM_ARCHIVE"
   if on "$INSTALL_HELIX"; then
     if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")" "$HELIX_FROM_ARCHIVE"
     else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest (trust on first use: Helix publishes no checksum)" "$HELIX_FROM_ARCHIVE"; fi
@@ -1615,7 +1734,7 @@ check_mode() {
     elif on "$FORCE_CONFIG"; then echo "    replace   ~/$rel (backup kept)"
     else echo "    keep      ~/$rel (yours differs; FORCE_CONFIG=1 replaces it)"; fi
   done < <(home_files)
-  echo "    generated ~/WORKSTATION-CHEATSHEET.md (refreshed; backup kept if you edited it)"
+  echo "    generated $CHEATSHEET_FILE (refreshed; backup kept if you edited it)"
   echo "    templates ~/.local/share/workstation/templates (refreshed)"
 
   echo
@@ -1742,6 +1861,27 @@ t_clangd_host() {
   printf '%s\n' -std=c11 -Wall > compile_flags.txt
   printf '#include <stdio.h>\nint main(void) { printf("%%d\\n", 42); return 0; }\n' > x.c
   clangd --check=x.c
+}
+
+# basedpyright's own default level ("recommended") is so strict that ordinary working code shows a page of errors in
+# Kate and Helix (found on the user's real machine). The editors are given "standard" through the language-server
+# settings. This test speaks LSP to the real server the way Kate does (both Kate versions), with NO project config:
+# a small untyped but working file must come out quiet; the control without settings must be strict, or it proves nothing.
+t_basedpyright_default() {
+  needs basedpyright-langserver python3
+  local py="$FILES/selftest/lsp/default_level.py" kate="$HOME/.config/kate/lspclient/settings.json" settings mode rc=0
+  [[ -f $kate ]] || kate="$FILES/home/.config/kate/lspclient/settings.json"
+  settings="$(python3 -I -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1]))["servers"]["python"]["settings"]))' "$kate")" \
+    || { echo "the Python server entry in $kate has no \"settings\""; return 1; }
+  python3 -I -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); assert c["language-server"]["basedpyright"]["config"]["basedpyright"]["typeCheckingMode"] == "standard"' \
+    "$FILES/home/.config/helix/languages.toml" || { echo "Helix's basedpyright config does not set typeCheckingMode = standard"; return 1; }
+  for mode in didchange configuration; do
+    rc=0; python3 -I "$py" "$mode" "$settings" || rc=$?
+    (( rc == 0 )) || { echo "basedpyright is too noisy for an editor started the way Kate ($mode) does it, or did not answer (exit $rc)"; return 1; }
+  done
+  rc=0; python3 -I "$py" didchange none || rc=$?
+  if (( rc == 0 )); then echo "control: basedpyright without settings was NOT strict: its default changed, this test proves little now"; return 78; fi
+  (( rc == 3 )) || { echo "control run failed (exit $rc)"; return 1; }
 }
 
 t_python_tools() {
@@ -2002,6 +2142,43 @@ assert servers["python"]["command"][0] == "basedpyright-langserver"
 print("Kate LSP settings parse; servers:", ", ".join(sorted(servers)))
 EOT
   QT_QPA_PLATFORM=offscreen kate --version
+  # The plugin set: every plugin we switch on must exist in this Kate, and the session file Kate starts from must say so.
+  # A plugin that is missing from the package (renamed in a newer Kate) would silently not load.
+  local p lib f="$HOME/.local/share/kate/anonymous.katesession" missing=()
+  for p in "${KATE_PLUGINS_ON[@]}"; do
+    lib="$(find /usr/lib -path '*ktexteditor*' -name "$p.so" -print -quit 2>/dev/null || true)"
+    if [[ -z $lib ]]; then missing+=("$p"); fi
+  done
+  if (( ${#missing[@]} )); then echo "these Kate plugins are not in the installed Kate (renamed?): ${missing[*]}"; return 1; fi
+  [[ -f $f ]] || { echo "$f does not exist: Kate's plugin set was not written"; return 1; }
+  for p in "${KATE_PLUGINS_ON[@]}"; do
+    grep -qx "$p=true" "$f" || { echo "$p is not switched on in $f"; return 1; }
+  done
+  for p in "${KATE_PLUGINS_OFF[@]}"; do
+    grep -qx "$p=false" "$f" || { echo "$p must be switched OFF in $f (it contacts the internet or can fetch remote files)"; return 1; }
+  done
+  # The Format plugin: it formats on SAVE unless told otherwise (and would reformat code and JSON behind your back), and for
+  # Python it only knows autopep8, which is not installed ("autopep8 is not installed" on every save). Our settings turn
+  # format-on-save off and send "autopep8" to ws-pyformat (ruff). Check the shape Kate reads, then that ws-pyformat really formats.
+  python3 -I - "$HOME/.config/kate/formatting/settings.json" <<'EOT'
+import json, sys
+c = json.load(open(sys.argv[1]))
+assert c.get("formatOnSave") is False, "format on save must be off (Kate would reformat code on every save)"
+assert c.get("clang-format", {}).get("formatOnSave") is False, "clang-format sets formatOnSave true itself: it must be switched off too"
+assert c["autopep8"]["command"] == ["ws-pyformat"], "Python formatting must go through ws-pyformat (ruff)"
+print("Kate formatting settings: format on save off, Python formatted by ruff on request")
+EOT
+  if have ruff; then
+    printf 'x   =   [1,2,\n 3]\n' > fmt_sample.py
+    local out; out="$("$HOME/.local/bin/ws-pyformat" fmt_sample.py)"
+    [[ $out == "x = [1, 2, 3]" ]] || { echo "ws-pyformat did not format with ruff, got: $out"; return 1; }
+  fi
+  # Kate's built-in terminal panel needs konsole-kpart (Kate only suggests it): without it the panel says
+  # "Konsole not installed". A part file, not a program to run, so check that the package is there.
+  local st
+  # shellcheck disable=SC2016
+  st="$(dpkg-query -W -f='${Status}' konsole-kpart 2>/dev/null || true)"   # captured: no pipe into grep -q under pipefail
+  [[ $st == *"install ok installed"* ]] || { echo "konsole-kpart is missing: Kate's terminal panel would say 'Konsole not installed'"; return 1; }
 }
 
 t_nerd_font() {
@@ -2042,6 +2219,7 @@ self_test() {
   run_test "ws-init copies starter files, never overwrites" t_ws_init
   run_test "clangd understands host code"             t_clangd_host
   run_test "Python: ruff + basedpyright"              t_python_tools
+  run_test "basedpyright is quiet in the editors"     t_basedpyright_default
   run_test "Python: offline install from wheelhouse"  t_python_offline
   run_test "Rust: host build"                         t_rust_host
   run_test "Rust: offline build from crate cache"     t_rust_offline
@@ -2071,7 +2249,8 @@ self_test() {
 # ============================================================================
 write_manifest() {
   section "Manifest"
-  MANIFEST_FILE="$HOME/workstation-manifest-$TIMESTAMP.txt"
+  mkdir -p "$OUT_DIR"
+  MANIFEST_FILE="$OUT_DIR/workstation-manifest-$TIMESTAMP.txt"
   (
     set +e +o pipefail
     echo "# Workstation manifest"
@@ -2136,7 +2315,7 @@ write_manifest() {
     echo "## APT packages (all installed: name, version, architecture)"
     dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' | sort
   ) > "$MANIFEST_FILE" 2>&1
-  ln -sf "$MANIFEST_FILE" "$HOME/workstation-manifest-latest.txt"
+  ln -sf "$MANIFEST_FILE" "$OUT_DIR/workstation-manifest-latest.txt"
   ok "Manifest: $MANIFEST_FILE ($(wc -l < "$MANIFEST_FILE") lines)"
 }
 
@@ -2177,6 +2356,11 @@ EOF
     if [[ -n $hx ]]; then printf ': "${HELIX_VERSION:=%s}"\n' "$("$hx" --version | awk '{ print $2 }')"; fi
     # shellcheck disable=SC2016
     if have starship; then printf ': "${STARSHIP_VERSION:=v%s}"\n' "$(starship --version | awk 'NR == 1 { print $2 }')"; fi
+    # shellcheck disable=SC2016
+    if have rustup; then printf ': "${RUSTUP_VERSION:=%s}"\n' "$(rustup --version 2>/dev/null | awk 'NR == 1 { print $2 }')"; fi
+    local lg; lg="$(command -v lazygit || true)"
+    # shellcheck disable=SC2016
+    if [[ -n $lg ]]; then printf ': "${LAZYGIT_VERSION:=v%s}"\n' "$(lazygit_installed_version "$lg")"; fi
     # shellcheck disable=SC2016
     if [[ -s $NERD_FONT_DIR/.version ]]; then printf ': "${NERD_FONT_VERSION:=%s}"\n' "$(<"$NERD_FONT_DIR/.version")"; fi
     # shellcheck disable=SC2016
@@ -2390,8 +2574,8 @@ STEP_TOUCHES["JetBrains Mono Nerd Font"]="~/.local/share/fonts/JetBrainsMonoNerd
 STEP_WHY["Oh My Bash"]="(Only with INSTALL_OH_MY_BASH=1.) The Oh My Bash framework (themes, aliases, plugins) from ONE pinned commit, loaded from ~/.bashrc.d/15-oh-my-bash.sh with its GitHub update check switched off. Its own installer is not used because it would replace your ~/.bashrc. While it is enabled it owns the prompt, so the starship prompt is not started."
 STEP_TOUCHES["Oh My Bash"]="~/.local/share/oh-my-bash (git clone of one commit), ~/.bashrc.d/15-oh-my-bash.sh; network: github.com, at install time only."
 
-STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files."
-STEP_TOUCHES["Kate editor"]="apt packages (kate and KDE libraries); ~/.config/kate/lspclient/settings.json."
+STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak), plus konsole-kpart, the part behind Kate's built-in terminal panel (Kate only suggests it, so without it the panel says \"Konsole not installed\"). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files. Kate switches on only 8 of its plugins by default, so this step also switches on a curated set for C/C++/Rust/Python/embedded work (Build, CMake Tools, Debugger, Symbol Viewer, Snippets, Formatting, Git Blame, File Browser, Colored Brackets), changing only the plugin keys in Kate's session files (backed up first, restored by --undo), and keeps Compiler Explorer (sends your code to godbolt.org) and XML Validation (xmllint may fetch schemas) OFF."
+STEP_TOUCHES["Kate editor"]="apt packages (kate, konsole-kpart and KDE libraries); ~/.config/kate/lspclient/settings.json and ~/.config/kate/formatting/settings.json; ~/.local/bin/ws-pyformat; the [Kate Plugins] group of ~/.local/share/kate/anonymous.katesession and your existing ~/.local/share/kate/sessions/*.katesession (backed up under ~/.local/share/workstation/kate-backups)."
 
 STEP_WHY["Extra terminal tools"]="Nice-to-have terminal tools: zellij (a beginner-friendlier terminal multiplexer than tmux) and difftastic (structural diffs). Packages the archive of your Ubuntu release lacks are skipped and reported."
 STEP_TOUCHES["Extra terminal tools"]="apt packages."
@@ -2421,7 +2605,7 @@ STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Do
 STEP_TOUCHES["Containers"]="apt packages; ~/.config/containers/containers.conf (with podman); with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
 
 STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
-STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball (checked against its published checksum; the archive's package only as a fallback)."
+STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/workstation-setup/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball (checked against its published checksum; the archive's package only as a fallback)."
 
 STEP_WHY["Git setup"]="Switches lazygit's update check off. With SET_GIT_DEFAULTS=1 it also sets sensible global git defaults, only where you have not set a value yourself; GIT_NAME/GIT_EMAIL are applied if you give them."
 STEP_TOUCHES["Git setup"]="~/.config/lazygit/config.yml; ~/.gitconfig only with SET_GIT_DEFAULTS=1 or GIT_NAME/GIT_EMAIL."
@@ -2490,7 +2674,7 @@ EOT
           owned by a package, mask a service, add an APT repository or PPA,
           install a snap or Flatpak, or touch kernel, boot, coreutils or APT sources.
   Always: use apt with --no-remove --no-upgrade, keep an undo script
-          (~/workstation-undo-<time>.sh), verify downloads outside APT by SHA-256,
+          (~/workstation-setup/workstation-undo-<time>.sh), verify downloads outside APT by SHA-256,
           and, once the caches are filled, leave nothing that contacts the internet by itself.
   Next:   './setup.sh --check' shows the same plan down to package names and
           versions; './setup.sh' runs it; './setup.sh --self-test' verifies it.
@@ -2577,9 +2761,10 @@ undo_mode() {
   local file="${UNDO_ARG:-}" line i n=0 failed=0 answer
   local -a cmds=() failures=()
   if [[ -z $file ]]; then
-    file="$(find "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+    # the records folder first; ~ too, where earlier versions of this setup left them
+    file="$(find "$OUT_DIR" "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
   fi
-  [[ -n $file && -f $file ]] || die "No undo file found (looked for ~/workstation-undo-*.sh). Give one: ./setup.sh --undo FILE"
+  [[ -n $file && -f $file ]] || die "No undo file found (looked for $OUT_DIR/workstation-undo-*.sh). Give one: ./setup.sh --undo FILE"
   while IFS= read -r line; do
     case $line in ''|'#'*|'set -x') continue ;; esac
     cmds+=("$line")
@@ -2631,6 +2816,31 @@ remember_profile() {
   ok "Remembered profile '$PROFILE' in $PROFILE_STATE"
 }
 
+# Earlier versions left the records (undo scripts, manifests, logs) and the cheat sheet loose in your home
+# directory. Move them into OUT_DIR (never overwriting anything there). Your existing ~/.bashrc.d/10-workstation.sh is
+# never edited, and its old ws-help still looks for ~/WORKSTATION-CHEATSHEET.md, so a link is left there in that case.
+migrate_records() {
+  local f dest moved=0 old="$HOME/WORKSTATION-CHEATSHEET.md"
+  if [[ $OUT_DIR == "$HOME" ]]; then return 0; fi
+  mkdir -p "$OUT_DIR"
+  for f in "$HOME"/workstation-undo-*.sh "$HOME"/workstation-undo-*.sh.done-* "$HOME"/workstation-manifest-2*.txt "$HOME"/workstation-setup-*.log; do
+    if [[ ! -f $f || -L $f ]]; then continue; fi
+    dest="$OUT_DIR/${f##*/}"
+    if [[ -e $dest ]]; then continue; fi
+    if mv "$f" "$dest"; then moved=$((moved + 1)); fi
+  done
+  if [[ -L $HOME/workstation-manifest-latest.txt ]]; then rm -f "$HOME/workstation-manifest-latest.txt"; fi   # recreated in OUT_DIR
+  if [[ -f $old && ! -L $old && ! -e $CHEATSHEET_FILE ]]; then
+    if mv "$old" "$CHEATSHEET_FILE"; then moved=$((moved + 1)); fi
+  fi
+  if (( moved )); then ok "Moved $moved earlier record file(s) from ~ into $OUT_DIR"; fi
+  if [[ ! -e $old && ! -L $old ]] && grep -qs 'HOME/WORKSTATION-CHEATSHEET.md' "$HOME/.bashrc.d/10-workstation.sh"; then
+    ln -s "$CHEATSHEET_FILE" "$old"
+    record_undo "rm -f ~/WORKSTATION-CHEATSHEET.md"
+    log "Left a link ~/WORKSTATION-CHEATSHEET.md: your ~/.bashrc.d/10-workstation.sh (an earlier version, never edited by this setup) still looks there. Delete the link when you replace that file."
+  fi
+}
+
 main() {
   if (( LIST_PROFILES )); then list_profiles; return 0; fi
   if [[ $MODE == undo ]]; then undo_mode; return; fi
@@ -2662,6 +2872,7 @@ main() {
   exec > >(tee -a "$LOG_FILE") 2>&1
 
   section "Workstation setup — profile $PROFILE — $(date)"
+  migrate_records
   preflight
   remember_profile
 

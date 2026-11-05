@@ -1,0 +1,12 @@
+#!/bin/sh
+# ws-pyformat FILE — print FILE formatted by ruff on stdout.
+#
+# Why this exists: the Format plugin of Kate (23.08 in Ubuntu 24.04, 25.12 in 26.04) knows autopep8 for Python but has
+# no ruff formatter, and autopep8 is not installed here. ~/.config/kate/formatting/settings.json points Kate's
+# "autopep8" entry at this script, so "Format Document" in Kate uses the same formatter as `ruff format` and your
+# pre-commit hooks. It prints the result on stdout, which is what Kate expects from autopep8. Nothing is written to
+# the file here; Kate applies the result. ruff finds your project's pyproject.toml / ruff.toml from the file's path.
+PATH="$HOME/.local/bin:$PATH"
+[ $# -eq 1 ] || { echo "usage: ws-pyformat FILE" >&2; exit 2; }
+# shellcheck disable=SC2094  # ruff only reads in stdin mode; the name is just for finding the config
+exec ruff format --quiet --stdin-filename "$1" - < "$1"

@@ -20,6 +20,74 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Changed (the records live in one folder, not loose in your home directory)
+- **The undo script, manifest, log and the generated cheat sheet now go into `~/workstation-setup/`** (your request; before,
+  `workstation-undo-*.sh`, `workstation-manifest-*.txt`, `workstation-manifest-latest.txt`, `workstation-setup-*.log` and
+  `WORKSTATION-CHEATSHEET.md` sat directly in `~`). `WS_OUT_DIR` picks another folder. An install run moves the old files in
+  (never overwriting anything there); `--undo` finds undo files in the new folder and, as before, in `~`. `ws-help` looks in the
+  new folder first. Your existing `~/.bashrc.d/10-workstation.sh` is never edited: if it is an earlier version that still looks for
+  `~/WORKSTATION-CHEATSHEET.md`, a link is left there (recorded for `--undo`). The `--reset-shell` backup folder stays in `~`.
+  Tests: `check-all.sh` checks the migration (moved, never overwritten, link only when needed); the E2E fails if any such file is
+  loose in `~` after an install.
+
+### Changed (you are not blocked from the network; Kate gets its terminal panel)
+- **The strict offline lock is now opt-in** (`ENFORCE_OFFLINE_ENV`, default **0**; your request: "dont block me, as the user from the
+  network"). `~/.bashrc.d/20-offline.sh` (`UV_OFFLINE=1`, `PIP_NO_INDEX=1`, `CARGO_NET_OFFLINE=true`) is an environment setting of your own
+  terminal, so it blocked the commands you typed yourself (`uv pip install pandas-stubs` failed with "network disabled"). By default
+  `uv`, `pip` and `cargo` now work as on any machine. What stays off are the tools' OWN background network features (update checks,
+  telemetry, `podman` pulling by itself, uv downloading Pythons: `uv python install` is still blocked, ask if you want that
+  relaxed). The local caches are still filled during installation. **An install that predates this change still has the file:**
+  `rm ~/.bashrc.d/20-offline.sh` and open a new terminal (the setup never deletes your files). `ws-doctor` says what the lock does
+  if it is there. The E2E now fails if a default install blocks `uv` or `cargo` in a new shell.
+- **Kate's terminal panel works:** `konsole-kpart` (about 2 MB, the embedded terminal part, no network features) is installed with Kate.
+  Kate only *suggests* it, so APT skipped it and the panel said "Konsole not installed". `t_kate` now checks for it.
+
+### Verified (this batch)
+- **E2E run #24 on the final code (head `1bfb316`): all eight jobs (24.04 and 26.04, runner VM and container, `work` and `personal`) passed all 12 phases**; self-test 33/36
+  (container) and 34/37 (VM) passed, 0 failed. It covered rustup/lazygit/uv/Helix/probe-rs from upstream, the opt-in offline lock (new shell not blocked), the records
+  folder, Kate's plugin set and Format settings (`ws-pyformat` with the real ruff), and the real `basedpyright-langserver` started like Kate does (quiet on an untyped file).
+  The run before it failed five jobs only on GitHub's HTTP 504 for the probe-rs download, which is why the retries were raised (below).
+
+### Fixed (downloads ride out a short GitHub outage)
+- **Downloads now retry for up to about a minute (6 tries, growing pauses) instead of 3 tries within seconds.** In one E2E run GitHub answered HTTP 504 for
+  the probe-rs release in five of eight jobs at the same moment (the other three got the file): the step was reported as failed and the E2E failed on it,
+  as designed, but 3 quick retries cannot outlast even a short CDN hiccup, for you or for CI. Applies to the project downloads (checksum files, tarballs,
+  the lazygit asset list, the Node.js index). A real failure (404, a checksum mismatch) is still refused at once.
+
+### Changed (the Python type checker is quiet in the editors)
+- **basedpyright now checks at the "standard" level in Kate and Helix** (your question "why all these errors in kate editor?", answer "as per your
+  recommendation"). Its own default, "recommended", is very strict and flooded working untyped code, and anything built on a library without
+  type hints (pandas), with "Type of ... is unknown" / "Type annotation is missing ...". Kate gets it through a `settings` block on the Python
+  server entry (works with both Kate versions: 23.08 sends it with `didChangeConfiguration`, 25.12 answers `workspace/configuration` from it), Helix
+  through `[language-server.basedpyright.config.basedpyright]`. A project's own `pyrightconfig.json` / `[tool.basedpyright]` still wins; `ws-init` copies a
+  `pyrightconfig.json` (standard) into new projects for the command line. New self-test `t_basedpyright_default` starts the real language server
+  like Kate does and requires a clean result for a small untyped file (with a control that must be strict). **Existing installs keep their old
+  settings files** (never overwritten): see the README troubleshooting row for the two edits. `uv python install` stays blocked, as you asked.
+- README troubleshooting: a row for spaced-out terminal text (Terminator profile font).
+
+### Added (Kate is set up, not just installed)
+- **Kate's plugins are switched on** (your report: "all the plugins were missing"). Kate enables only 8 of its ~30 plugins by default
+  and stores the choice per session. The setup now switches on Build, CMake Tools, Debugger, Symbol Viewer, Snippets, Formatting,
+  Git Blame, File System Browser and Colored Brackets next to Kate's defaults (`KATE_PLUGINS_ON` in `workstation.conf`), and keeps
+  Compiler Explorer (sends code to godbolt.org) and XML Validation (xmllint may fetch schemas) **off** (`KATE_PLUGINS_OFF`). It edits
+  only the `[Kate Plugins]` keys of `~/.local/share/kate/anonymous.katesession` and your existing named sessions, backs each file up
+  first and records the undo; a second run changes nothing. Quit Kate before running the setup (it rewrites those files when it quits).
+  Plugin names were checked in the real Kate packages of 24.04 (23.08) and 26.04 (25.12). `t_kate` fails if a plugin of the set
+  is missing from the installed Kate or not switched on; `kconfig_set` (the small helper that does the edit) has its own test.
+- **Kate no longer complains on save** ("autopep8 is not installed", your report): the Format plugin I had switched on formats on SAVE by
+  default and only knows autopep8 for Python. The new `~/.config/kate/formatting/settings.json` turns format-on-save off (it would reformat
+  code, JSON and XML behind your back; `clang-format` switches it on for itself, so that is off too) and sends Kate's `autopep8` entry to
+  `~/.local/bin/ws-pyformat`, which formats with ruff (the formatter of your hooks). `t_kate` runs it for real, `check-all.sh` checks how it
+  calls ruff. My earlier plugin change should have set this up at once; I enabled the plugin without checking what it does on save.
+
+### Changed (rustup and lazygit follow the same upstream-first rule)
+- **rustup and lazygit now come from their projects' releases too**, for consistency with uv, Helix, starship and Node.js
+  (your decision). rustup is `rustup-init` checked against the `.sha256` the Rust project publishes, installed in `~/.cargo`
+  (`--default-toolchain none`, no shell-file edits, self-update still disabled); lazygit is the release tarball checked against
+  its `checksums.txt`, in `~/.local/bin`. New pins `RUSTUP_VERSION` and `LAZYGIT_VERSION` (the lock writes them) and switches
+  `RUSTUP_FROM_ARCHIVE` / `LAZYGIT_FROM_ARCHIVE`. lazygit is no longer in the apt package list (it would have installed the
+  archive's older one first). Ubuntu's package is the fallback; the E2E no longer allows lazygit to be missing.
+
 ### Changed (the newest upstream release wins for uv, Helix and starship; the CI self-test blocks)
 - **uv, Helix and starship now come from their projects' releases, not from Ubuntu's older package** (your decision,
   the rule Node.js already followed). They are unpacked into your home directory (`~/.local/bin`, Helix in

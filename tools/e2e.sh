@@ -32,7 +32,8 @@
 #   E2E_ALLOW_FAILED_STEPS  regex of step names that may fail in this environment
 #                           (e.g. "System tuning" in a container without sysctl access)
 #   E2E_ALLOW_MISSING       regex of packages allowed to be missing from the archive
-#                           (default: lazygit|zellij|difftastic)
+#                           (default: zellij|difftastic; lazygit is no longer allowed: it comes from its
+#                           release, and a fallback to the archive's package is reported as a problem)
 # It runs once per supported Ubuntu release (24.04 and the newest LTS; see .github/workflows/e2e.yml).
 # Things the test knows about a machine it did not set up itself: if rustup (~/.rustup,
 # ~/.cargo/bin/rustup) already exists before the install, it is not counted as a leftover; the CI VM job
@@ -42,6 +43,7 @@
 set -uo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." || exit 1
 
+OUT="$HOME/workstation-setup"   # the records folder: undo scripts, manifests, logs, the cheat sheet
 PROFILE="" DISPOSABLE="${E2E_DISPOSABLE:-0}" PLAN=0 LOG="${E2E_LOG_DIR:-$HOME/e2e-logs}"
 usage() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; }
 while (( $# )); do
@@ -81,7 +83,7 @@ sudo -n true 2>/dev/null || { echo "e2e.sh: needs passwordless sudo (a disposabl
 mkdir -p "$LOG"
 read -ra SW <<<"${E2E_SWITCHES:-}"
 ALLOW_FAILED="${E2E_ALLOW_FAILED_STEPS:-^\$}"
-ALLOW_MISSING="${E2E_ALLOW_MISSING:-lazygit|zellij|difftastic}"
+ALLOW_MISSING="${E2E_ALLOW_MISSING:-zellij|difftastic}"
 strip() { sed 's/\x1b\[[0-9;]*m//g'; }
 # setup.sh with the profile, --full and the extra switches; never interactive
 setup() { env "${SW[@]}" ./setup.sh --profile "$PROFILE" --full "$@" </dev/null; }
@@ -142,7 +144,7 @@ ph_explain_check() {
 ph_install() {
   local t0=$SECONDS rc=0 t pre=""
   # What was on the machine BEFORE the setup (a runner image may ship uv): such a tool is left alone, by design.
-  for t in uv hx helix starship; do if command -v "$t" >/dev/null 2>&1; then pre+=" $t"; fi; done
+  for t in uv hx helix starship lazygit rustup; do if command -v "$t" >/dev/null 2>&1; then pre+=" $t"; fi; done
   echo "tools already on the machine before the setup:${pre:- (none)}"
   setup > "$LOG/install.log" 2>&1 || rc=$?
   echo "setup.sh exit status $rc after $((SECONDS - t0))s"
@@ -151,13 +153,27 @@ ph_install() {
   # The newest upstream release wins over the archive's older package (uv, Helix, starship): each of them must
   # have been installed by the setup into ~/.local/bin, not taken from Ubuntu. A fallback to the archive after a
   # failed download is written to the "skipped or failed" list, which check_install_log below rejects.
-  local bad=0 want="uv"
+  local bad=0 want="uv lazygit"
   if grep -q 'INSTALL_HELIX=0' <<<"${E2E_SWITCHES:-}"; then :; else want+=" hx"; fi
   for t in $want; do
     if [[ " $pre " == *" $t "* ]]; then echo "(already there before the setup, left alone) $t"; continue; fi
     if [[ -x $HOME/.local/bin/$t ]]; then echo "upstream: $t -> $("$HOME/.local/bin/$t" --version | head -n 1)"
     else echo "NOT UPSTREAM: $t is not in ~/.local/bin (resolves to: $(command -v "$t" || echo nothing))"; bad=1; fi
   done
+  # The records live in ONE folder (~/workstation-setup), not loose in ~: nothing of the kind may sit directly in ~.
+  local loose; loose="$(find "$HOME" -maxdepth 1 \( -name 'workstation-undo-*' -o -name 'workstation-manifest-*' -o -name 'workstation-setup-*.log' -o -name 'WORKSTATION-CHEATSHEET.md' \) | head -n 5)"
+  if [[ -n $loose ]]; then echo "LOOSE RECORD FILES in ~: $loose"; bad=1; fi
+  for t in WORKSTATION-CHEATSHEET.md workstation-manifest-latest.txt; do
+    if [[ $t == workstation-manifest-latest.txt ]]; then continue; fi    # written by the manifest at the end of the run
+    [[ -s $OUT/$t ]] || { echo "missing in $OUT: $t"; bad=1; }
+  done
+  [[ -n "$(find "$OUT" -maxdepth 1 -name 'workstation-undo-*.sh' -o -maxdepth 1 -name 'workstation-setup-*.log' | head -n1)" ]] || { echo "no undo script or log in $OUT"; bad=1; }
+  # rustup lives in ~/.cargo/bin (rustup-init); a runner VM image already ships one, which is left alone.
+  if ! grep -q 'INSTALL_RUST=0' <<<"${E2E_SWITCHES:-}"; then
+    if [[ " $pre " == *" rustup "* ]]; then echo "(already there before the setup, left alone) rustup"
+    elif [[ -x $HOME/.cargo/bin/rustup ]]; then echo "upstream: rustup -> $("$HOME/.cargo/bin/rustup" --version 2>/dev/null | head -n 1)"
+    else echo "NOT UPSTREAM: rustup is not in ~/.cargo/bin (resolves to: $(command -v rustup || echo nothing))"; bad=1; fi
+  fi
   check_install_log "$LOG/install.log" || bad=1
   return $bad
 }
@@ -187,12 +203,16 @@ ph_shell() {
     echo "UV_OFFLINE=$UV_OFFLINE"; echo "CARGO_NET_OFFLINE=$CARGO_NET_OFFLINE"
     echo "LAUNCHER=$CMAKE_C_COMPILER_LAUNCHER"; echo "EDITOR=$EDITOR"; echo "OSH=${OSH:-}"; echo "PS1_SET=${PS1:+yes}"
     for t in ws-init ws-doctor uv hx cargo rustc ruff clangd cmake; do command -v "$t" >/dev/null && echo "have:$t" || echo "MISSING:$t"; done
+    echo "WSHELP_FILE=$(type ws-help 2>&1 | grep -o "[^ ]*WORKSTATION-CHEATSHEET.md" | head -n1)"
     echo "ALIAS_LS=$(alias ls 2>&1)"; echo "ALIAS_LL=$(alias ll 2>&1)"; echo "ALIAS_LA=$(alias la 2>&1)"; echo "ALIAS_GREP=$(alias grep 2>&1)"
   ' 2>&1 | strip)"
   printf '%s\n' "$out" | grep -E '=|MISSING' | sed 's/^/  /'
   grep -q '^MISSING:' <<<"$out" && bad=1
-  grep -q '^UV_OFFLINE=1$' <<<"$out" || { echo "offline lock not active (UV_OFFLINE)"; bad=1; }
-  grep -q '^CARGO_NET_OFFLINE=true$' <<<"$out" || { echo "offline lock not active (CARGO_NET_OFFLINE)"; bad=1; }
+  # The user is NOT blocked from the network (their decision): the strict lock is opt-in (ENFORCE_OFFLINE_ENV=1) and
+  # must not be active after a default install. Checked in a new interactive shell, where the lock would apply.
+  grep -q '^UV_OFFLINE=$' <<<"$out" || { echo "uv is blocked from the network in a new shell (UV_OFFLINE is set): the strict lock must be off by default"; bad=1; }
+  grep -q '^CARGO_NET_OFFLINE=$' <<<"$out" || { echo "cargo is blocked from the network in a new shell (CARGO_NET_OFFLINE is set)"; bad=1; }
+  [[ ! -e $HOME/.bashrc.d/20-offline.sh ]] || { echo "$HOME/.bashrc.d/20-offline.sh was installed although ENFORCE_OFFLINE_ENV is off by default"; bad=1; }
   grep -q '^LAUNCHER=ccache$' <<<"$out" || { echo "ccache launcher not set"; bad=1; }
   grep -q '^EDITOR=hx$' <<<"$out" || { echo "EDITOR is not hx"; bad=1; }
   grep -q '^OSH=.*oh-my-bash' <<<"$out" || { echo "Oh My Bash not loaded (OSH unset)"; bad=1; }
@@ -203,6 +223,8 @@ ph_shell() {
       grep -q "^ALIAS_$t=alias ${t,,}='eza" <<<"$out" || { echo "alias ${t,,} is not eza in a new shell (Oh My Bash replaced it?): $(grep "^ALIAS_$t=" <<<"$out")"; bad=1; }
     done
   fi
+  # ws-help reads the cheat sheet from the records folder (a fresh 10-workstation.sh has the new path)
+  grep -q '^WSHELP_FILE=.*workstation-setup.*' <<<"$out" || grep -q 'workstation-setup' <<<"$(bash -ic 'type ws-help' 2>&1)" || { echo "ws-help does not look in the records folder"; bad=1; }
   grep -q "^ALIAS_GREP=alias grep='grep --color=auto'$" <<<"$out" || { echo "alias grep is not ours in a new shell: $(grep '^ALIAS_GREP=' <<<"$out")"; bad=1; }
   return $bad
 }
@@ -213,14 +235,14 @@ ph_idempotent() {
   echo "second run: exit status $rc"
   (( rc == 0 )) || { strip < "$LOG/install2.log" | tail -n 25; return 1; }
   check_install_log "$LOG/install2.log" || return 1
-  f="$(find "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+  f="$(find "$OUT" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
   n="$(grep -vcE '^(#|set -x|$)' "$f" 2>/dev/null || echo 0)"
   echo "the second run recorded $n undo command(s):"; grep -vE '^(#|set -x|$)' "$f" | sed 's/^/    /' | head -n 12
   (( n <= 15 )) || return 2
 }
 
 ph_manifest() {
-  local m="$HOME/workstation-manifest-latest.txt" bad=0
+  local m="$OUT/workstation-manifest-latest.txt" bad=0
   setup --manifest > "$LOG/manifest.log" 2>&1 || { tail -n 8 "$LOG/manifest.log"; return 1; }
   [[ -s $m ]] || { echo "no manifest at $m"; return 1; }
   echo "manifest: $(wc -l < "$m") lines"
@@ -237,19 +259,21 @@ ph_lock() {
   grep -q 'declare -gA UV_PINS' "$lock" || { echo "lock lacks UV_PINS"; bad=1; }
   grep -q 'RUST_TOOLCHAIN:=' "$lock" || { echo "lock lacks the Rust toolchain version"; bad=1; }
   grep -q 'UV_VERSION:=' "$lock" || { echo "lock lacks the uv version"; bad=1; }
+  grep -q 'LAZYGIT_VERSION:=v' "$lock" || { echo "lock lacks the lazygit version"; bad=1; }
+  grep -q 'RUSTUP_VERSION:=' "$lock" || { echo "lock lacks the rustup version"; bad=1; }
   if [[ "$(readlink "$HOME/.local/bin/node" 2>/dev/null || true)" == */opt/node-v* ]]; then
     grep -q 'NODE_LTS_VERSION:=v' "$lock" || { echo "lock lacks the Node.js version"; bad=1; }
   fi
   local checked; checked="$(WORKSTATION_LOCK="$lock" setup --check 2>&1 | strip || true)"   # captured: grep -q on a pipe can SIGPIPE under pipefail
   grep -q 'versions pinned' <<<"$checked" || { echo "--check did not load the lock"; bad=1; }
-  grep -E 'UV_VERSION|HELIX_VERSION|STARSHIP_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
+  grep -E 'UV_VERSION|HELIX_VERSION|STARSHIP_VERSION|RUSTUP_VERSION|LAZYGIT_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
   return $bad
 }
 
 ph_undo() {
   local n=0 f rc bad=0 seen=" "
   while :; do
-    f="$(find "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+    f="$(find "$OUT" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
     [[ -n $f ]] || break
     [[ $seen == *" $f "* ]] && { echo "undo file $f was not consumed"; bad=1; break; }
     seen+="$f "
@@ -269,8 +293,8 @@ ph_leftovers() {
   local -a skip=()
   if [[ -n ${E2E_PRE_RUSTUP:-} ]]; then skip=("$HOME/.rustup" "$HOME/.cargo/bin/rustup"); fi
   for p in "$HOME"/.local/bin/{ws-init,ws-doctor,ws-devname,uv,uvx,hx,probe-rs,cargo-flash,cargo-embed,starship,lazygit} \
-           "$HOME/.local/share/workstation" "$HOME/.config/helix" "$HOME/.config/uv" "$HOME/.config/kate/lspclient/settings.json" \
-           "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$HOME/WORKSTATION-CHEATSHEET.md" \
+           "$HOME/.local/share/workstation" "$HOME/.config/helix" "$HOME/.config/uv" "$HOME/.config/kate/lspclient/settings.json" "$HOME/.config/kate/formatting/settings.json" "$HOME/.local/bin/ws-pyformat" \
+           "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$OUT/WORKSTATION-CHEATSHEET.md" \
            "$HOME/.inputrc" "$HOME/.cargo/bin/rustup" "$HOME/.rustup" "$HOME/.local/opt" "$HOME"/.local/bin/{node,npm,npx} /etc/sysctl.d/60-dev-inotify.conf \
            /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json; do
     if [[ " ${skip[*]} " == *" $p "* ]]; then continue; fi

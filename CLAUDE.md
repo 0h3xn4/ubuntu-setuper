@@ -16,9 +16,15 @@ conversation; this file carries that context over.
    normal use: no telemetry, update checks, online lookups, implicit
    downloads. Downloading DURING INSTALLATION is explicitly allowed.
    Cloud-connected tools (gh, schema-fetching JSON/YAML LSPs, snaps, ...)
-   are never installed. Runtime enforcement: files/home/.bashrc.d/20-offline.sh,
-   uv.toml, containers.conf, lazygit/tealdeer/npm/rustup settings, and the
-   desktop module's per-app settings.
+   are never installed. Runtime enforcement: uv.toml, containers.conf, lazygit/tealdeer/npm/rustup
+   settings, and the desktop module's per-app settings (the tools' OWN background network features).
+   DECIDED by the user ("dont block me, as the user from the network"): the USER is never blocked from the
+   network. The strict env lock files/home/.bashrc.d/20-offline.sh (UV_OFFLINE=1, PIP_NO_INDEX=1,
+   CARGO_NET_OFFLINE=true) applied to the user's own terminal and blocked what they typed, so it is OPT-IN now
+   (ENFORCE_OFFLINE_ENV default 0, for air-gapped/policy machines). What requirement 1 forbids is a tool contacting
+   the network by itself (telemetry, update checks, implicit downloads), not a command the user types. An older
+   install may still have the file; the setup never deletes user files: tell the user `rm ~/.bashrc.d/20-offline.sh`.
+   Still blocked on purpose, ask before changing: `uv python install` (python-downloads = "never", system Python).
    Inherently networked apps (browser, mail): the user did NOT confirm Claude's proposed strict
    definition ("only traffic the user directs"). Their answer: such apps "of course might have
    network access, naturally". So the setup does not try to cut off the network use that is the
@@ -91,17 +97,20 @@ conversation; this file carries that context over.
      project's SHASUMS256.txt; NO APT repository (no NodeSource). NODE_LTS_VERSION pins (lock),
      NODE_FROM_ARCHIVE=1 or a failed download falls back to the archive's nodejs/npm (the fallback is
      recorded in MISSING_FILE so the E2E flags it). NOT extended to tools without an LTS line
-     (uv, Helix, starship used to prefer the archive when it had them: DECIDED by the user later,
-     "upstream please": the newest upstream release wins for these three as well, see below).
-   - DECIDED by the user: uv, Helix and starship (no LTS line) also take the newest UPSTREAM stable release over an
+     (uv, Helix, starship, rustup, lazygit used to prefer the archive when it had them: DECIDED by the user later,
+     "upstream please" and "for consistency sake do it": the newest upstream release wins for these five as well, see below).
+   - DECIDED by the user: uv, Helix, starship, rustup and lazygit (no LTS line) also take the newest UPSTREAM stable release over an
      older archive package. install_upstream_first() (setup.sh) holds the rule: not installed -> release (uv and
      starship checked with the checksum the project publishes, Helix trust-on-first-use + lock pin) into ~/.local;
      a failed download -> the archive's package, written to MISSING_FILE ("<tool> newest release (used the
      archive's)") so the E2E fails on it; UV/HELIX/STARSHIP_FROM_ARCHIVE=1 prefers the archive;
      ALLOW_CURL_INSTALLERS=0 uses the archive silently; an already installed tool is left alone, `--upgrade`
      installs the newest release in ~/.local/bin (in front of Ubuntu's package, never removed). Pins: UV_VERSION,
-     HELIX_VERSION, STARSHIP_VERSION (v-prefixed tag). NOT extended to rustup and lazygit (still archive first):
-     ask before changing that. Tests: check-all t_upstream_first (the order, with fakes), t_upstream_install
+     HELIX_VERSION, STARSHIP_VERSION (v-prefixed tag), RUSTUP_VERSION, LAZYGIT_VERSION (v-prefixed tag). rustup and
+     lazygit followed on request ("for consistency sake do it"): lazygit is NOT in PKGS_BASE any more (it would
+     install the archive's first); rustup_install_upstream reads the version from the checksum-verified rustup-init
+     itself (so it always downloads, then skips the install if that version is there) and updates ~/.cargo in place;
+     E2E_ALLOW_MISSING no longer allows lazygit. Tests: check-all t_upstream_first (the order, with fakes), t_upstream_install
      (the install functions against fake releases), e2e.sh checks uv/hx land in ~/.local/bin and phase 12
      installs starship for real (--full turns Oh My Bash on, which owns the prompt, so the main install skips it).
      Components the OS itself depends on (system Python, gcc, glibc,
@@ -149,7 +158,7 @@ belong only inside the embedded module.
   in ~/.local/bin, not a shell function) copies generic; `ws-init --embedded`
   puts module variants first and adds `cmake/embedded-presets.json` to
   CMakePresets.json via jq `include`.
-- The cheat sheet (~/WORKSTATION-CHEATSHEET.md) is generated from
+- The cheat sheet (~/workstation-setup/WORKSTATION-CHEATSHEET.md) is generated from
   files/cheatsheet/00-core.md + modules/*/files/cheatsheet.md +
   99-maintenance.md and refreshed on every run.
 
@@ -176,8 +185,8 @@ It lists everything and asks (--dry-run, --yes), records every step for --undo (
 last), and NEVER removes the zsh package (requirement 2: no package removal; it only prints the apt command).
 Deliberate exception to "every system change has a default-off switch in the opt_in table": it is an explicit one-off
 mode like --undo, not part of an install, and --full does not turn it on (the usermod only happens because the user
-ran this command and confirmed). Without a reset, zsh sessions never load ~/.bashrc.d, so the offline lock is NOT
-enforced there: that is why the reset exists. Tests: check-all.sh t_reset_shell (fake getent/sudo/id, fake /etc/skel;
+ran this command and confirmed). Without a reset, zsh sessions never load ~/.bashrc.d, so none of the shell setup (aliases, prompt, PATH, the optional
+offline lock) applies there: that is why the reset exists. Tests: check-all.sh t_reset_shell (fake getent/sudo/id, fake /etc/skel;
 the mode checks `id -u` so a fake id can stand in for a non-root user) and e2e.sh phase 11 (real zsh and usermod;
 VERIFIED GREEN in run #11).
 README A7 is the manual version.
@@ -189,6 +198,39 @@ and 25.12.3); json::merge replaces arrays and merges objects recursively; the us
 file nested `servers` inside each language (python -> servers -> basedpyright/ruff), which Kate IGNORES, and the old
 self-test only checked that the JSON parsed. Now flat (python = basedpyright; ruff is Helix-only) and t_kate asserts the
 shape. Defaults: yaml/json servers exist in Kate (schema fetching: never install them).
+
+### basedpyright level (found on the user's real machine: "why all these errors in kate editor?")
+basedpyright's OWN default typeCheckingMode is "recommended" (very strict: reportUnknown*, reportMissingParameterType, reportUnusedImport as
+errors; verified in basedpyright 1.40.2's langserver: serverSettings.typeCheckingMode default 'recommended'). Working untyped code, or code on
+a library without stubs (pandas), then floods the editor. DECIDED by the user ("as per your recommendation"): "standard" everywhere by default.
+Mechanism, verified in the sources: server settings come from the section `basedpyright` (key `typeCheckingMode` directly in it) via
+workspace/configuration, or, when the client does not declare that capability, from the `settings` of workspace/didChangeConfiguration.
+Kate 23.08 sends the server entry's "settings" after start (didChangeConfiguration); Kate 25.12 declares workspace/configuration and answers it
+from the same "settings" by dotted section. So files/home/.config/kate/lspclient/settings.json python entry has
+"settings": {"basedpyright": {"typeCheckingMode": "standard"}}; Helix: [language-server.basedpyright.config.basedpyright] in languages.toml
+(Helix answers workspace/configuration from `config`). A project's pyrightconfig.json / [tool.basedpyright] still WINS (it overrides the
+editor default), and ws-init ships files/templates/pyrightconfig.json ("standard") for the command line, which reads project files only.
+Test: t_basedpyright_default (setup.sh self-test) runs the REAL basedpyright-langserver through files/selftest/lsp/default_level.py in both
+Kate modes on a small untyped file and requires no errors/warnings; the control without settings must be strict (else exit 78 warning: the
+upstream default changed). check-all t_lsp_default_level tests that client against a mock server (we never run downloaded binaries in the
+sandbox). The user's `uv python install` stays blocked (python-downloads = "never"): asked, answer "no, if not strictly need".
+Terminal: the user "occasionally" uses Terminator; a spaced-out-letters screenshot (apt output) came from a terminal whose font is not a true
+monospace; README troubleshooting has the Terminator steps (profile font = JetBrainsMono Nerd Font Mono). Not reproducible from here.
+
+### Kate plugins (found on the user's real machine: "all the plugins were missing")
+Kate (23.08 and 25.12, source checked) enables only 8 plugins by default (katefiletree, katesearch, kateproject, tabswitcher,
+textfilter, externaltools, lspclient, katekonsole) and stores the choice PER SESSION in the group `[Kate Plugins]` of
+~/.local/share/kate/anonymous.katesession (the no-session start) and sessions/*.katesession, key = the plugin's .so file name.
+kate_plugins() (setup.sh) sets KATE_PLUGINS_ON=true / KATE_PLUGINS_OFF=false through kconfig_set (python edit of ONLY those keys;
+backup + undo record before a change; idempotent). OFF on purpose: compilerexplorer (QNetwork to godbolt.org) and katexmlcheckplugin
+(xmllint without --nonet). konsole-kpart is installed too (Kate only suggests it; without it the terminal panel says "Konsole not
+installed"). A new session starts with the 8 defaults again (no way around it short of patching Kate); a running Kate overwrites the
+files on exit (kate_plugins warns). When Kate's plugin set changes in a new release, t_kate fails on a missing plugin: update the lists.
+The Format plugin (found the hard way on the user's machine: "autopep8 is not installed" on every save): formatOnSave defaults to TRUE
+(globally and, explicitly, for clang-format) and Kate 23.08 has no ruff formatter, only autopep8. files/home/.config/kate/formatting/settings.json
+(merged over Kate's defaults: objects merge, arrays replace) sets formatOnSave false (global AND clang-format) and maps the "autopep8" command to
+~/.local/bin/ws-pyformat (ruff format on stdin, prints the result: what Kate expects from autopep8). LESSON: before enabling a Kate plugin read
+what it does on its own (saves, background network) in its source; t_kate asserts this config and runs ws-pyformat for real.
 
 ### Terminal look
 `ls`/`ll`/`la`/`tree` are eza; icons (`--icons=auto`) are on when ~/.local/share/fonts/JetBrainsMonoNerdFont
@@ -204,7 +246,7 @@ prompt) and uses JetBrains Mono Nerd Font in their terminal.
   Claude recommended. Still UNVERIFIED whether the snaps read /etc/<app>/policies/policies.json.
 - `embedded` is part of `personal`.
 - Newest upstream LTS wins over the archive: requirement 4.
-Answered later: tools WITHOUT an LTS line (uv, Helix, starship) also prefer upstream (requirement 4).
+Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit) also prefer upstream (requirement 4).
 
 ## Checks you can run (and CI)
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
@@ -215,7 +257,7 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship) also prefer upst
   QEMU test that made it flaky passes in every recent run. It fails only when a test FAILS (warnings 78 and skips 77
   do not). If a test is wrong, fix or skip THAT test with a stated reason; never make the step lenient again.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
-  `./setup.sh --profile X --check` verifies package names for real on 24.04 (only lazygit/zellij/difftastic
+  `./setup.sh --profile X --check` verifies package names for real on 24.04 (only zellij/difftastic
   are missing, qemu-system-riscv is skipped as "not needed"). For 26.04 read the archive index (see
   requirement 4); the E2E is what verifies it for real. `apt-get download PKG` + `dpkg -x` into a scratch
   directory lets you read what a package ships (man pages, example files) without running anything.
@@ -255,8 +297,8 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship) also prefer upst
   put/git_set/loader/template/cheat-sheet/LibreOffice/GIMP blocks were run
   in a scratch HOME. Changes in behaviour (not just lists) must be mirrored
   by hand.
-- In the manual, `20-offline.sh` (the runtime lock) is installed LAST (D4);
-  the script installs it early but clears its variables for its own run.
+- In the manual, `20-offline.sh` (the OPT-IN strict lock, D4) is installed LAST if at all;
+  the script installs it early (only with ENFORCE_OFFLINE_ENV=1) but clears its variables for its own run.
 
 ## Conventions in setup.sh
 - `set -Eeuo pipefail`; each install step runs via `step` in a subshell so one
@@ -303,6 +345,15 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+FINAL E2E OF THIS BATCH (GitHub run #24, workflow_dispatch on the branch, head 1bfb316): 8/8 GREEN, 12/12 phases in every job; self-test 33/36
+(container work/personal) and 34/37 (VM), 0 failed, only SPICE/container-image skips. Verified in it: rustup 1.29.3 (rustup-init, container jobs; the VM image's own
+rustup is left alone), lazygit 0.66.2, uv 0.13.7, Helix 25.07.1, probe-rs 0.32.0 all from upstream with no archive fallback; the default install does not
+block uv/cargo in a new shell (strict lock opt-in); Kate plugin set + t_kate PASS on Kate 23.08 (24.04) and 25.12 (26.04); ws-pyformat run with the real ruff;
+t_basedpyright_default PASSED against the REAL basedpyright-langserver in both Kate modes (written without being able to run the server: it worked on first
+contact). History of this batch: run #21 (bc04a24) 8/8; run #23 (6c7dcec) failed 5/8 ONLY on GitHub HTTP 504 for the probe-rs release (curl 22, 4 quick tries,
+same minute in 5 jobs) -> download retries raised to --retry 6 --retry-max-time 180 (1bfb316), the E2E correctly failed on the failed step instead of hiding it.
+LESSON: read WHY a job failed (summary.md install block, install.log) before calling it flaky; here the log said 504 outright. The CI self-test (blocking) still has
+not been seen on a PULL REQUEST yet.
 E2E WITH UPSTREAM-FIRST uv/Helix/starship (GitHub run #18, workflow_dispatch on the branch, head a4f6899): 8/8 GREEN, all 12
 phases everywhere (phase 12 = starship installed from its real release in a scratch HOME; --full turns Oh My Bash on, so the main
 install never installs starship). uv 0.13.7 and Helix 25.07.1 were installed from upstream in all eight jobs, none used the

@@ -8,7 +8,7 @@ Press `q` to quit, `/` to search.
 | Command | What it does |
 |---|---|
 | `ws-help` | This cheat sheet |
-| `ws-init` | Copy generic starter files (.clang-format, .clang-tidy, .clangd, .editorconfig, pre-commit, ruff, host CMakePresets.json) into the current project; never overwrites |
+| `ws-init` | Copy generic starter files (.clang-format, .clang-tidy, .clangd, .editorconfig, pre-commit, ruff, pyrightconfig.json, host CMakePresets.json) into the current project; never overwrites |
 | `ws-doctor` | Quick health check: tools, editor, shell setup, no-cloud settings, offline caches (read-only, offline; `ws-doctor --quiet` shows only problems) |
 | `ws-init --list` | Show which starter-file sets are installed (modules add their own, e.g. `ws-init --embedded`) |
 | `cppref` / `pydocs` / `cmakedocs` / `rustdocs` | Open local documentation in the browser |
@@ -101,29 +101,36 @@ scan-build cmake --build build/host-debug          # Clang static analyzer
 
 ## Python (offline)
 
-Package managers work only from local caches (no internet at runtime):
+Package managers use the internet like on any machine; the wheelhouse is a local copy for offline use:
 
 ```bash
 uv venv && source .venv/bin/activate
-uv pip install numpy pytest                    # served from the local wheelhouse
+uv pip install numpy pytest                    # from the internet, or the local wheelhouse if you are offline
 ruff check . && ruff format .                  # lint and format
 basedpyright                                   # type check
 ```
 
-Available offline: see `ls ~/.local/share/workstation/wheelhouse`.
-To deliberately fetch something new (internal mirror, approved by IT):
-`UV_OFFLINE=0 uv pip install <pkg>`
+**Type checker level.** basedpyright's own default ("recommended") is very strict. The editors use "standard" for every
+project; `ws-init` puts `{"typeCheckingMode": "standard"}` in a project's `pyrightconfig.json`. A strict project says
+`"recommended"` or `"strict"` there. Libraries without type hints (pandas) need `uv pip install pandas-stubs`.
+
+You are not blocked from the network: `uv add`, `uv pip install`, `cargo add` and friends fetch what you ask for.
+Available offline (for a machine without network): see `ls ~/.local/share/workstation/wheelhouse`
+(`uv pip install --find-links ~/.local/share/workstation/wheelhouse <pkg>`).
+If a command is refused with "network disabled", you have the strict lock (an older install or `ENFORCE_OFFLINE_ENV=1`):
+`rm ~/.bashrc.d/20-offline.sh` and open a new terminal, or override once: `UV_OFFLINE=0 uv add <pkg>`.
 
 ## Rust (offline)
 
 ```bash
 cargo new my-crate && cd my-crate
-cargo add anyhow                      # from the local crate cache
+cargo add anyhow                      # from crates.io (or the local crate cache if you are offline)
 cargo build
 cargo clippy                          # lints
 ```
 
-To deliberately fetch something new: `CARGO_NET_OFFLINE=false cargo update`
+Crates are fetched from the internet when you ask (`cargo add`, `cargo build`). With the strict lock on
+(`ENFORCE_OFFLINE_ENV=1`): `CARGO_NET_OFFLINE=false cargo update`.
 
 ## Containers (offline)
 
