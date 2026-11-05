@@ -468,7 +468,14 @@ uv_base_url() {
   if [[ -n ${UV_VERSION:-} ]]; then echo "https://github.com/astral-sh/uv/releases/download/$UV_VERSION"
   else echo "https://github.com/astral-sh/uv/releases/latest/download"; fi
 }
-rustup_init_url() { echo "https://static.rust-lang.org/rustup/dist/$(host_arch)-unknown-linux-gnu/rustup-init"; }
+rustup_init_url() {   # the newest release, or RUSTUP_VERSION (the lock) from the project's archive of releases
+  if [[ -n ${RUSTUP_VERSION:-} ]]; then echo "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/$(host_arch)-unknown-linux-gnu/rustup-init"
+  else echo "https://static.rust-lang.org/rustup/dist/$(host_arch)-unknown-linux-gnu/rustup-init"; fi
+}
+lazygit_base_url() {
+  if [[ -n ${LAZYGIT_VERSION:-} ]]; then echo "https://github.com/jesseduffield/lazygit/releases/download/$LAZYGIT_VERSION"
+  else echo "https://github.com/jesseduffield/lazygit/releases/latest/download"; fi
+}
 starship_asset() { echo "starship-$(host_arch)-unknown-linux-gnu.tar.gz"; }
 starship_base_url() {
   if [[ -n ${STARSHIP_VERSION:-} ]]; then echo "https://github.com/starship/starship/releases/download/$STARSHIP_VERSION"
@@ -923,24 +930,26 @@ privacy_hardening() {
   fi
 }
 
-# lazygit is not in every Ubuntu release (not in 24.04). Fallback: its release
-# tarball, checked against the checksums.txt the project publishes. The version
-# is read from that file, so no API call is needed.
-lazygit_fallback() {
-  have lazygit && return 0
-  apt_has lazygit && return 0
-  on "$ALLOW_CURL_INSTALLERS" || return 0
-  local base="https://github.com/jesseduffield/lazygit/releases/latest/download" arch=x86_64 asset
+# lazygit from its release tarball, checked against the checksums.txt the project publishes. The version
+# is read from that file (the asset name carries it), so no API call is needed. The newest stable release,
+# or LAZYGIT_VERSION (the lock). Not in the 24.04 archive at all; the 26.04 archive has an older one.
+lazygit_installed_version() { "$1" --version 2>/dev/null | sed -n 's/.*version=\([^,]*\),.*/\1/p' | head -n1 || true; }
+lazygit_install_upstream() {
+  local base arch=x86_64 asset ver bin="$HOME/.local/bin" fresh=0; base="$(lazygit_base_url)"
   if [[ $(host_arch) == aarch64 ]]; then arch=arm64; fi
   # Not fatal: a failed curl in this pipeline (pipefail) used to abort the whole calling step.
   asset="$(curl -fsSL --retry 3 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
            | awk -v a="_linux_$arch.tar.gz" 'index($2, a) { print $2; exit }' || true)"
-  [[ -n $asset ]] || { warn "Could not find a lazygit release for this CPU (or the download failed)"; return 1; }
-  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/checksums.txt" "$asset"
-  mkdir -p "$HOME/.local/bin"
-  tar -xzf "$STATE_DIR/$asset" -C "$HOME/.local/bin" lazygit
-  record_undo "rm -f ~/.local/bin/lazygit"
-  ok "Installed lazygit from the project's release (not in the Ubuntu archive)"
+  if [[ -z $asset ]]; then warn "Could not find a lazygit release for this CPU (or the download failed)"; return 1; fi
+  ver="${asset#lazygit_}"; ver="${ver%%_*}"
+  if [[ -x $bin/lazygit && "$(lazygit_installed_version "$bin/lazygit")" == "$ver" ]]; then ok "lazygit $ver is the newest stable release"; return 0; fi
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/checksums.txt" "$asset" || return 1
+  mkdir -p "$bin" || return 1
+  if [[ ! -e $bin/lazygit && ! -L $bin/lazygit ]]; then fresh=1; fi
+  if (( fresh )); then record_undo "rm -f ~/.local/bin/lazygit"; fi
+  tar -xzf "$STATE_DIR/$asset" -C "$bin" lazygit || return 1
+  hash -r
+  ok "lazygit $ver installed in ~/.local/bin (the newest upstream release)"
 }
 
 base_cli() {
@@ -948,10 +957,11 @@ base_cli() {
   # The settings that switch things OFF come before anything that needs the network, so a failed download
   # can never leave the privacy configuration unwritten.
   if have tldr; then install_file .config/tealdeer/config.toml; fi
-  # lazygit is optional where the archive lacks it (24.04): a failed download is reported, never fatal.
-  if ! lazygit_fallback; then
-    warn "lazygit was not installed (download failed); re-run ./setup.sh later"
-    echo "lazygit (not installed: download failed)" >> "$MISSING_FILE"
+  # lazygit: the newest upstream release wins over the archive's older one (26.04) or none (24.04). A failed
+  # download is reported, never fatal.
+  if ! install_upstream_first lazygit lazygit lazygit_install_upstream "$LAZYGIT_FROM_ARCHIVE" lazygit; then
+    warn "lazygit was not installed; re-run ./setup.sh later"
+    echo "lazygit (not installed)" >> "$MISSING_FILE"
   fi
   if have tldr; then
     # Fetch the example pages ONCE now; auto-update stays off afterwards.
@@ -1019,17 +1029,25 @@ python_tools() {
   done
 }
 
+# rustup-init itself, checked against the .sha256 the Rust project publishes (instead of the sh.rustup.rs script
+# that downloads it). --default-toolchain none installs only rustup; --no-modify-path leaves your shell files alone.
+# On a machine that has rustup in ~/.cargo already (--upgrade) the same command updates it in place and leaves the
+# toolchains alone. (Ubuntu's rustup package, if installed, is never touched: its binary stays in /usr/bin.)
+rustup_install_upstream() {
+  local init="$STATE_DIR/rustup-init" bin="$HOME/.cargo/bin/rustup" ver fresh=0
+  fetch_published "$(rustup_init_url)" "$init" "$(rustup_init_url).sha256" "rustup-init" || return 1
+  chmod +x "$init" || return 1
+  ver="$("$init" --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+  if [[ -n $ver ]] && binary_is_version "$bin" "$ver"; then ok "rustup $ver is the newest stable release"; return 0; fi
+  if [[ ! -e $bin ]]; then fresh=1; fi
+  if (( fresh )); then record_undo "rustup self uninstall -y"; fi
+  "$init" -y --no-modify-path --default-toolchain none || return 1
+  hash -r
+  ok "rustup $("$bin" --version 2>/dev/null | awk 'NR == 1 { print $2 }') installed in ~/.cargo/bin (the newest upstream release)"
+}
+
 rust_toolchain() {
-  if ! have rustup && apt_has rustup; then apt_install rustup; fi
-  if ! have rustup; then
-    on "$ALLOW_CURL_INSTALLERS" || { warn "rustup is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
-    # rustup-init itself, checked against the .sha256 the Rust project publishes
-    # (instead of the sh.rustup.rs script that downloads it).
-    fetch_published "$(rustup_init_url)" "$STATE_DIR/rustup-init" "$(rustup_init_url).sha256" "rustup-init"
-    chmod +x "$STATE_DIR/rustup-init"
-    "$STATE_DIR/rustup-init" -y --no-modify-path --default-toolchain none
-    record_undo "rustup self uninstall -y"
-  fi
+  install_upstream_first rustup rustup rustup_install_upstream "$RUSTUP_FROM_ARCHIVE" rustup || return 1
   # The archive's rustup has no self-uninstall, so undo what we add: the toolchain (with its
   # components and targets) and, if this run creates it, the ~/.rustup directory itself.
   # (Decided before 'rustup set ...' below, which already creates ~/.rustup/settings.toml.)
@@ -1532,7 +1550,8 @@ check_mode() {
 
   section "Tools installed outside APT"
   if on "$INSTALL_PYTHON"; then plan_tool uv uv uv "$(uv_base_url)/$(uv_asset) (checked against the published .sha256)" "$UV_FROM_ARCHIVE"; fi
-  if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "$(rustup_init_url) (checked against the published .sha256)"; fi
+  if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "$(rustup_init_url) (checked against the published .sha256)" "$RUSTUP_FROM_ARCHIVE"; fi
+  plan_tool lazygit lazygit lazygit "$(lazygit_base_url)/lazygit_<version>_linux_$(host_arch).tar.gz (checked against the published checksums.txt)" "$LAZYGIT_FROM_ARCHIVE"
   if on "$INSTALL_HELIX"; then
     if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")" "$HELIX_FROM_ARCHIVE"
     else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest (trust on first use: Helix publishes no checksum)" "$HELIX_FROM_ARCHIVE"; fi
@@ -2177,6 +2196,11 @@ EOF
     if [[ -n $hx ]]; then printf ': "${HELIX_VERSION:=%s}"\n' "$("$hx" --version | awk '{ print $2 }')"; fi
     # shellcheck disable=SC2016
     if have starship; then printf ': "${STARSHIP_VERSION:=v%s}"\n' "$(starship --version | awk 'NR == 1 { print $2 }')"; fi
+    # shellcheck disable=SC2016
+    if have rustup; then printf ': "${RUSTUP_VERSION:=%s}"\n' "$(rustup --version 2>/dev/null | awk 'NR == 1 { print $2 }')"; fi
+    local lg; lg="$(command -v lazygit || true)"
+    # shellcheck disable=SC2016
+    if [[ -n $lg ]]; then printf ': "${LAZYGIT_VERSION:=v%s}"\n' "$(lazygit_installed_version "$lg")"; fi
     # shellcheck disable=SC2016
     if [[ -s $NERD_FONT_DIR/.version ]]; then printf ': "${NERD_FONT_VERSION:=%s}"\n' "$(<"$NERD_FONT_DIR/.version")"; fi
     # shellcheck disable=SC2016

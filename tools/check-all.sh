@@ -243,11 +243,14 @@ mk() { # mk NAME VERSION: an executable that prints "<first word> <version>"
   printf '#!/bin/sh\necho "%s %s%s"\n' "$1" "$2" "${3:-}"
 }
 release_tag_of() { echo "$FAKE_TAG"; }
+curl() { printf 'abc  lazygit_9.9.9_linux_%s.tar.gz\n' "$([[ $A == aarch64 ]] && echo arm64 || echo x86_64)"; }
 helix_version() { echo "$FAKE_HX"; }
 fetch_published() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1; local t="$STATE_DIR/fake-$FETCHES"; mkdir -p "$t"
   case $1 in
     *uv-*) mkdir -p "$t/uv-$A-unknown-linux-gnu"; mk uv "${FAKE_TAG}" > "$t/uv-$A-unknown-linux-gnu/uv"; cp "$t/uv-$A-unknown-linux-gnu/uv" "$t/uv-$A-unknown-linux-gnu/uvx"; chmod +x "$t"/uv-*/uv*
        tar -czf "$2" -C "$t" "uv-$A-unknown-linux-gnu" ;;
+    *rustup-init*) printf '#!/bin/sh\nif [ "$1" = --version ]; then echo "rustup-init 9.9.9 (abc)"; else mkdir -p "$HOME/.cargo/bin"; printf "#!/bin/sh\\necho rustup 9.9.9\\n" > "$HOME/.cargo/bin/rustup"; chmod +x "$HOME/.cargo/bin/rustup"; fi\n' > "$2"; chmod +x "$2" ;;
+    *lazygit_*) printf '#!/bin/sh\necho "commit=abc, build date=x, build source=y, version=9.9.9, os=linux, arch=amd64, git version 2.43"\n' > "$t/lazygit"; chmod +x "$t/lazygit"; tar -czf "$2" -C "$t" lazygit ;;
     *starship*) mk starship "${FAKE_TAG#v}" > "$t/starship"; chmod +x "$t/starship"; tar -czf "$2" -C "$t" starship ;;
   esac; }
 fetch_verified() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1; local t="$STATE_DIR/fake-$FETCHES/helix-$FAKE_HX-$A-linux"; mkdir -p "$t"
@@ -255,27 +258,36 @@ fetch_verified() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1; 
 init_undo_file
 rc=0; FAKE_FAIL=${FAKE_FAIL:-0}
 "$FN" || rc=$?
-echo "RC=$rc FETCHES=$FETCHES BIN=$([[ -x $HOME/.local/bin/$BIN ]] && "$HOME/.local/bin/$BIN" --version | head -n1 || echo none) UNDO=$(grep -c "^rm " "$UNDO_FILE" || true)"
+echo "RC=$rc FETCHES=$FETCHES BIN=$([[ -x $HOME/$BIN ]] && "$HOME/$BIN" --version | head -n1 || echo none) UNDO=$(grep -vc '^#\|^set \|^$' "$UNDO_FILE" || true)"
 DRV
   run_() { # run_ NAME FN BIN TAG FAIL  -> prints the driver's result line
     HOME="$d/home-$1" FN="$2" BIN="$3" FAKE_TAG="$4" FAKE_HX="99.9" FAKE_FAIL="$5" bash -c 'mkdir -p "$HOME"; bash "$0"' "$d/driver.sh" 2>&1 | tail -n1
   }
   want_() { [[ $1 == "$2" ]] || { echo "$3: expected '$2', got '$1'"; bad=1; }; }
-  out="$(run_ uv uv_install_upstream uv 9.9.9 0)";      want_ "$out" "RC=0 FETCHES=1 BIN=uv 9.9.9 UNDO=1" "uv install"
-  out="$(run_ uvx uv_install_upstream uv 9.9.9 1)";     want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "uv download fails"
-  out="$(run_ st starship_install_upstream starship v9.9.9 0)"; want_ "$out" "RC=0 FETCHES=1 BIN=starship 9.9.9 UNDO=1" "starship install"
-  out="$(run_ stx starship_install_upstream starship v9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "starship download fails"
-  out="$(run_ hx helix_install_upstream hx 9.9.9 0)";   want_ "$out" "RC=0 FETCHES=1 BIN=helix 99.9 (abc) UNDO=2" "helix install"
-  out="$(run_ hxx helix_install_upstream hx 9.9.9 1)";  want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "helix download fails"
+  out="$(run_ uv uv_install_upstream .local/bin/uv 9.9.9 0)";      want_ "$out" "RC=0 FETCHES=1 BIN=uv 9.9.9 UNDO=1" "uv install"
+  out="$(run_ uvx uv_install_upstream .local/bin/uv 9.9.9 1)";     want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "uv download fails"
+  out="$(run_ st starship_install_upstream .local/bin/starship v9.9.9 0)"; want_ "$out" "RC=0 FETCHES=1 BIN=starship 9.9.9 UNDO=1" "starship install"
+  out="$(run_ stx starship_install_upstream .local/bin/starship v9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "starship download fails"
+  out="$(run_ hx helix_install_upstream .local/bin/hx 9.9.9 0)";   want_ "$out" "RC=0 FETCHES=1 BIN=helix 99.9 (abc) UNDO=2" "helix install"
+  out="$(run_ hxx helix_install_upstream .local/bin/hx 9.9.9 1)";  want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "helix download fails"
+  out="$(run_ ru rustup_install_upstream .cargo/bin/rustup 9.9.9 0)";  want_ "$out" "RC=0 FETCHES=1 BIN=rustup 9.9.9 UNDO=1" "rustup install"
+  out="$(run_ rux rustup_install_upstream .cargo/bin/rustup 9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "rustup download fails"
+  out="$(run_ lg lazygit_install_upstream .local/bin/lazygit 9.9.9 0)"; want_ "$out" "RC=0 FETCHES=1 BIN=commit=abc, build date=x, build source=y, version=9.9.9, os=linux, arch=amd64, git version 2.43 UNDO=1" "lazygit install"
+  out="$(run_ lgx lazygit_install_upstream .local/bin/lazygit 9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "lazygit download fails"
   # a second run finds the newest release already there: nothing is fetched, no second undo line
-  local name fn bin tag
+  local name fn bin tag want_prefix
   while read -r name fn bin tag; do
     out="$(HOME="$d/home-$name" FN="$fn" BIN="$bin" FAKE_TAG="$tag" FAKE_HX="99.9" FAKE_FAIL=0 bash "$d/driver.sh" 2>&1 | tail -n1)"
-    [[ $out == RC=0\ FETCHES=0* ]] || { echo "$fn again: expected no download, got '$out'"; bad=1; }
+    # rustup is the one that must download first: it reads the version from the checksum-verified rustup-init
+    # itself (there is no version file to read), then skips the install when that version is already there.
+    want_prefix="RC=0 FETCHES=0"; if [[ $fn == rustup_install_upstream ]]; then want_prefix="RC=0 FETCHES=1"; fi
+    [[ $out == "$want_prefix"* && $out == *"UNDO=0" ]] || { echo "$fn again: expected '$want_prefix ... UNDO=0', got '$out'"; bad=1; }
   done <<'LIST'
-uv uv_install_upstream uv 9.9.9
-st starship_install_upstream starship v9.9.9
-hx helix_install_upstream hx 9.9.9
+uv uv_install_upstream .local/bin/uv 9.9.9
+st starship_install_upstream .local/bin/starship v9.9.9
+hx helix_install_upstream .local/bin/hx 9.9.9
+ru rustup_install_upstream .cargo/bin/rustup 9.9.9
+lg lazygit_install_upstream .local/bin/lazygit 9.9.9
 LIST
   return $bad
 }

@@ -177,15 +177,16 @@ after checking it against the `SHASUMS256.txt` the project publishes. No APT rep
 `NODE_LTS_VERSION` pins a release (the lock does it), `NODE_FROM_ARCHIVE=1` uses Ubuntu's own
 `nodejs`/`npm`, which is also the fallback if the download fails. System components (Python, gcc,
 glibc, systemd) always stay the archive version.
-**uv, Helix and starship** (no LTS line) follow the same rule, also your decision: the newest *upstream*
+**uv, Helix, starship, rustup and lazygit** (no LTS line) follow the same rule, also your decision: the newest *upstream*
 release wins over an older archive package. Each is unpacked into your home directory (`~/.local/bin`; Helix in
 `~/.local/opt/helix-<version>`, linked from `~/.local/bin/hx`), uv and starship after checking the checksum
-their project publishes, Helix on trust-on-first-use because it publishes none. `UV_VERSION`, `HELIX_VERSION` and
-`STARSHIP_VERSION` pin a release (the lock does it); `UV_FROM_ARCHIVE=1`, `HELIX_FROM_ARCHIVE=1` and
-`STARSHIP_FROM_ARCHIVE=1` prefer Ubuntu's package; `ALLOW_CURL_INSTALLERS=0` forbids the downloads (Ubuntu's package
+their project publishes, Helix on trust-on-first-use because it publishes none. `UV_VERSION`, `HELIX_VERSION`,
+`STARSHIP_VERSION`, `RUSTUP_VERSION` and `LAZYGIT_VERSION` pin a release (the lock does it); `UV_FROM_ARCHIVE=1`,
+`HELIX_FROM_ARCHIVE=1`, `STARSHIP_FROM_ARCHIVE=1`, `RUSTUP_FROM_ARCHIVE=1` and `LAZYGIT_FROM_ARCHIVE=1` prefer Ubuntu's package; `ALLOW_CURL_INSTALLERS=0` forbids the downloads (Ubuntu's package
 is used). Ubuntu's package is also the fallback if a download fails, and then the summary lists it as "newest
 release (used the archive's)". A tool you already have is left alone; `--upgrade` installs the newest release in
-`~/.local/bin`, in front of any package from Ubuntu (never removed). `rustup` and `lazygit` still prefer the archive.
+`~/.local/bin` (rustup: `~/.cargo/bin`, updated in place), in front of any package from Ubuntu (never removed). rustup is
+`rustup-init` with its published `.sha256`; the Rust toolchain itself is always the newest stable (`RUST_TOOLCHAIN`).
 
 **Checksums.** Where the project publishes a checksum (uv, rustup-init, starship, lazygit,
 probe-rs, the Nerd Font, Node.js), the download is compared with *that* and a mismatch is refused. If the
@@ -242,4 +243,4 @@ mismatch is refused (`fetch_published`): uv, rustup (`rustup-init`), starship, t
 (`SHA-256.txt`), probe-rs and lazygit (`checksums.txt`). For the rest (the Helix tarball) the
 SHA-256 is recorded on first use and pinned by `--lock` (`fetch_verified`). The release tag of a
 `latest/download` URL is read from its redirect, so no GitHub API call is needed. `PROBE_RS_PREBUILT=0`
-compiles probe-rs with cargo instead; `lazygit` is taken from its release where the archive has none.
+compiles probe-rs with cargo instead; `lazygit` is taken from its release (the newest upstream release wins over the archive's).

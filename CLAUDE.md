@@ -91,17 +91,20 @@ conversation; this file carries that context over.
      project's SHASUMS256.txt; NO APT repository (no NodeSource). NODE_LTS_VERSION pins (lock),
      NODE_FROM_ARCHIVE=1 or a failed download falls back to the archive's nodejs/npm (the fallback is
      recorded in MISSING_FILE so the E2E flags it). NOT extended to tools without an LTS line
-     (uv, Helix, starship used to prefer the archive when it had them: DECIDED by the user later,
-     "upstream please": the newest upstream release wins for these three as well, see below).
-   - DECIDED by the user: uv, Helix and starship (no LTS line) also take the newest UPSTREAM stable release over an
+     (uv, Helix, starship, rustup, lazygit used to prefer the archive when it had them: DECIDED by the user later,
+     "upstream please" and "for consistency sake do it": the newest upstream release wins for these five as well, see below).
+   - DECIDED by the user: uv, Helix, starship, rustup and lazygit (no LTS line) also take the newest UPSTREAM stable release over an
      older archive package. install_upstream_first() (setup.sh) holds the rule: not installed -> release (uv and
      starship checked with the checksum the project publishes, Helix trust-on-first-use + lock pin) into ~/.local;
      a failed download -> the archive's package, written to MISSING_FILE ("<tool> newest release (used the
      archive's)") so the E2E fails on it; UV/HELIX/STARSHIP_FROM_ARCHIVE=1 prefers the archive;
      ALLOW_CURL_INSTALLERS=0 uses the archive silently; an already installed tool is left alone, `--upgrade`
      installs the newest release in ~/.local/bin (in front of Ubuntu's package, never removed). Pins: UV_VERSION,
-     HELIX_VERSION, STARSHIP_VERSION (v-prefixed tag). NOT extended to rustup and lazygit (still archive first):
-     ask before changing that. Tests: check-all t_upstream_first (the order, with fakes), t_upstream_install
+     HELIX_VERSION, STARSHIP_VERSION (v-prefixed tag), RUSTUP_VERSION, LAZYGIT_VERSION (v-prefixed tag). rustup and
+     lazygit followed on request ("for consistency sake do it"): lazygit is NOT in PKGS_BASE any more (it would
+     install the archive's first); rustup_install_upstream reads the version from the checksum-verified rustup-init
+     itself (so it always downloads, then skips the install if that version is there) and updates ~/.cargo in place;
+     E2E_ALLOW_MISSING no longer allows lazygit. Tests: check-all t_upstream_first (the order, with fakes), t_upstream_install
      (the install functions against fake releases), e2e.sh checks uv/hx land in ~/.local/bin and phase 12
      installs starship for real (--full turns Oh My Bash on, which owns the prompt, so the main install skips it).
      Components the OS itself depends on (system Python, gcc, glibc,
@@ -204,7 +207,7 @@ prompt) and uses JetBrains Mono Nerd Font in their terminal.
   Claude recommended. Still UNVERIFIED whether the snaps read /etc/<app>/policies/policies.json.
 - `embedded` is part of `personal`.
 - Newest upstream LTS wins over the archive: requirement 4.
-Answered later: tools WITHOUT an LTS line (uv, Helix, starship) also prefer upstream (requirement 4).
+Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit) also prefer upstream (requirement 4).
 
 ## Checks you can run (and CI)
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
@@ -215,7 +218,7 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship) also prefer upst
   QEMU test that made it flaky passes in every recent run. It fails only when a test FAILS (warnings 78 and skips 77
   do not). If a test is wrong, fix or skip THAT test with a stated reason; never make the step lenient again.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
-  `./setup.sh --profile X --check` verifies package names for real on 24.04 (only lazygit/zellij/difftastic
+  `./setup.sh --profile X --check` verifies package names for real on 24.04 (only zellij/difftastic
   are missing, qemu-system-riscv is skipped as "not needed"). For 26.04 read the archive index (see
   requirement 4); the E2E is what verifies it for real. `apt-get download PKG` + `dpkg -x` into a scratch
   directory lets you read what a package ships (man pages, example files) without running anything.

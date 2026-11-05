@@ -57,7 +57,7 @@ machine?" before the step-by-step part shows how.
 | Zone | What happens there | Needs `sudo`? |
 |---|---|---|
 | **1. Packages** | Programs from the Ubuntu archive are installed with `apt`. Nothing is removed, nothing already installed is upgraded, no repositories or PPAs are added, no snaps or Flatpaks. (APT may still pull newer versions of the *libraries* a new program needs; that is how dependencies work.) | yes, for `apt` |
-| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix, starship; the newest upstream release wins over Ubuntu's older package), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
+| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix, starship, lazygit; the newest upstream release wins over Ubuntu's older package), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
 | **3. The system itself** | **Nothing by default.** Only the opt-in changes in the table below, and only the ones you switch on. | yes, per change |
 
 ### Opt-in changes to the system and to your login files
@@ -123,12 +123,12 @@ starship, probe-rs, the Nerd Font) is the newest version on either release. What
 | Podman / eza / fzf | 4.9 / 0.18 / 0.44 | 5.7 / 0.23 / 0.67 |
 | Node.js in the archive (only a fallback) | 18 (end of life: the upstream LTS is used instead) | 22 |
 | RISC-V emulator | in `qemu-system-misc` | separate package `qemu-system-riscv` |
-| `lazygit` | not in the archive: taken from its release | in the archive |
+| `lazygit` | not in the archive (taken from its release on both) | older in the archive (the release is used on both) |
 | `zellij`, `difftastic` | not in the archive: skipped | not in the archive: skipped |
 | `apt history-undo` (undoing APT installs) | not available (APT 2.7) | available (APT 3) |
 
 The setup handles these differences itself (skips a package that does not exist on your release,
-takes `lazygit` from its release, installs Node.js from nodejs.org on both). Releases older than
+takes `lazygit` from its release on both, installs Node.js from nodejs.org on both). Releases older than
 24.04 are refused: their tools are too old. A release newer than 26.04 asks for confirmation:
 run `./setup.sh --check` first.
 
@@ -241,8 +241,8 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   run above). The same run confirmed that `ws-doctor` finds the tools installed in
   `~/.local/bin` without the shell loader.
 - **Package names:** all checked against the real Ubuntu 24.04 and 26.04
-  archives. Only `lazygit` (24.04 only), `zellij` and `difftastic` are missing
-  (the guide and script have a fallback for lazygit and skip the others).
+  archives. Only `zellij` and `difftastic` are missing (skipped); `lazygit`, which is missing from
+  24.04's archive, is no longer a package at all: it comes from its release.
   26.04 renamed or split three packages, which the lists now use: `7zip` (was
   `p7zip-full`), `qemu-user` + `qemu-user-binfmt` (was `qemu-user-static`) and
   `qemu-system-riscv` (split from `qemu-system-misc`; on 24.04 it does not exist and
@@ -621,7 +621,7 @@ apt_install \
   git git-lfs wget unzip zip 7zip xz-utils zstd rsync tree file \
   distro-info htop btop jq yq ripgrep fd-find bat eza zoxide fzf direnv \
   tealdeer hyperfine entr just tmux bash-completion shellcheck shfmt \
-  yamllint git-delta lazygit moreutils pv ncdu libxml2-utils \
+  yamllint git-delta moreutils pv ncdu libxml2-utils \
   fonts-jetbrains-mono wl-clipboard xclip
 ```
 
@@ -632,9 +632,12 @@ setup in B10 adds the familiar aliases.)
 `wl-clipboard` (Wayland) and `xclip` (X11) are what Helix uses to reach the
 system clipboard (`Space y` / `Space p`).
 
-**lazygit** is not in every Ubuntu release (it is missing in 24.04). If
-`apt_install` reported it as not in the archive, take it from the project's
-release, checked against the `checksums.txt` the project publishes:
+**lazygit**: **the newest upstream release wins** over Ubuntu's package (your decision, as for Node.js
+in B7; it is missing from the 24.04 archive and older in 26.04's), so it is not in the `apt_install` list above. Take it
+from the project's release, checked against the `checksums.txt` the project publishes. The script falls back
+to Ubuntu's package (`apt_install lazygit`) only if the download fails; `LAZYGIT_FROM_ARCHIVE=1` prefers it; an existing
+lazygit is left alone, and `--upgrade` installs the newest release in `~/.local/bin`. `LAZYGIT_VERSION` (the lock) pins a
+release: use `.../releases/download/<tag>` as `base`.
 
 ```bash
 command -v lazygit || {
@@ -744,13 +747,14 @@ Undo: `uv tool uninstall <name>` for each tool; `rm -f ~/.local/bin/uv ~/.local/
 
 *Mirrors `step "Rust toolchain"`, function `rust_toolchain`.*
 
-**rustup**: from the archive if available, else `rustup-init` itself, checked
-against the `.sha256` the Rust project publishes (instead of the
+**rustup**: **the newest upstream release wins** over Ubuntu's package (your decision, as for Node.js
+in B7): `rustup-init` itself, checked against the `.sha256` the Rust project publishes (instead of the
 `sh.rustup.rs` script that downloads it). `--default-toolchain none`
-installs only rustup itself; `--no-modify-path` leaves your shell files alone.
+installs only rustup itself; `--no-modify-path` leaves your shell files alone. The script falls back to Ubuntu's
+package (`apt_install rustup`) only if the download fails; `RUSTUP_FROM_ARCHIVE=1` prefers it; an existing rustup is
+left alone. `RUSTUP_VERSION` (the lock) pins a release: use `.../rustup/archive/<version>/<arch>/rustup-init`.
 
 ```bash
-command -v rustup || apt_install rustup
 command -v rustup || {
   url=https://static.rust-lang.org/rustup/dist/$(uname -m)-unknown-linux-gnu/rustup-init
   download_verified "$url" "$url.sha256" rustup-init /tmp/rustup-init
@@ -1757,7 +1761,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` on 24.04, and `zellij` and `difftastic` on both 24.04 and 26.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
+| `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `zellij` and `difftastic` on both 24.04 and 26.04). Skip it, or take the project's own release if it has one. |
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
 | `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
 | `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |

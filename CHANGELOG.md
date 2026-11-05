@@ -20,6 +20,14 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Changed (rustup and lazygit follow the same upstream-first rule)
+- **rustup and lazygit now come from their projects' releases too**, for consistency with uv, Helix, starship and Node.js
+  (your decision). rustup is `rustup-init` checked against the `.sha256` the Rust project publishes, installed in `~/.cargo`
+  (`--default-toolchain none`, no shell-file edits, self-update still disabled); lazygit is the release tarball checked against
+  its `checksums.txt`, in `~/.local/bin`. New pins `RUSTUP_VERSION` and `LAZYGIT_VERSION` (the lock writes them) and switches
+  `RUSTUP_FROM_ARCHIVE` / `LAZYGIT_FROM_ARCHIVE`. lazygit is no longer in the apt package list (it would have installed the
+  archive's older one first). Ubuntu's package is the fallback; the E2E no longer allows lazygit to be missing.
+
 ### Changed (the newest upstream release wins for uv, Helix and starship; the CI self-test blocks)
 - **uv, Helix and starship now come from their projects' releases, not from Ubuntu's older package** (your decision,
   the rule Node.js already followed). They are unpacked into your home directory (`~/.local/bin`, Helix in

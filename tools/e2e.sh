@@ -32,7 +32,8 @@
 #   E2E_ALLOW_FAILED_STEPS  regex of step names that may fail in this environment
 #                           (e.g. "System tuning" in a container without sysctl access)
 #   E2E_ALLOW_MISSING       regex of packages allowed to be missing from the archive
-#                           (default: lazygit|zellij|difftastic)
+#                           (default: zellij|difftastic; lazygit is no longer allowed: it comes from its
+#                           release, and a fallback to the archive's package is reported as a problem)
 # It runs once per supported Ubuntu release (24.04 and the newest LTS; see .github/workflows/e2e.yml).
 # Things the test knows about a machine it did not set up itself: if rustup (~/.rustup,
 # ~/.cargo/bin/rustup) already exists before the install, it is not counted as a leftover; the CI VM job
@@ -81,7 +82,7 @@ sudo -n true 2>/dev/null || { echo "e2e.sh: needs passwordless sudo (a disposabl
 mkdir -p "$LOG"
 read -ra SW <<<"${E2E_SWITCHES:-}"
 ALLOW_FAILED="${E2E_ALLOW_FAILED_STEPS:-^\$}"
-ALLOW_MISSING="${E2E_ALLOW_MISSING:-lazygit|zellij|difftastic}"
+ALLOW_MISSING="${E2E_ALLOW_MISSING:-zellij|difftastic}"
 strip() { sed 's/\x1b\[[0-9;]*m//g'; }
 # setup.sh with the profile, --full and the extra switches; never interactive
 setup() { env "${SW[@]}" ./setup.sh --profile "$PROFILE" --full "$@" </dev/null; }
@@ -142,7 +143,7 @@ ph_explain_check() {
 ph_install() {
   local t0=$SECONDS rc=0 t pre=""
   # What was on the machine BEFORE the setup (a runner image may ship uv): such a tool is left alone, by design.
-  for t in uv hx helix starship; do if command -v "$t" >/dev/null 2>&1; then pre+=" $t"; fi; done
+  for t in uv hx helix starship lazygit rustup; do if command -v "$t" >/dev/null 2>&1; then pre+=" $t"; fi; done
   echo "tools already on the machine before the setup:${pre:- (none)}"
   setup > "$LOG/install.log" 2>&1 || rc=$?
   echo "setup.sh exit status $rc after $((SECONDS - t0))s"
@@ -151,13 +152,19 @@ ph_install() {
   # The newest upstream release wins over the archive's older package (uv, Helix, starship): each of them must
   # have been installed by the setup into ~/.local/bin, not taken from Ubuntu. A fallback to the archive after a
   # failed download is written to the "skipped or failed" list, which check_install_log below rejects.
-  local bad=0 want="uv"
+  local bad=0 want="uv lazygit"
   if grep -q 'INSTALL_HELIX=0' <<<"${E2E_SWITCHES:-}"; then :; else want+=" hx"; fi
   for t in $want; do
     if [[ " $pre " == *" $t "* ]]; then echo "(already there before the setup, left alone) $t"; continue; fi
     if [[ -x $HOME/.local/bin/$t ]]; then echo "upstream: $t -> $("$HOME/.local/bin/$t" --version | head -n 1)"
     else echo "NOT UPSTREAM: $t is not in ~/.local/bin (resolves to: $(command -v "$t" || echo nothing))"; bad=1; fi
   done
+  # rustup lives in ~/.cargo/bin (rustup-init); a runner VM image already ships one, which is left alone.
+  if ! grep -q 'INSTALL_RUST=0' <<<"${E2E_SWITCHES:-}"; then
+    if [[ " $pre " == *" rustup "* ]]; then echo "(already there before the setup, left alone) rustup"
+    elif [[ -x $HOME/.cargo/bin/rustup ]]; then echo "upstream: rustup -> $("$HOME/.cargo/bin/rustup" --version 2>/dev/null | head -n 1)"
+    else echo "NOT UPSTREAM: rustup is not in ~/.cargo/bin (resolves to: $(command -v rustup || echo nothing))"; bad=1; fi
+  fi
   check_install_log "$LOG/install.log" || bad=1
   return $bad
 }
@@ -237,12 +244,14 @@ ph_lock() {
   grep -q 'declare -gA UV_PINS' "$lock" || { echo "lock lacks UV_PINS"; bad=1; }
   grep -q 'RUST_TOOLCHAIN:=' "$lock" || { echo "lock lacks the Rust toolchain version"; bad=1; }
   grep -q 'UV_VERSION:=' "$lock" || { echo "lock lacks the uv version"; bad=1; }
+  grep -q 'LAZYGIT_VERSION:=v' "$lock" || { echo "lock lacks the lazygit version"; bad=1; }
+  grep -q 'RUSTUP_VERSION:=' "$lock" || { echo "lock lacks the rustup version"; bad=1; }
   if [[ "$(readlink "$HOME/.local/bin/node" 2>/dev/null || true)" == */opt/node-v* ]]; then
     grep -q 'NODE_LTS_VERSION:=v' "$lock" || { echo "lock lacks the Node.js version"; bad=1; }
   fi
   local checked; checked="$(WORKSTATION_LOCK="$lock" setup --check 2>&1 | strip || true)"   # captured: grep -q on a pipe can SIGPIPE under pipefail
   grep -q 'versions pinned' <<<"$checked" || { echo "--check did not load the lock"; bad=1; }
-  grep -E 'UV_VERSION|HELIX_VERSION|STARSHIP_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
+  grep -E 'UV_VERSION|HELIX_VERSION|STARSHIP_VERSION|RUSTUP_VERSION|LAZYGIT_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
   return $bad
 }
 
