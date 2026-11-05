@@ -208,11 +208,17 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   unverified downloads); both are fixed and the second run passed all eight. The install
   step took 10 to 19 minutes, once 51 minutes on a slow runner.
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
-  (the 24.04 archive has Node 18, which is end of life), and the ARM and RISC-V programs run
+  (the 24.04 archive has Node 18, which is end of life). **uv and Helix come from their projects' releases
+  too** (checked in all eight jobs: uv 0.13.7 and Helix 25.07.1 landed in `~/.local`, none fell back to Ubuntu's
+  package); a third eight-job run on the code with the upstream-first rule passed all 12 phases everywhere (self-test
+  33 and 36 passed on the VM, 32 and 35 in the container, 0 failed). The ARM and RISC-V programs run
   in QEMU (RISC-V through `qemu-system-misc` on 24.04, `qemu-system-riscv` on 26.04). An
-  eleventh phase plays a zsh user (a twelfth installs starship from its real release, because `--full` turns Oh My Bash on, which owns the prompt): it installs a real `zsh`, makes it the login shell, runs
+  eleventh phase plays a zsh user: it installs a real `zsh`, makes it the login shell, runs
   `./setup.sh --reset-shell` (the zsh files go to a backup folder, the login shell becomes bash
-  again, tested against the real `usermod`) and then `--undo` (zsh and the files come back).
+  again, tested against the real `usermod`) and then `--undo` (zsh and the files come back). A
+  twelfth phase installs starship from its real release with the published checksum, runs it and
+  installs it a second time (skipped because the newest release is already there); the main
+  install cannot test this because `--full` turns Oh My Bash on, which owns the prompt.
   The shell-setup phase also checks the aliases themselves in a new shell (`ls`, `ll`, `la`
   must be `eza`, `grep` must be ours) with the real Oh My Bash switched on: that check exists
   because a real-machine run found Oh My Bash replacing them, which the tests had missed;

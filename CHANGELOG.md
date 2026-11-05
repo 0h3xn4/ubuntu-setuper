@@ -35,6 +35,9 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - **The CI self-test step is blocking** (it ended in `|| true`). It is the only CI step that proves the installed tools
   work; a lenient step lets a broken run look green; the QEMU test that made it flaky has passed in every recent run.
   It fails only when a test fails (warnings and skips do not). Reasoning is in `ci.yml`.
+- **Verified:** E2E run #18 on the final code (head `a4f6899`, workflow_dispatch): all eight jobs (24.04 and 26.04, runner VM
+  and container, `work` and `personal`) passed all 12 phases. uv 0.13.7 and Helix 25.07.1 came from upstream in every job and no
+  job fell back to the archive's package; self-test 33/36 (VM) and 32/35 (container) passed, 0 failed, only the expected skips.
 - Tests: `check-all.sh` checks the install order (`t_upstream_first`) and the install functions against fake releases
   (`t_upstream_install`); `e2e.sh` checks that uv and Helix land in `~/.local/bin`, that the lock pins uv, and has a new
   twelfth phase that installs starship from its real release (`--full` turns Oh My Bash on, which owns the prompt).

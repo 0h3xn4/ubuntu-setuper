@@ -303,6 +303,11 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+E2E WITH UPSTREAM-FIRST uv/Helix/starship (GitHub run #18, workflow_dispatch on the branch, head a4f6899): 8/8 GREEN, all 12
+phases everywhere (phase 12 = starship installed from its real release in a scratch HOME; --full turns Oh My Bash on, so the main
+install never installs starship). uv 0.13.7 and Helix 25.07.1 were installed from upstream in all eight jobs, none used the
+archive fallback; self-test 33/36 (VM work/personal), 32/35 (container), 0 failed, only SPICE/container-image skips; ~13-16 min per
+job. The CI self-test is blocking in ci.yml but only runs on a PULL REQUEST: it has not been seen green yet (check it on the PR before merging).
 E2E ON 24.04 + 26.04 (GitHub runs #15 and #16, workflow_dispatch on the branch, matrix ubuntu 24.04/latest x vm/container x work/personal =
 8 jobs; headers say "Ubuntu 24.04.5 LTS" / "Ubuntu 26.04.1 LTS"). Run #15 (head 05ea021): 7/8 green; the failure (container 24.04
 personal) was a transient GitHub error during two downloads: it aborted the Base CLI tools step via a pipefail curl in
