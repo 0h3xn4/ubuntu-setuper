@@ -1204,6 +1204,87 @@ kate_plugins() {
   done
 }
 
+# Add what is MISSING from a JSON settings file you already have, from the file this setup ships (OURS). The setup never
+# overwrites a file of yours, so an older install keeps its older settings forever: Kate then ignores new defaults (the
+# basedpyright level, found on the user's real machine). This adds missing keys, recursively, and changes nothing else:
+# every value you set stays. A backup is made first and the undo restores it.
+#   add_missing_json_keys [--check] FILE OURS    exit 0 = changed (written), 10 = nothing missing, 2 = FILE is not readable JSON
+add_missing_json_keys() {
+  python3 -I - "$@" <<'PY'
+import json, os, sys, tempfile
+args = sys.argv[1:]
+check = bool(args) and args[0] == "--check"
+if check:
+    args = args[1:]
+path, ours_path = args
+ours = json.load(open(ours_path, encoding="utf-8"))
+try:
+    user = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError):
+    sys.exit(2)
+def add(u, o):
+    changed = False
+    for key, value in o.items():
+        if key not in u:
+            u[key] = value
+            changed = True
+        elif isinstance(u[key], dict) and isinstance(value, dict):
+            changed = add(u[key], value) or changed
+    return changed
+if not isinstance(user, dict) or not add(user, ours):
+    sys.exit(10 if isinstance(user, dict) else 2)
+if check:
+    sys.exit(0)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".settings-")
+with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    json.dump(user, fh, indent=2)
+    fh.write("\n")
+os.chmod(tmp, os.stat(path).st_mode & 0o777)
+os.replace(tmp, path)
+PY
+}
+
+# Use add_missing_json_keys on one of your existing files, with backup and undo (both before the change).
+migrate_user_json() {   # FILE OURS
+  local file="$1" ours="$2" rc=0 bdir="$DATA_DIR/settings-backups/$TIMESTAMP" bname
+  if [[ ! -f $file ]]; then return 0; fi
+  add_missing_json_keys --check "$file" "$ours" || rc=$?
+  if (( rc == 10 )); then return 0; fi
+  if (( rc != 0 )); then warn "${file/#$HOME/~} is not valid JSON (exit $rc); left alone"; return 0; fi
+  bname="${file#"$HOME"/}"; bname="${bname//\//_}"
+  mkdir -p "$bdir" && cp -p "$file" "$bdir/$bname"
+  record_undo "cp -p $(printf %q "$bdir/$bname") $(printf %q "$file")"
+  add_missing_json_keys "$file" "$ours"
+  ok "Added the missing defaults to ${file/#$HOME/~}; what you set is untouched (backup in ${bdir/#$HOME/~})"
+}
+
+# Helix: the same idea for languages.toml (TOML, so a block is appended instead of rewriting the file): our basedpyright
+# level is added only if YOU have not set typeCheckingMode yourself, the result must still parse, otherwise the file is restored.
+migrate_helix_basedpyright() {
+  local file="$HOME/.config/helix/languages.toml" bdir="$DATA_DIR/settings-backups/$TIMESTAMP" rc=0
+  if [[ ! -f $file ]]; then return 0; fi
+  python3 -I - "$file" <<'PY' || rc=$?
+import sys, tomllib
+try:
+    c = tomllib.load(open(sys.argv[1], "rb"))
+except (OSError, ValueError):
+    sys.exit(2)
+cfg = c.get("language-server", {}).get("basedpyright", {}).get("config", {})
+sys.exit(10 if "typeCheckingMode" in (cfg.get("basedpyright") or {}) else 0)
+PY
+  if (( rc == 10 )); then return 0; fi
+  if (( rc != 0 )); then warn "${file/#$HOME/~} is not valid TOML (exit $rc); left alone"; return 0; fi
+  mkdir -p "$bdir" && cp -p "$file" "$bdir/helix_languages.toml"
+  record_undo "cp -p $(printf %q "$bdir/helix_languages.toml") $(printf %q "$file")"
+  printf '\n# Added by workstation-setup: basedpyright'"'"'s own default level is very strict; "standard" is pyright'"'"'s default.\n[language-server.basedpyright.config.basedpyright]\ntypeCheckingMode = "standard"\n' >> "$file"
+  if python3 -I -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$file" 2>/dev/null; then
+    ok "Added the basedpyright level \"standard\" to ${file/#$HOME/~}; what you set is untouched (backup in ${bdir/#$HOME/~})"
+  else
+    cp -p "$bdir/helix_languages.toml" "$file"
+    warn "Appending to ${file/#$HOME/~} would break it (a conflicting table?): restored. Add [language-server.basedpyright.config.basedpyright] typeCheckingMode = \"standard\" yourself"
+  fi
+}
+
 kate_setup() {
   apt_install "${PKGS_KATE[@]}"
   # Language servers for Kate's LSP client: ours (basedpyright, ruff, cmake, taplo) in
@@ -1211,8 +1292,10 @@ kate_setup() {
   # over Kate's built-in settings by Kate itself. JSON/YAML servers are not installed
   # on purpose: their defaults download schemas from the internet.
   install_file .config/kate/lspclient/settings.json
+  migrate_user_json "$HOME/.config/kate/lspclient/settings.json" "$FILES/home/.config/kate/lspclient/settings.json"
   # The Format plugin runs on SAVE by default and only knows autopep8 for Python: format on request only, with ruff.
   install_file .config/kate/formatting/settings.json
+  migrate_user_json "$HOME/.config/kate/formatting/settings.json" "$FILES/home/.config/kate/formatting/settings.json"
   install_file .local/bin/ws-pyformat 755
   kate_plugins
 }
@@ -1244,6 +1327,7 @@ helix_setup() {
   install_upstream_first Helix helix helix_install_upstream "$HELIX_FROM_ARCHIVE" "hx helix" || return 1
   install_file .config/helix/config.toml
   install_file .config/helix/languages.toml
+  migrate_helix_basedpyright
 }
 
 # Install containers.conf (pull_policy = "never"). Guard against a podman that rejects it: if podman
@@ -1872,7 +1956,7 @@ t_basedpyright_default() {
   local py="$FILES/selftest/lsp/default_level.py" kate="$HOME/.config/kate/lspclient/settings.json" settings mode rc=0
   [[ -f $kate ]] || kate="$FILES/home/.config/kate/lspclient/settings.json"
   settings="$(python3 -I -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1]))["servers"]["python"]["settings"]))' "$kate")" \
-    || { echo "the Python server entry in $kate has no \"settings\""; return 1; }
+    || { echo "the Python server entry in $kate has no \"settings\": the file predates the quiet default and the setup never overwrites yours. Re-run ./setup.sh (it adds what is missing), or see the README troubleshooting row for Python errors"; return 1; }
   python3 -I -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); assert c["language-server"]["basedpyright"]["config"]["basedpyright"]["typeCheckingMode"] == "standard"' \
     "$FILES/home/.config/helix/languages.toml" || { echo "Helix's basedpyright config does not set typeCheckingMode = standard"; return 1; }
   for mode in didchange configuration; do
@@ -2501,8 +2585,7 @@ Shell setup is installed but NOT active:
   ~/.bashrc does not load ~/.bashrc.d (ENABLE_SHELL_LOADER=0). To activate it, add
   this line to ~/.bashrc yourself (or re-run with ENABLE_SHELL_LOADER=1):
       for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f
-  Until then: ~/.cargo/bin is not on your PATH, and the aliases, the prompt and the
-  offline lock for uv/pip/cargo are not active.
+  Until then: ~/.cargo/bin is not on your PATH, and the aliases and the prompt are not active.
 SNIP
 fi)
 
@@ -2534,7 +2617,7 @@ OPT_IN_CORE=(
   "SET_GNOME_FONT|set the GNOME monospace font (JetBrainsMono Nerd Font Mono 11; JetBrains Mono 11 without the Nerd Font)"
   "SET_GNOME_PRIVACY|GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search"
   "JOIN_DOCKER_GROUP|add your user to group 'docker' (only with INSTALL_DOCKER=1; equivalent to root)"
-  "ENABLE_SHELL_LOADER|append ONE marked block to ~/.bashrc that loads ~/.bashrc.d (aliases, PATH, prompt, offline lock)"
+  "ENABLE_SHELL_LOADER|append ONE marked block to ~/.bashrc that loads ~/.bashrc.d (aliases, PATH, prompt)"
   "SET_GIT_DEFAULTS|set global git defaults (only options you have not set yourself)"
   "INSTALL_OH_MY_BASH|install Oh My Bash (pinned commit in ~/.local/share/oh-my-bash, loaded from ~/.bashrc.d; replaces the starship prompt)"
 )
@@ -2575,7 +2658,7 @@ STEP_WHY["Oh My Bash"]="(Only with INSTALL_OH_MY_BASH=1.) The Oh My Bash framewo
 STEP_TOUCHES["Oh My Bash"]="~/.local/share/oh-my-bash (git clone of one commit), ~/.bashrc.d/15-oh-my-bash.sh; network: github.com, at install time only."
 
 STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak), plus konsole-kpart, the part behind Kate's built-in terminal panel (Kate only suggests it, so without it the panel says \"Konsole not installed\"). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files. Kate switches on only 8 of its plugins by default, so this step also switches on a curated set for C/C++/Rust/Python/embedded work (Build, CMake Tools, Debugger, Symbol Viewer, Snippets, Formatting, Git Blame, File Browser, Colored Brackets), changing only the plugin keys in Kate's session files (backed up first, restored by --undo), and keeps Compiler Explorer (sends your code to godbolt.org) and XML Validation (xmllint may fetch schemas) OFF."
-STEP_TOUCHES["Kate editor"]="apt packages (kate, konsole-kpart and KDE libraries); ~/.config/kate/lspclient/settings.json and ~/.config/kate/formatting/settings.json; ~/.local/bin/ws-pyformat; the [Kate Plugins] group of ~/.local/share/kate/anonymous.katesession and your existing ~/.local/share/kate/sessions/*.katesession (backed up under ~/.local/share/workstation/kate-backups)."
+STEP_TOUCHES["Kate editor"]="apt packages (kate, konsole-kpart and KDE libraries); ~/.config/kate/lspclient/settings.json and ~/.config/kate/formatting/settings.json (new, or, if you already have one, only the MISSING defaults are added to it: your values stay, a backup goes to ~/.local/share/workstation/settings-backups); ~/.local/bin/ws-pyformat; the [Kate Plugins] group of ~/.local/share/kate/anonymous.katesession and your existing ~/.local/share/kate/sessions/*.katesession (backed up under ~/.local/share/workstation/kate-backups)."
 
 STEP_WHY["Extra terminal tools"]="Nice-to-have terminal tools: zellij (a beginner-friendlier terminal multiplexer than tmux) and difftastic (structural diffs). Packages the archive of your Ubuntu release lacks are skipped and reported."
 STEP_TOUCHES["Extra terminal tools"]="apt packages."
@@ -2599,12 +2682,12 @@ STEP_WHY["Bash language server"]="Editor support for shell scripts. It needs Nod
 STEP_TOUCHES["Bash language server"]="~/.local/opt/node-<version> and links in ~/.local/bin (node, npm, npx, corepack); ~/.local (npm global prefix); npm settings in ~/.npmrc; network: nodejs.org, npm registry. With NODE_FROM_ARCHIVE=1: apt packages nodejs, npm."
 
 STEP_WHY["Helix editor"]="The Helix terminal editor: the newest stable release from the project's tarball (the newest upstream release wins over Ubuntu's older package, which is only the fallback; HELIX_FROM_ARCHIVE=1 prefers it; never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
-STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/*; network: the GitHub release (Helix publishes no checksum: trust on first use, then pinned by the lock); the archive's package only as a fallback."
+STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/* (if you already have a languages.toml, only the basedpyright level is appended, and only if you set none; backup in ~/.local/share/workstation/settings-backups); network: the GitHub release (Helix publishes no checksum: trust on first use, then pinned by the lock); the archive's package only as a fallback."
 
 STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on). With podman, a small config file makes it never pull images by itself."
 STEP_TOUCHES["Containers"]="apt packages; ~/.config/containers/containers.conf (with podman); with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
 
-STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
+STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the generated cheat sheet (the strict offline lock is opt-in: ENFORCE_OFFLINE_ENV=1). They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
 STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/workstation-setup/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball (checked against its published checksum; the archive's package only as a fallback)."
 
 STEP_WHY["Git setup"]="Switches lazygit's update check off. With SET_GIT_DEFAULTS=1 it also sets sensible global git defaults, only where you have not set a value yourself; GIT_NAME/GIT_EMAIL are applied if you give them."

@@ -427,6 +427,53 @@ PY
   return $bad
 }
 check "basedpyright self-test client: both Kate ways of passing settings, noisy vs quiet, control (mock server)" t_lsp_default_level
+# An older install keeps its older settings files (the setup never overwrites yours), so new defaults never reached it (the quiet basedpyright
+# level, found on the real machine). migrate_user_json / migrate_helix_basedpyright add what is MISSING and nothing else, with backup and undo.
+t_settings_migrate() {
+  local h="$TMP/mig" bad=0 out undo="$TMP/mig/undo.sh"; rm -rf "$h"; mkdir -p "$h/.config/kate/lspclient" "$h/.config/helix"
+  # an old Kate file: python entry WITHOUT settings, a server of the user's own, a value the user changed
+  cat > "$h/.config/kate/lspclient/settings.json" <<'JSON'
+{"servers": {"python": {"command": ["basedpyright-langserver", "--stdio"], "url": "https://example.org/mine"},
+             "rust": {"command": ["my-rust-analyzer"]}}}
+JSON
+  cp "$h/.config/kate/lspclient/settings.json" "$h/kate.orig"
+  # an old Helix file with an unrelated setting of the user's
+  printf '[language-server.mine]\ncommand = "mine"\n\n[[language]]\nname = "python"\nauto-format = false\n' > "$h/.config/helix/languages.toml"
+  cp "$h/.config/helix/languages.toml" "$h/helix.orig"
+  run_() { HOME="$h" KM_TS="$1" KM_FILES="$REPO/files" bash -c 'source <(head -n -1 ./setup.sh); FILES="$KM_FILES"; DATA_DIR="$HOME/.local/share/workstation"; TIMESTAMP=$KM_TS; UNDO_FILE="$HOME/undo.sh"; : > "$UNDO_FILE"
+    migrate_user_json "$HOME/.config/kate/lspclient/settings.json" "$FILES/home/.config/kate/lspclient/settings.json"; migrate_helix_basedpyright' 2>&1; }
+  run_ 20260101-000000 >/dev/null
+  python3 -I - "$h/.config/kate/lspclient/settings.json" <<'PY' || bad=1
+import json, sys
+s = json.load(open(sys.argv[1]))["servers"]
+assert s["python"]["settings"]["basedpyright"]["typeCheckingMode"] == "standard", "the quiet level was not added"
+assert s["python"]["url"] == "https://example.org/mine", "a value the user set was changed"
+assert s["rust"]["command"] == ["my-rust-analyzer"], "a server of the user's own was lost"
+assert "cmake" in s and "toml" in s, "missing servers were not added"
+PY
+  python3 -I - "$h/.config/helix/languages.toml" <<'PY' || bad=1
+import sys, tomllib
+c = tomllib.load(open(sys.argv[1], "rb"))
+assert c["language-server"]["basedpyright"]["config"]["basedpyright"]["typeCheckingMode"] == "standard", "the Helix level was not added"
+assert c["language-server"]["mine"]["command"] == "mine" and c["language"][0]["auto-format"] is False, "the user's own Helix settings were damaged"
+PY
+  [[ -f $h/.local/share/workstation/settings-backups/20260101-000000/.config_kate_lspclient_settings.json || -f $h/.local/share/workstation/settings-backups/20260101-000000/config_kate_lspclient_settings.json ]] \
+    || [[ -n "$(find "$h/.local/share/workstation/settings-backups/20260101-000000" -name '*kate*' 2>/dev/null | head -n1)" ]] || { echo "no backup of the Kate file"; bad=1; }
+  # undo restores both originals
+  while IFS= read -r line; do case $line in cp\ -p*) bash -c "$line" ;; esac; done < "$undo"
+  cmp -s "$h/.config/kate/lspclient/settings.json" "$h/kate.orig" || { echo "the undo did not restore the Kate file"; bad=1; }
+  cmp -s "$h/.config/helix/languages.toml" "$h/helix.orig" || { echo "the undo did not restore the Helix file"; bad=1; }
+  # idempotent: migrate again, then once more: the second time changes nothing and records nothing
+  run_ 20260101-000001 >/dev/null
+  out="$(run_ 20260101-000002)"
+  if grep -qv '^#\|^set \|^$' "$undo"; then echo "an unchanged run recorded undo commands"; bad=1; fi
+  # a Helix file where the user chose their own level is left alone
+  printf '[language-server.basedpyright.config.basedpyright]\ntypeCheckingMode = "strict"\n' > "$h/.config/helix/languages.toml"; cp "$h/.config/helix/languages.toml" "$h/helix.strict"
+  run_ 20260101-000003 >/dev/null
+  cmp -s "$h/.config/helix/languages.toml" "$h/helix.strict" || { echo "a level the user chose in Helix was overwritten"; bad=1; }
+  return $bad
+}
+check "settings of an older install: missing defaults are added, yours stay, backup + undo, idempotent" t_settings_migrate
 check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell

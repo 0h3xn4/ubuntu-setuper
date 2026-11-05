@@ -42,6 +42,15 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - **Kate's terminal panel works:** `konsole-kpart` (about 2 MB, the embedded terminal part, no network features) is installed with Kate.
   Kate only *suggests* it, so APT skipped it and the panel said "Konsole not installed". `t_kate` now checks for it.
 
+### Fixed (an older install gets the new defaults)
+- **The setup now adds missing defaults to settings files you already have** (the first real run of the new version: `basedpyright is quiet in the editors` FAILED
+  on your machine because your `~/.config/kate/lspclient/settings.json` predates the quiet level and the setup never overwrites your files, so Kate stayed noisy). A
+  re-run now adds what is MISSING to your Kate lspclient/formatting settings (recursively; every value you set stays) and the basedpyright level to your Helix
+  `languages.toml` (only if you set none; the result must still parse, or the file is restored), with a backup under `~/.local/share/workstation/settings-backups/`
+  and an undo record. The self-test message says what to do. New check `t_settings_migrate`. Stale wording about the "offline lock" in the shell step text and the
+  opt-in table (it is opt-in since the earlier change) is corrected.
+- The README troubleshooting has a row for the `yaml-language-server` self-test failure (an npm global that fetches schemas by itself).
+
 ### Verified (this batch)
 - **E2E run #24 on the final code (head `1bfb316`): all eight jobs (24.04 and 26.04, runner VM and container, `work` and `personal`) passed all 12 phases**; self-test 33/36
   (container) and 34/37 (VM) passed, 0 failed. It covered rustup/lazygit/uv/Helix/probe-rs from upstream, the opt-in offline lock (new shell not blocked), the records
