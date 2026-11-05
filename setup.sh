@@ -470,18 +470,68 @@ uv_base_url() {
 }
 rustup_init_url() { echo "https://static.rust-lang.org/rustup/dist/$(host_arch)-unknown-linux-gnu/rustup-init"; }
 starship_asset() { echo "starship-$(host_arch)-unknown-linux-gnu.tar.gz"; }
-starship_base_url() { echo "https://github.com/starship/starship/releases/latest/download"; }
+starship_base_url() {
+  if [[ -n ${STARSHIP_VERSION:-} ]]; then echo "https://github.com/starship/starship/releases/download/$STARSHIP_VERSION"
+  else echo "https://github.com/starship/starship/releases/latest/download"; fi
+}
 helix_url() {  # $1 = version
-  echo "https://github.com/helix-editor/helix/releases/download/$1/helix-$1-x86_64-linux.tar.xz"
+  echo "https://github.com/helix-editor/helix/releases/download/$1/helix-$1-$(host_arch)-linux.tar.xz"
 }
 # Pinned version, or the newest stable release (GitHub's "latest" excludes
 # pre-releases and drafts). Network access here happens at install time only.
 helix_version() {
   if [[ -n ${HELIX_VERSION:-} ]]; then echo "$HELIX_VERSION"; return 0; fi
-  curl -fsSL https://api.github.com/repos/helix-editor/helix/releases/latest 2>/dev/null \
-    | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null \
-    || curl -s -o /dev/null -D - --max-time 30 https://github.com/helix-editor/helix/releases/latest \
-    | awk 'tolower($1) == "location:" { n = split($2, a, "/"); gsub(/\r/, "", a[n]); print a[n]; exit }'
+  local v
+  # The redirect of /releases/latest names the newest stable tag (no API call, no rate limit); the API is the fallback.
+  v="$(curl -s -o /dev/null -D - --max-time 30 https://github.com/helix-editor/helix/releases/latest 2>/dev/null \
+    | awk 'tolower($1) == "location:" { n = split($2, a, "/"); gsub(/\r/, "", a[n]); print a[n]; exit }' || true)"
+  if [[ -z $v ]]; then
+    v="$(curl -fsSL --max-time 30 https://api.github.com/repos/helix-editor/helix/releases/latest 2>/dev/null \
+      | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null || true)"
+  fi
+  [[ -n $v ]] && echo "$v"
+}
+
+# True if the binary $1 (a path) exists and reports version $2 as its second word ("uv 0.8.3", "helix 25.07.1 (...)").
+binary_is_version() {
+  [[ -x $1 ]] || return 1
+  [[ "$("$1" --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)" == "$2" ]]
+}
+
+# The rule for tools without an LTS line (uv, Helix, starship; decided by the user: the newest UPSTREAM release
+# wins over the Ubuntu archive's older package, like Node.js). Usage: <label> <apt package> <install function>
+# <value of the *_FROM_ARCHIVE switch> <command names>.
+#   - not installed: the project's release (checksum-verified, in ~/.local); if that download fails, or
+#     *_FROM_ARCHIVE=1, or ALLOW_CURL_INSTALLERS=0, the archive's package. A fallback after a FAILED download is
+#     written to MISSING_FILE so the summary and the E2E flag it.
+#   - already installed (by you, or an earlier run): left alone. Only --upgrade moves to the newest release; it
+#     installs it in ~/.local/bin, in front of any package from Ubuntu (which is never removed).
+# The install function must return non-zero on any failure and must not rely on 'set -e' (it runs in an 'if').
+install_upstream_first() {
+  local label="$1" pkg="$2" fn="$3" from_archive="$4" cmds="$5" c installed=0 note=0
+  for c in $cmds; do if have "$c"; then installed=1; fi; done
+  if (( installed )); then
+    if on "$UPGRADE" && ! on "$from_archive" && on "$ALLOW_CURL_INSTALLERS"; then
+      "$fn" || warn "Could not move $label to the newest release; keeping the installed one"
+    fi
+    return 0
+  fi
+  if ! on "$from_archive" && on "$ALLOW_CURL_INSTALLERS"; then
+    if "$fn"; then return 0; fi
+    warn "Could not install $label from its release; using the Ubuntu archive's package instead (older, but supported by Ubuntu)"
+    note=1
+  fi
+  if apt_has "$pkg"; then
+    apt_install "$pkg"
+    for c in $cmds; do
+      if (( note )) && have "$c"; then echo "$label newest release (used the archive's)" >> "$MISSING_FILE"; break; fi
+    done
+  elif on "$from_archive" && on "$ALLOW_CURL_INSTALLERS"; then
+    "$fn" || true
+  fi
+  for c in $cmds; do if have "$c"; then return 0; fi; done
+  warn "$label could not be installed"
+  return 1
 }
 
 # Node.js: the newest LTS release from nodejs.org (decided by the user: the newest upstream LTS wins over the
@@ -920,20 +970,25 @@ offline_docs() {
   apt_install "${PKGS_DOCS[@]}"
 }
 
+# uv from astral's release tarball (not their installer script: it would also edit your shell startup files),
+# checked against the checksum astral publishes next to it. The newest stable release, or UV_VERSION (the lock).
+uv_install_upstream() {
+  local asset base dir tag fresh=0; asset="$(uv_asset)"; base="$(uv_base_url)"; dir="${asset%.tar.gz}"
+  tag="${UV_VERSION:-$(release_tag_of "$base/$asset" || true)}"
+  if [[ -n $tag ]] && binary_is_version "$HOME/.local/bin/uv" "$tag"; then ok "uv $tag is the newest stable release"; return 0; fi
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/$asset.sha256" "$asset" || return 1
+  tar -xzf "$STATE_DIR/$asset" -C "$STATE_DIR" || return 1
+  [[ -x $STATE_DIR/$dir/uv && -x $STATE_DIR/$dir/uvx ]] || { warn "The uv archive does not contain uv and uvx"; return 1; }
+  mkdir -p "$HOME/.local/bin" || return 1
+  if [[ ! -e $HOME/.local/bin/uv && ! -L $HOME/.local/bin/uv ]]; then fresh=1; fi
+  if (( fresh )); then record_undo "rm -f ~/.local/bin/uv ~/.local/bin/uvx"; fi
+  install -m 755 "$STATE_DIR/$dir/uv" "$STATE_DIR/$dir/uvx" "$HOME/.local/bin/" || return 1
+  hash -r
+  ok "uv $("$HOME/.local/bin/uv" --version | awk '{ print $2 }') installed in ~/.local/bin (the newest upstream release)"
+}
+
 ensure_uv() {
-  have uv && return 0
-  if apt_has uv; then apt_install uv; fi
-  have uv && return 0
-  on "$ALLOW_CURL_INSTALLERS" || { warn "uv is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
-  # The release tarball, checked against the checksum astral publishes next to it
-  # (not the installer script: it would also edit your shell startup files).
-  local asset base dir; asset="$(uv_asset)"; base="$(uv_base_url)"; dir="${asset%.tar.gz}"
-  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/$asset.sha256" "$asset"
-  tar -xzf "$STATE_DIR/$asset" -C "$STATE_DIR"
-  mkdir -p "$HOME/.local/bin"
-  install -m 755 "$STATE_DIR/$dir/uv" "$STATE_DIR/$dir/uvx" "$HOME/.local/bin/"
-  record_undo "rm -f ~/.local/bin/uv ~/.local/bin/uvx"
-  have uv
+  install_upstream_first uv uv uv_install_upstream "$UV_FROM_ARCHIVE" uv || return 1
 }
 
 uv_tool_install() {
@@ -1046,31 +1101,29 @@ kate_setup() {
 
 nice_to_have() { apt_install "${PKGS_NICE_TO_HAVE[@]}"; }
 
+# Helix from its release tarball (the project publishes no checksum file: trust on first use, then pinned by the
+# lock). Helix finds its 'runtime' directory next to the real binary, so the binary is linked, not copied.
+helix_install_upstream() {
+  local ver name dest="$HOME/.local/opt" bin="$HOME/.local/bin"
+  ver="$(helix_version || true)"
+  if [[ -z $ver ]]; then warn "Could not determine the latest Helix release"; return 1; fi
+  if binary_is_version "$bin/hx" "$ver"; then ok "Helix $ver is the newest stable release"; return 0; fi
+  name="helix-${ver}-$(host_arch)-linux"
+  fetch_verified "$(helix_url "$ver")" "$STATE_DIR/helix.tar.xz" || return 1
+  mkdir -p "$dest" "$bin" || return 1
+  # Undo records come BEFORE the step that can fail, and only for what this run creates.
+  if [[ ! -e $dest/$name ]]; then record_undo "rm -rf $(printf %q "$dest/$name")"; fi
+  if [[ ! -e $bin/hx && ! -L $bin/hx ]]; then record_undo "rm -f ~/.local/bin/hx"; fi
+  tar -xJf "$STATE_DIR/helix.tar.xz" -C "$dest" || return 1
+  [[ -x $dest/$name/hx ]] || { warn "The Helix archive does not contain $name/hx"; return 1; }
+  ln -sf "$dest/$name/hx" "$bin/hx" || return 1
+  hash -r
+  ok "Installed Helix $ver to $dest/$name (the newest upstream release)"
+}
+
 helix_setup() {
   # No snap: snapd auto-refreshes from the online Snap Store.
-  if ! have hx && ! have helix && apt_has helix; then apt_install helix; fi
-  # A Helix installed from a release tarball (not apt) is moved to the newest
-  # stable release on --upgrade.
-  local tarball_install=0
-  if [[ -L "$HOME/.local/bin/hx" && "$(readlink "$HOME/.local/bin/hx")" == "$HOME/.local/opt/"* ]]; then
-    tarball_install=1
-  fi
-  if { ! have hx && ! have helix; } || { on "$UPGRADE" && (( tarball_install )); }; then
-    on "$ALLOW_CURL_INSTALLERS" || { warn "Helix is not in the archive and ALLOW_CURL_INSTALLERS=0"; return 1; }
-    local ver; ver="$(helix_version)" || { warn "Could not determine the latest Helix release"; return 1; }
-    if have hx && [[ "$(hx --version | awk '{ print $2 }')" == "$ver" ]]; then
-      ok "Helix $ver is the newest stable release"
-    else
-    local name="helix-${ver}-x86_64-linux" dest="$HOME/.local/opt"
-    fetch_verified "$(helix_url "$ver")" "$STATE_DIR/helix.tar.xz"
-    mkdir -p "$dest" "$HOME/.local/bin"
-    tar -xJf "$STATE_DIR/helix.tar.xz" -C "$dest"
-    # Helix finds its 'runtime' directory next to the real binary.
-    ln -sf "$dest/$name/hx" "$HOME/.local/bin/hx"
-    record_undo "rm -rf $(printf %q "$dest/$name") ~/.local/bin/hx"
-    ok "Installed Helix $ver to $dest/$name"
-    fi
-  fi
+  install_upstream_first Helix helix helix_install_upstream "$HELIX_FROM_ARCHIVE" "hx helix" || return 1
   install_file .config/helix/config.toml
   install_file .config/helix/languages.toml
 }
@@ -1189,6 +1242,20 @@ oh_my_bash() {
   install_file .bashrc.d/15-oh-my-bash.sh
 }
 
+# starship from its release tarball, checked against the .sha256 the project publishes.
+starship_install_upstream() {
+  local asset base tag fresh=0 bin="$HOME/.local/bin"; asset="$(starship_asset)"; base="$(starship_base_url)"
+  tag="${STARSHIP_VERSION:-$(release_tag_of "$base/$asset" || true)}"
+  if [[ -n $tag ]] && binary_is_version "$bin/starship" "${tag#v}"; then ok "starship ${tag#v} is the newest stable release"; return 0; fi
+  fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/$asset.sha256" || return 1
+  mkdir -p "$bin" || return 1
+  if [[ ! -e $bin/starship && ! -L $bin/starship ]]; then fresh=1; fi
+  if (( fresh )); then record_undo "rm -f ~/.local/bin/starship"; fi
+  tar -xzf "$STATE_DIR/$asset" -C "$bin" starship || return 1
+  hash -r
+  ok "starship $("$bin/starship" --version | awk 'NR == 1 { print $2 }') installed in ~/.local/bin (the newest upstream release)"
+}
+
 shell_setup() {
   mkdir -p "$HOME/.bashrc.d"
   if ! on "$ENABLE_SHELL_LOADER"; then
@@ -1215,16 +1282,8 @@ EOF
   install_file .local/bin/ws-doctor 755
   install_cheatsheet
 
-  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH" && ! have starship; then
-    if apt_has starship; then
-      apt_install starship
-    elif on "$ALLOW_CURL_INSTALLERS"; then
-      local sasset; sasset="$(starship_asset)"
-      fetch_published "$(starship_base_url)/$sasset" "$STATE_DIR/$sasset" "$(starship_base_url)/$sasset.sha256"
-      mkdir -p "$HOME/.local/bin"
-      tar -xzf "$STATE_DIR/$sasset" -C "$HOME/.local/bin" starship
-      record_undo "rm -f ~/.local/bin/starship"
-    fi
+  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then
+    install_upstream_first starship starship starship_install_upstream "$STARSHIP_FROM_ARCHIVE" starship || true
   fi
   if have starship && [[ ! -e "$HOME/.config/starship.toml" ]]; then
     mkdir -p "$HOME/.config"
@@ -1373,8 +1432,14 @@ cache_images() {
 # DRY RUN (--check)
 # ============================================================================
 plan_tool() {
-  local label="$1" cmd="$2" pkg="$3" url="$4" how
-  if have "$cmd"; then how="already installed"
+  # $5 (optional) = the value of the tool's *_FROM_ARCHIVE switch: given, the newest upstream release is preferred.
+  local label="$1" cmd="$2" pkg="$3" url="$4" from_archive="${5:-}" how cand
+  if have "$cmd"; then how="already installed (--upgrade would move it to the newest upstream release)"
+  elif [[ -n $from_archive ]] && ! on "$from_archive" && on "$ALLOW_CURL_INSTALLERS"; then
+    how="download $url"
+    if [[ -n ${DOWNLOAD_SHA256[$url]:-} ]]; then how+=" (SHA-256 pinned)"; fi
+    cand="$(apt_candidates "$pkg" | awk '{ print $2 }')"
+    if [[ -n $cand ]]; then how+="; the archive has $pkg $cand: not used, the newest upstream release wins (archive only if the download fails)"; fi
   elif apt_has "$pkg"; then how="from the Ubuntu archive (package $pkg)"
   elif on "$ALLOW_CURL_INSTALLERS"; then
     if [[ -n ${DOWNLOAD_SHA256[$url]:-} ]]; then how="download $url (SHA-256 pinned)"
@@ -1466,13 +1531,13 @@ check_mode() {
   fi
 
   section "Tools installed outside APT"
-  if on "$INSTALL_PYTHON"; then plan_tool uv uv uv "$(uv_base_url)/$(uv_asset) (checked against the published .sha256)"; fi
+  if on "$INSTALL_PYTHON"; then plan_tool uv uv uv "$(uv_base_url)/$(uv_asset) (checked against the published .sha256)" "$UV_FROM_ARCHIVE"; fi
   if on "$INSTALL_RUST"; then plan_tool rustup rustup rustup "$(rustup_init_url) (checked against the published .sha256)"; fi
   if on "$INSTALL_HELIX"; then
-    if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")"
-    else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest"; fi
+    if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")" "$HELIX_FROM_ARCHIVE"
+    else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest (trust on first use: Helix publishes no checksum)" "$HELIX_FROM_ARCHIVE"; fi
   fi
-  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then plan_tool starship starship starship "$(starship_base_url)/$(starship_asset) (checked against the published .sha256)"; fi
+  if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then plan_tool starship starship starship "$(starship_base_url)/$(starship_asset) (checked against the published .sha256)" "$STARSHIP_FROM_ARCHIVE"; fi
   if on "$INSTALL_BASH_LSP" && ! on "$NODE_FROM_ARCHIVE"; then
     printf '    %-10s %s\n' "Node.js" "newest LTS (${NODE_LTS_VERSION:-resolved at install time}) from nodejs.org, checked against its published SHASUMS256.txt; the archive's nodejs/npm only as a fallback"
   fi
@@ -2111,6 +2176,8 @@ EOF
     # shellcheck disable=SC2016
     if [[ -n $hx ]]; then printf ': "${HELIX_VERSION:=%s}"\n' "$("$hx" --version | awk '{ print $2 }')"; fi
     # shellcheck disable=SC2016
+    if have starship; then printf ': "${STARSHIP_VERSION:=v%s}"\n' "$(starship --version | awk 'NR == 1 { print $2 }')"; fi
+    # shellcheck disable=SC2016
     if [[ -s $NERD_FONT_DIR/.version ]]; then printf ': "${NERD_FONT_VERSION:=%s}"\n' "$(<"$NERD_FONT_DIR/.version")"; fi
     # shellcheck disable=SC2016
     if [[ -d $OMB_DIR/.git ]]; then printf ': "${OH_MY_BASH_COMMIT:=%s}"\n' "$(git -C "$OMB_DIR" rev-parse HEAD)"; fi
@@ -2335,8 +2402,8 @@ STEP_TOUCHES["C/C++ toolchain"]="apt packages; ~/.gdbinit."
 STEP_WHY["GUI tools"]="Meld, a visual diff and merge tool."
 STEP_TOUCHES["GUI tools"]="apt package."
 
-STEP_WHY["Python tools"]="uv (package and tool manager) and the Python developer tools (ruff, basedpyright, pre-commit, ...), installed per user. uv is told never to download Python interpreters."
-STEP_TOUCHES["Python tools"]="apt packages; ~/.local (uv and the tools); ~/.config/uv/uv.toml; network: uv's release tarball only if uv is not in the archive (checked against astral's published checksum), PyPI for the tools."
+STEP_WHY["Python tools"]="uv (package and tool manager) and the Python developer tools (ruff, basedpyright, pre-commit, ...), installed per user. uv itself is the newest stable release from astral (checksum-verified, in ~/.local/bin): the newest upstream release wins over Ubuntu's older package, which is only the fallback (UV_FROM_ARCHIVE=1 prefers it). uv is told never to download Python interpreters."
+STEP_TOUCHES["Python tools"]="apt packages; ~/.local (uv and the tools); ~/.config/uv/uv.toml; network: uv's release tarball (checked against astral's published checksum; the archive's package only as a fallback), PyPI for the tools."
 
 STEP_WHY["Rust toolchain"]="rustup with the newest stable Rust, the editor components, and cargo tools compiled from source (slow). rustup's self-update is switched off."
 STEP_TOUCHES["Rust toolchain"]="apt build libraries; ~/.rustup and ~/.cargo; network: rustup-init only if not in the archive (checked against the Rust project's published checksum), Rust servers, crates.io."
@@ -2347,14 +2414,14 @@ STEP_TOUCHES["Offline documentation"]="apt packages (docs, man pages)."
 STEP_WHY["Bash language server"]="Editor support for shell scripts. It needs Node.js: the newest LTS release from nodejs.org (the archive's is older; no APT repository is added), unpacked in your home directory and checked against the checksum the project publishes. Then the server is installed with npm into your home directory. npm is told not to contact the registry for update notices, funding messages or audits. NODE_FROM_ARCHIVE=1 uses Ubuntu's own nodejs/npm instead."
 STEP_TOUCHES["Bash language server"]="~/.local/opt/node-<version> and links in ~/.local/bin (node, npm, npx, corepack); ~/.local (npm global prefix); npm settings in ~/.npmrc; network: nodejs.org, npm registry. With NODE_FROM_ARCHIVE=1: apt packages nodejs, npm."
 
-STEP_WHY["Helix editor"]="The Helix terminal editor, from the Ubuntu archive or the official release tarball (never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
-STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/*; network: GitHub release only if Helix is not in the archive."
+STEP_WHY["Helix editor"]="The Helix terminal editor: the newest stable release from the project's tarball (the newest upstream release wins over Ubuntu's older package, which is only the fallback; HELIX_FROM_ARCHIVE=1 prefers it; never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
+STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/*; network: the GitHub release (Helix publishes no checksum: trust on first use, then pinned by the lock); the archive's package only as a fallback."
 
 STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on). With podman, a small config file makes it never pull images by itself."
 STEP_TOUCHES["Containers"]="apt packages; ~/.config/containers/containers.conf (with podman); with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
 
 STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
-STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball only if not in the archive (checked against its published checksum)."
+STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball (checked against its published checksum; the archive's package only as a fallback)."
 
 STEP_WHY["Git setup"]="Switches lazygit's update check off. With SET_GIT_DEFAULTS=1 it also sets sensible global git defaults, only where you have not set a value yourself; GIT_NAME/GIT_EMAIL are applied if you give them."
 STEP_TOUCHES["Git setup"]="~/.config/lazygit/config.yml; ~/.gitconfig only with SET_GIT_DEFAULTS=1 or GIT_NAME/GIT_EMAIL."

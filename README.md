@@ -57,7 +57,7 @@ machine?" before the step-by-step part shows how.
 | Zone | What happens there | Needs `sudo`? |
 |---|---|---|
 | **1. Packages** | Programs from the Ubuntu archive are installed with `apt`. Nothing is removed, nothing already installed is upgraded, no repositories or PPAs are added, no snaps or Flatpaks. (APT may still pull newer versions of the *libraries* a new program needs; that is how dependencies work.) | yes, for `apt` |
-| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix if not in the archive, starship), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
+| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix, starship; the newest upstream release wins over Ubuntu's older package), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
 | **3. The system itself** | **Nothing by default.** Only the opt-in changes in the table below, and only the ones you switch on. | yes, per change |
 
 ### Opt-in changes to the system and to your login files
@@ -136,8 +136,8 @@ run `./setup.sh --check` first.
 
 | Path | Contents |
 |---|---|
-| `~/.local/bin` | `uv`, `ws-init`, `ws-devname`, `hx` (Helix, if not from the archive), `node`/`npm`/`npx` (links into `~/.local/opt`), npm tools |
-| `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release tarball, if used |
+| `~/.local/bin` | `uv`, `uvx`, `starship`, `ws-init`, `ws-devname`, `hx` (a link into `~/.local/opt`), `node`/`npm`/`npx` (links into `~/.local/opt`), npm tools |
+| `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release (one folder per version) |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
 | `~/.config/kate` | Kate's language-server settings |
@@ -153,8 +153,8 @@ run `./setup.sh --check` first.
 - **While you set up (allowed):** `apt`; the release downloads for `uv`,
   `rustup`, `starship`, `lazygit` and `probe-rs` (checked against the
   checksums those projects publish), the Node.js LTS tarball from nodejs.org
-  (checked against its `SHASUMS256.txt`) and the Helix release, only if the archive
-  lacks it; `uv tool install`, `cargo install`, `npm install`; `tldr --update`
+  (checked against its `SHASUMS256.txt`) and the Helix release (which publishes no
+  checksum: trust on first use, then pinned by the lock); `uv tool install`, `cargo install`, `npm install`; `tldr --update`
   once; the Nerd Font release from GitHub and, if you choose, the Oh My
   Bash clone from GitHub; the three offline caches (PyPI, crates.io, the
   container registry) and, if you choose, the SPICE kernels.
@@ -208,11 +208,17 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   unverified downloads); both are fixed and the second run passed all eight. The install
   step took 10 to 19 minutes, once 51 minutes on a slow runner.
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
-  (the 24.04 archive has Node 18, which is end of life), and the ARM and RISC-V programs run
+  (the 24.04 archive has Node 18, which is end of life). **uv and Helix come from their projects' releases
+  too** (checked in all eight jobs: uv 0.13.7 and Helix 25.07.1 landed in `~/.local`, none fell back to Ubuntu's
+  package); a third eight-job run on the code with the upstream-first rule passed all 12 phases everywhere (self-test
+  33 and 36 passed on the VM, 32 and 35 in the container, 0 failed). The ARM and RISC-V programs run
   in QEMU (RISC-V through `qemu-system-misc` on 24.04, `qemu-system-riscv` on 26.04). An
   eleventh phase plays a zsh user: it installs a real `zsh`, makes it the login shell, runs
   `./setup.sh --reset-shell` (the zsh files go to a backup folder, the login shell becomes bash
-  again, tested against the real `usermod`) and then `--undo` (zsh and the files come back).
+  again, tested against the real `usermod`) and then `--undo` (zsh and the files come back). A
+  twelfth phase installs starship from its real release with the published checksum, runs it and
+  installs it a second time (skipped because the newest release is already there); the main
+  install cannot test this because `--full` turns Oh My Bash on, which owns the prompt.
   The shell-setup phase also checks the aliases themselves in a new shell (`ls`, `ll`, `la`
   must be `eza`, `grep` must be ours) with the real Oh My Bash switched on: that check exists
   because a real-machine run found Oh My Bash replacing them, which the tests had missed;
@@ -691,17 +697,14 @@ apt_install meld
 apt_install python3-dev python3-venv
 ```
 
-**uv** (fast Python package/tool manager). Prefer the Ubuntu archive:
-
-```bash
-command -v uv || apt_install uv
-```
-
-If `uv` is still missing, take the release tarball and let `download_verified`
-check it against the `.sha256` that astral publishes next to it. (This is
-used instead of the installer script, which would also edit your shell
-startup files.) To pin a version use `.../releases/download/<version>` as
-`base`.
+**uv** (fast Python package/tool manager). **The newest upstream release wins**
+over Ubuntu's package (your decision, as for Node.js in B7; Ubuntu's `uv`, where it exists, is
+older). Take the release tarball and let `download_verified` check it against the `.sha256` that
+astral publishes next to it. (This is used instead of the installer script, which would also edit
+your shell startup files.) To pin a version use `.../releases/download/<version>` as `base`.
+The script falls back to Ubuntu's package (`apt_install uv`) only if the download fails, and
+`UV_FROM_ARCHIVE=1` prefers it; an existing `uv` is left alone, and `--upgrade` installs the newest
+release in `~/.local/bin`, in front of any package from Ubuntu (which is never removed).
 
 ```bash
 command -v uv || {
@@ -860,15 +863,9 @@ Undo: `npm rm -g <name>`, the `npm config delete ...` line, and
 
 *Mirrors `step "Helix editor"`, function `helix_setup`.*
 
-Never from a snap (snapd auto-refreshes from the online Snap Store). Use
-the archive if it has Helix:
-
-```bash
-command -v hx || command -v helix || apt_install helix
-```
-
-Otherwise install the newest **stable** release from the project's
-GitHub releases page (`https://github.com/helix-editor/helix/releases`,
+Never from a snap (snapd auto-refreshes from the online Snap Store). **The newest
+upstream release wins** over Ubuntu's package (your decision, as for Node.js in B7): install the
+newest **stable** release from the project's GitHub releases page (`https://github.com/helix-editor/helix/releases`,
 the one marked "Latest", never a pre-release). Replace `VERSION` with the
 tag, e.g. the one shown on that page:
 
@@ -883,6 +880,11 @@ command -v hx || command -v helix || {
   record_undo "rm -rf ~/.local/opt/$name ~/.local/bin/hx"
 }
 ```
+
+Helix publishes no checksum file, so this download is trusted on first use (the script records its
+SHA-256 and the lock pins it afterwards). The script falls back to Ubuntu's package
+(`apt_install helix`) only if the download fails; `HELIX_FROM_ARCHIVE=1` prefers it; an existing Helix is
+left alone, and `--upgrade` installs the newest release in `~/.local/bin`, in front of any package from Ubuntu.
 
 Configuration. `languages.toml` does two important things: it disables the
 JSON and YAML language servers (their defaults download schemas from the
@@ -985,11 +987,11 @@ put "$WS/files/home/.local/bin/ws-doctor"        ~/.local/bin/ws-doctor 755
 
 **Prompt (starship)** *(optional: `INSTALL_STARSHIP`; skip it if you use
 Oh My Bash, [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default))*.
-Archive first, otherwise the project's release tarball, checked against the
-`.sha256` it publishes:
+The newest upstream release wins over Ubuntu's older package (your decision, as for Node.js in B7):
+the project's release tarball, checked against the `.sha256` it publishes. The script falls back to
+Ubuntu's package (`apt_install starship`) only if the download fails; `STARSHIP_FROM_ARCHIVE=1` prefers it.
 
 ```bash
-command -v starship || apt_install starship
 command -v starship || {
   asset=starship-$(uname -m)-unknown-linux-gnu.tar.gz
   base=https://github.com/starship/starship/releases/latest/download

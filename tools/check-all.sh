@@ -196,6 +196,91 @@ t_os_check() {
   OS_RELEASE_FILE="$d/os-release" bash -c 'source <(head -n -1 ./setup.sh); source ./workstation.conf; pkg_applies qemu-system-riscv' >/dev/null 2>&1 || { echo "26.04: qemu-system-riscv must be installed"; bad=1; }
   return $bad
 }
+# uv, Helix and starship: the newest upstream release wins over the archive's older package (decided by the
+# user, like Node.js). The ORDER is the whole point, so it is tested with fakes: which of "release" and "archive"
+# runs, what is left alone, and that a fallback after a FAILED download is reported (MISSING_FILE).
+t_upstream_first() {
+  local d="$TMP/uf" bad=0 out; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+MISSING_FILE="$UF_NAME.missing"; : > "$MISSING_FILE"
+CALLS=""; INSTALLED=0
+have() { [[ $INSTALLED == 1 ]]; }
+warn() { :; }; ok() { :; }
+apt_has() { [[ $ARCHIVE_HAS == 1 ]]; }
+apt_install() { CALLS+="archive "; INSTALLED=1; }
+upstream() { CALLS+="release "; if [[ $UPSTREAM_OK == 1 ]]; then INSTALLED=1; return 0; fi; return 1; }
+UPGRADE=0; ALLOW_CURL_INSTALLERS=1; FROM=0; ARCHIVE_HAS=1; UPSTREAM_OK=1
+eval "$UF_SETUP"
+install_upstream_first tool pkg upstream "$FROM" tool || true
+echo "CALLS=${CALLS% } MISSING=$(wc -l < "$MISSING_FILE")"
+DRV
+  case_() { # case_ NAME SETUP EXPECTED_CALLS EXPECTED_MISSING_LINES
+    out="$(UF_NAME="$d/$1" UF_SETUP="$2" bash "$d/driver.sh" 2>&1 | tail -n1)"
+    [[ $out == "CALLS=$3 MISSING=$4" ]] || { echo "$1: expected 'CALLS=$3 MISSING=$4', got '$out'"; bad=1; }
+  }
+  case_ default      ''                                        'release'         0
+  case_ dl-fails     'UPSTREAM_OK=0'                           'release archive' 1
+  case_ dl-fails-no-archive 'UPSTREAM_OK=0; ARCHIVE_HAS=0'     'release'         0
+  case_ from-archive 'FROM=1'                                  'archive'         0
+  case_ from-archive-lacks 'FROM=1; ARCHIVE_HAS=0'             'release'         0
+  case_ no-curl      'ALLOW_CURL_INSTALLERS=0'                 'archive'         0
+  case_ installed    'INSTALLED=1'                             ''                0
+  case_ upgrade      'INSTALLED=1; UPGRADE=1'                  'release'         0
+  case_ upgrade-from-archive 'INSTALLED=1; UPGRADE=1; FROM=1'  ''                0
+  return $bad
+}
+# The install functions themselves, against fake releases (a tarball made here, with scripts that print a
+# version; nothing is downloaded and no real binary is run): they must install into ~/.local, record the undo
+# line BEFORE failing steps, skip when the newest release is already there, and fail (non-zero) on a bad archive.
+t_upstream_install() {
+  local d="$TMP/ui" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+warn() { :; }; ok() { :; }
+A="$(host_arch)"; FETCHES=0
+mk() { # mk NAME VERSION: an executable that prints "<first word> <version>"
+  printf '#!/bin/sh\necho "%s %s%s"\n' "$1" "$2" "${3:-}"
+}
+release_tag_of() { echo "$FAKE_TAG"; }
+helix_version() { echo "$FAKE_HX"; }
+fetch_published() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1; local t="$STATE_DIR/fake-$FETCHES"; mkdir -p "$t"
+  case $1 in
+    *uv-*) mkdir -p "$t/uv-$A-unknown-linux-gnu"; mk uv "${FAKE_TAG}" > "$t/uv-$A-unknown-linux-gnu/uv"; cp "$t/uv-$A-unknown-linux-gnu/uv" "$t/uv-$A-unknown-linux-gnu/uvx"; chmod +x "$t"/uv-*/uv*
+       tar -czf "$2" -C "$t" "uv-$A-unknown-linux-gnu" ;;
+    *starship*) mk starship "${FAKE_TAG#v}" > "$t/starship"; chmod +x "$t/starship"; tar -czf "$2" -C "$t" starship ;;
+  esac; }
+fetch_verified() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1; local t="$STATE_DIR/fake-$FETCHES/helix-$FAKE_HX-$A-linux"; mkdir -p "$t"
+  mk helix "$FAKE_HX" " (abc)" > "$t/hx"; chmod +x "$t/hx"; tar -cJf "$2" -C "$STATE_DIR/fake-$FETCHES" "helix-$FAKE_HX-$A-linux"; }
+init_undo_file
+rc=0; FAKE_FAIL=${FAKE_FAIL:-0}
+"$FN" || rc=$?
+echo "RC=$rc FETCHES=$FETCHES BIN=$([[ -x $HOME/.local/bin/$BIN ]] && "$HOME/.local/bin/$BIN" --version | head -n1 || echo none) UNDO=$(grep -c "^rm " "$UNDO_FILE" || true)"
+DRV
+  run_() { # run_ NAME FN BIN TAG FAIL  -> prints the driver's result line
+    HOME="$d/home-$1" FN="$2" BIN="$3" FAKE_TAG="$4" FAKE_HX="99.9" FAKE_FAIL="$5" bash -c 'mkdir -p "$HOME"; bash "$0"' "$d/driver.sh" 2>&1 | tail -n1
+  }
+  want_() { [[ $1 == "$2" ]] || { echo "$3: expected '$2', got '$1'"; bad=1; }; }
+  out="$(run_ uv uv_install_upstream uv 9.9.9 0)";      want_ "$out" "RC=0 FETCHES=1 BIN=uv 9.9.9 UNDO=1" "uv install"
+  out="$(run_ uvx uv_install_upstream uv 9.9.9 1)";     want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "uv download fails"
+  out="$(run_ st starship_install_upstream starship v9.9.9 0)"; want_ "$out" "RC=0 FETCHES=1 BIN=starship 9.9.9 UNDO=1" "starship install"
+  out="$(run_ stx starship_install_upstream starship v9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "starship download fails"
+  out="$(run_ hx helix_install_upstream hx 9.9.9 0)";   want_ "$out" "RC=0 FETCHES=1 BIN=helix 99.9 (abc) UNDO=2" "helix install"
+  out="$(run_ hxx helix_install_upstream hx 9.9.9 1)";  want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "helix download fails"
+  # a second run finds the newest release already there: nothing is fetched, no second undo line
+  local name fn bin tag
+  while read -r name fn bin tag; do
+    out="$(HOME="$d/home-$name" FN="$fn" BIN="$bin" FAKE_TAG="$tag" FAKE_HX="99.9" FAKE_FAIL=0 bash "$d/driver.sh" 2>&1 | tail -n1)"
+    [[ $out == RC=0\ FETCHES=0* ]] || { echo "$fn again: expected no download, got '$out'"; bad=1; }
+  done <<'LIST'
+uv uv_install_upstream uv 9.9.9
+st starship_install_upstream starship v9.9.9
+hx helix_install_upstream hx 9.9.9
+LIST
+  return $bad
+}
+check "uv/Helix/starship install functions: ~/.local, undo recorded, skip when current, fail cleanly" t_upstream_install
+check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell
 
