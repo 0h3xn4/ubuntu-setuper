@@ -145,8 +145,7 @@ run `./setup.sh --check` first.
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
 | `~/.bashrc.d` | shell setup files, loaded in name order (`10-workstation.sh`, `15-oh-my-bash.sh`, `16-aliases.sh`, `20-offline.sh`, `30-embedded.sh`) |
 | `~/.local/share/workstation` | project starter files, Python wheelhouse, Rust crate cache, download checksums, SPICE kernels |
-| `~/WORKSTATION-CHEATSHEET.md` | the cheat sheet (`ws-help`) |
-| `~/workstation-undo.sh`, `~/workstation-manifest-*.txt` | your undo commands, the record of what was installed |
+| `~/workstation-setup/` | **one folder for everything the setup writes for you to read**: `WORKSTATION-CHEATSHEET.md` (`ws-help`), `workstation-undo-<time>.sh` (your undo commands), `workstation-manifest-<time>.txt` plus `workstation-manifest-latest.txt` (the record of what was installed) and `workstation-setup-<time>.log`. Nothing of this sits loose in `~`; `WS_OUT_DIR=/some/folder ./setup.sh` picks another folder. Earlier versions left these files in `~`: the next run moves them here and never overwrites anything. |
 
 ### When the network is used
 
@@ -286,7 +285,7 @@ machine ends up in the same state.
      coreutils or APT sources.
 3. **Everything reversible.** Each section ends with an **Undo** line. The
    helpers in A2 also append the undo commands for the files you create to
-   `~/workstation-undo.sh`.
+   `~/workstation-setup/workstation-undo.sh`.
 4. **Latest stable, long-term-supported versions.** Ubuntu: the newest LTS, or any
    older LTS release this guide supports (24.04 and 26.04 today): you do **not**
    have to upgrade your system to use it. For software with an LTS line the
@@ -364,7 +363,8 @@ cat > ~/ws-manual-helpers.sh <<'EOF'
 # Source this file:  . ~/ws-manual-helpers.sh   (run from the repository root first: export WS=$PWD)
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 WS="${WS:-$PWD}"
-UNDO="$HOME/workstation-undo.sh"
+UNDO="$HOME/workstation-setup/workstation-undo.sh"
+mkdir -p "$HOME/workstation-setup"
 [ -e "$UNDO" ] || { printf '#!/usr/bin/env bash\n# Undo commands, newest last. REVIEW before running; run lines in reverse order.\n' > "$UNDO"; chmod +x "$UNDO"; }
 record_undo() { printf '%s\n' "$*" >> "$UNDO"; }
 
@@ -448,7 +448,7 @@ Notes:
   tarball): it records the SHA-256 of what you downloaded, so compare it
   with the publisher's value if your process requires it; keep
   `~/.local/share/workstation/download-hashes.txt` as your record.
-- `ws-manual-helpers.sh` and `workstation-undo.sh` are your own records;
+- `ws-manual-helpers.sh` and `~/workstation-setup/workstation-undo.sh` are your own records;
   keep them.
 
 ## A3. Package lists and prerequisites
@@ -557,7 +557,7 @@ fi
 GNOME-level privacy settings (location, automatic time zone, problem
 reports, web search in the Activities overview) are in [B13](#b13-desktop-gnome-settings).
 
-Undo: the `record_undo` lines above; the commands are in `~/workstation-undo.sh`.
+Undo: the `record_undo` lines above; the commands are in `~/workstation-setup/workstation-undo.sh`.
 
 ## A7. Coming from zsh or Oh My Zsh *(only if you use zsh)*
 
@@ -1010,18 +1010,19 @@ if command -v starship >/dev/null && [ ! -e ~/.config/starship.toml ]; then
 fi
 ```
 
-**Cheat sheet.** `ws-help` shows `~/WORKSTATION-CHEATSHEET.md`. It is
+**Cheat sheet.** `ws-help` shows `~/workstation-setup/WORKSTATION-CHEATSHEET.md`. It is
 assembled from the core part, one part for each optional part you install
 (C1/C2), and the maintenance part. Do this now for the core and **repeat
 it after C1/C2** with their parts added (the commented lines):
 
 ```bash
+mkdir -p ~/workstation-setup
 {
   cat "$WS/files/cheatsheet/00-core.md"
   # echo; cat "$WS/modules/embedded/files/cheatsheet.md"    # after C1
   # echo; cat "$WS/modules/desktop/files/cheatsheet.md"     # after C2
   echo; cat "$WS/files/cheatsheet/99-maintenance.md"
-} > ~/WORKSTATION-CHEATSHEET.md
+} > ~/workstation-setup/WORKSTATION-CHEATSHEET.md
 ```
 
 (The maintenance part describes `setup.sh` commands; they are optional for
@@ -1681,7 +1682,8 @@ be fully isolated; they should point at internal infrastructure:
 file you can keep and `diff` against another machine:
 
 ```bash
-m=~/workstation-manifest-$(date +%Y%m%d).txt
+mkdir -p ~/workstation-setup
+m=~/workstation-setup/workstation-manifest-$(date +%Y%m%d).txt
 {
   echo "# Manifest $(date -u)"; . /etc/os-release; echo "$PRETTY_NAME, kernel $(uname -r)"
   echo "## Tools"; for t in gcc g++ clang clangd cmake ninja gdb python3 uv ruff rustc cargo rust-analyzer hx node npm podman git; do
@@ -1695,7 +1697,7 @@ m=~/workstation-manifest-$(date +%Y%m%d).txt
   echo "## Downloads outside APT"; sort -u ~/.local/share/workstation/download-hashes.txt
   echo "## APT packages"; dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' | sort
 } > "$m" 2>&1
-ln -sf "$m" ~/workstation-manifest-latest.txt
+ln -sf "$m" ~/workstation-setup/workstation-manifest-latest.txt
 ```
 
 To compare two machines (or a manual and a scripted setup):
@@ -1734,11 +1736,12 @@ the pins), run Part E, then record a new manifest.
 Each section above ended with its undo. In general:
 
 - **Files you created with `put`/`put_system`**, **gsettings**, **git
-  settings**, **services**, **npm config**, **groups**: `~/workstation-undo.sh`
+  settings**, **services**, **npm config**, **groups**: `~/workstation-setup/workstation-undo-<time>.sh`
   contains one command per change, newest last. See them newest first with
-  `grep -vE '^(#|set -x)' ~/workstation-undo.sh | tac`, then run the lines you
+  `grep -vE '^(#|set -x)' ~/workstation-setup/workstation-undo-*.sh | tac`, then run the lines you
   want. With the script it is one command that shows everything first and
-  asks before it runs anything: `./setup.sh --undo ~/workstation-undo.sh`
+  asks before it runs anything: `./setup.sh --undo` (the newest file in that folder;
+  or `./setup.sh --undo FILE`)
   (add `--dry-run` to only list).
 - **Packages from APT**: use APT's history on newer APT (`apt history-list`,
   then `sudo apt history-undo <ID>`); with older APT, read

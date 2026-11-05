@@ -43,6 +43,7 @@
 set -uo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." || exit 1
 
+OUT="$HOME/workstation-setup"   # the records folder: undo scripts, manifests, logs, the cheat sheet
 PROFILE="" DISPOSABLE="${E2E_DISPOSABLE:-0}" PLAN=0 LOG="${E2E_LOG_DIR:-$HOME/e2e-logs}"
 usage() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; }
 while (( $# )); do
@@ -159,6 +160,14 @@ ph_install() {
     if [[ -x $HOME/.local/bin/$t ]]; then echo "upstream: $t -> $("$HOME/.local/bin/$t" --version | head -n 1)"
     else echo "NOT UPSTREAM: $t is not in ~/.local/bin (resolves to: $(command -v "$t" || echo nothing))"; bad=1; fi
   done
+  # The records live in ONE folder (~/workstation-setup), not loose in ~: nothing of the kind may sit directly in ~.
+  local loose; loose="$(find "$HOME" -maxdepth 1 \( -name 'workstation-undo-*' -o -name 'workstation-manifest-*' -o -name 'workstation-setup-*.log' -o -name 'WORKSTATION-CHEATSHEET.md' \) | head -n 5)"
+  if [[ -n $loose ]]; then echo "LOOSE RECORD FILES in ~: $loose"; bad=1; fi
+  for t in WORKSTATION-CHEATSHEET.md workstation-manifest-latest.txt; do
+    if [[ $t == workstation-manifest-latest.txt ]]; then continue; fi    # written by the manifest at the end of the run
+    [[ -s $OUT/$t ]] || { echo "missing in $OUT: $t"; bad=1; }
+  done
+  [[ -n "$(find "$OUT" -maxdepth 1 -name 'workstation-undo-*.sh' -o -maxdepth 1 -name 'workstation-setup-*.log' | head -n1)" ]] || { echo "no undo script or log in $OUT"; bad=1; }
   # rustup lives in ~/.cargo/bin (rustup-init); a runner VM image already ships one, which is left alone.
   if ! grep -q 'INSTALL_RUST=0' <<<"${E2E_SWITCHES:-}"; then
     if [[ " $pre " == *" rustup "* ]]; then echo "(already there before the setup, left alone) rustup"
@@ -194,6 +203,7 @@ ph_shell() {
     echo "UV_OFFLINE=$UV_OFFLINE"; echo "CARGO_NET_OFFLINE=$CARGO_NET_OFFLINE"
     echo "LAUNCHER=$CMAKE_C_COMPILER_LAUNCHER"; echo "EDITOR=$EDITOR"; echo "OSH=${OSH:-}"; echo "PS1_SET=${PS1:+yes}"
     for t in ws-init ws-doctor uv hx cargo rustc ruff clangd cmake; do command -v "$t" >/dev/null && echo "have:$t" || echo "MISSING:$t"; done
+    echo "WSHELP_FILE=$(type ws-help 2>&1 | grep -o "[^ ]*WORKSTATION-CHEATSHEET.md" | head -n1)"
     echo "ALIAS_LS=$(alias ls 2>&1)"; echo "ALIAS_LL=$(alias ll 2>&1)"; echo "ALIAS_LA=$(alias la 2>&1)"; echo "ALIAS_GREP=$(alias grep 2>&1)"
   ' 2>&1 | strip)"
   printf '%s\n' "$out" | grep -E '=|MISSING' | sed 's/^/  /'
@@ -210,6 +220,8 @@ ph_shell() {
       grep -q "^ALIAS_$t=alias ${t,,}='eza" <<<"$out" || { echo "alias ${t,,} is not eza in a new shell (Oh My Bash replaced it?): $(grep "^ALIAS_$t=" <<<"$out")"; bad=1; }
     done
   fi
+  # ws-help reads the cheat sheet from the records folder (a fresh 10-workstation.sh has the new path)
+  grep -q '^WSHELP_FILE=.*workstation-setup.*' <<<"$out" || grep -q 'workstation-setup' <<<"$(bash -ic 'type ws-help' 2>&1)" || { echo "ws-help does not look in the records folder"; bad=1; }
   grep -q "^ALIAS_GREP=alias grep='grep --color=auto'$" <<<"$out" || { echo "alias grep is not ours in a new shell: $(grep '^ALIAS_GREP=' <<<"$out")"; bad=1; }
   return $bad
 }
@@ -220,14 +232,14 @@ ph_idempotent() {
   echo "second run: exit status $rc"
   (( rc == 0 )) || { strip < "$LOG/install2.log" | tail -n 25; return 1; }
   check_install_log "$LOG/install2.log" || return 1
-  f="$(find "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+  f="$(find "$OUT" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
   n="$(grep -vcE '^(#|set -x|$)' "$f" 2>/dev/null || echo 0)"
   echo "the second run recorded $n undo command(s):"; grep -vE '^(#|set -x|$)' "$f" | sed 's/^/    /' | head -n 12
   (( n <= 15 )) || return 2
 }
 
 ph_manifest() {
-  local m="$HOME/workstation-manifest-latest.txt" bad=0
+  local m="$OUT/workstation-manifest-latest.txt" bad=0
   setup --manifest > "$LOG/manifest.log" 2>&1 || { tail -n 8 "$LOG/manifest.log"; return 1; }
   [[ -s $m ]] || { echo "no manifest at $m"; return 1; }
   echo "manifest: $(wc -l < "$m") lines"
@@ -258,7 +270,7 @@ ph_lock() {
 ph_undo() {
   local n=0 f rc bad=0 seen=" "
   while :; do
-    f="$(find "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+    f="$(find "$OUT" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
     [[ -n $f ]] || break
     [[ $seen == *" $f "* ]] && { echo "undo file $f was not consumed"; bad=1; break; }
     seen+="$f "
@@ -279,7 +291,7 @@ ph_leftovers() {
   if [[ -n ${E2E_PRE_RUSTUP:-} ]]; then skip=("$HOME/.rustup" "$HOME/.cargo/bin/rustup"); fi
   for p in "$HOME"/.local/bin/{ws-init,ws-doctor,ws-devname,uv,uvx,hx,probe-rs,cargo-flash,cargo-embed,starship,lazygit} \
            "$HOME/.local/share/workstation" "$HOME/.config/helix" "$HOME/.config/uv" "$HOME/.config/kate/lspclient/settings.json" \
-           "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$HOME/WORKSTATION-CHEATSHEET.md" \
+           "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$OUT/WORKSTATION-CHEATSHEET.md" \
            "$HOME/.inputrc" "$HOME/.cargo/bin/rustup" "$HOME/.rustup" "$HOME/.local/opt" "$HOME"/.local/bin/{node,npm,npx} /etc/sysctl.d/60-dev-inotify.conf \
            /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json; do
     if [[ " ${skip[*]} " == *" $p "* ]]; then continue; fi

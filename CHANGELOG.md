@@ -20,6 +20,16 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Changed (the records live in one folder, not loose in your home directory)
+- **The undo script, manifest, log and the generated cheat sheet now go into `~/workstation-setup/`** (your request; before,
+  `workstation-undo-*.sh`, `workstation-manifest-*.txt`, `workstation-manifest-latest.txt`, `workstation-setup-*.log` and
+  `WORKSTATION-CHEATSHEET.md` sat directly in `~`). `WS_OUT_DIR` picks another folder. An install run moves the old files in
+  (never overwriting anything there); `--undo` finds undo files in the new folder and, as before, in `~`. `ws-help` looks in the
+  new folder first. Your existing `~/.bashrc.d/10-workstation.sh` is never edited: if it is an earlier version that still looks for
+  `~/WORKSTATION-CHEATSHEET.md`, a link is left there (recorded for `--undo`). The `--reset-shell` backup folder stays in `~`.
+  Tests: `check-all.sh` checks the migration (moved, never overwritten, link only when needed); the E2E fails if any such file is
+  loose in `~` after an install.
+
 ### Changed (rustup and lazygit follow the same upstream-first rule)
 - **rustup and lazygit now come from their projects' releases too**, for consistency with uv, Helix, starship and Node.js
   (your decision). rustup is `rustup-init` checked against the `.sha256` the Rust project publishes, installed in `~/.cargo`

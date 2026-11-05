@@ -49,7 +49,7 @@ Make your own profile by copying a file in `profiles/`; it only needs
 | Command | Purpose |
 |---|---|
 | `./setup.sh --profile NAME` | Choose the profile (remembered afterwards) |
-| `./setup.sh --undo [FILE]` | Take back an install run: replays the newest `~/workstation-undo-*.sh` (or FILE) newest-first after listing every command and asking. `--dry-run` only lists, `--yes` skips the question. Never removes APT packages. Works on the manual guide's `~/workstation-undo.sh` too |
+| `./setup.sh --undo [FILE]` | Take back an install run: replays the newest `~/workstation-setup/workstation-undo-*.sh` (or FILE) newest-first after listing every command and asking. `--dry-run` only lists, `--yes` skips the question. Never removes APT packages. Works on the manual guide's `~/workstation-setup/workstation-undo.sh` too (and on undo files that earlier versions left in `~`) |
 | `./setup.sh --reset-shell` | For someone coming from **zsh / Oh My Zsh** (this setup is for bash): moves their zsh files (`~/.oh-my-zsh`, `~/.zshrc`, `~/.zshenv`, `~/.zsh_history`, ...) into `~/workstation-shell-backup-<time>/` (nothing is deleted; symlinks are moved as links), copies `~/.bashrc` / `~/.profile` from `/etc/skel` if missing, and makes bash the login shell (`sudo usermod -s /bin/bash`, effective at the next login). Lists every change first and asks (`--dry-run` only lists, `--yes` skips the question); `./setup.sh --undo` takes it back. The `zsh` package is never removed. An explicit one-off command like `--undo`: not part of an install, and `--full` does not turn it on |
 | `./setup.sh --full` | The **full setup**: switch on every opt-in system change (services, `/etc` drop-ins, groups, GNOME settings, `~/.bashrc` loader, git defaults, browser policies). Switches you set yourself in the environment still win. Also `FULL_SETUP=1`. Asks for confirmation in a terminal. Combine with `--explain`/`--check` to preview. Pass it to `--self-test` too so the extra changes are verified |
 | `./setup.sh --explain` | Plain-language tour of every step this profile runs: what it does, why, where it changes things; plus which system changes are on or off. Changes nothing, needs no network |
@@ -83,6 +83,14 @@ Precedence of settings: environment > lock (versions only) > profile >
 `workstation.conf` > module defaults. For example
 `INSTALL_DOCKER=1 ./setup.sh` overrides everything for one run.
 
+**The records folder.** Everything the setup writes for you to read goes into one folder, `~/workstation-setup/`
+(`WS_OUT_DIR=/some/folder` in the environment picks another one): the cheat sheet `WORKSTATION-CHEATSHEET.md`,
+`workstation-undo-<time>.sh`, `workstation-manifest-<time>.txt` with `workstation-manifest-latest.txt`, and
+`workstation-setup-<time>.log`. Earlier versions left these loose in `~`; an install run moves them in (never overwriting
+anything there). The setup never edits your existing `~/.bashrc.d/10-workstation.sh`; if that earlier version still looks for
+`~/WORKSTATION-CHEATSHEET.md`, a link is left there (recorded for `--undo`) and can be deleted once you replace the file.
+The `--reset-shell` backup folder (`~/workstation-shell-backup-<time>/`) stays where it is: it holds your own zsh files.
+
 ### Starter files in projects
 
 `ws-init` copies the generic starter files (editorconfig, clang-format/tidy,
@@ -105,7 +113,7 @@ CMake cross toolchain files and ARM/RISC-V presets (included from
 
 APT packages are not pinned (that would block Ubuntu security updates); each
 machine's exact package versions are recorded in its manifest
-(`~/workstation-manifest-latest.txt`), so two machines can be compared with
+(`~/workstation-setup/workstation-manifest-latest.txt`), so two machines can be compared with
 `diff`.
 
 ## Policies (fixed, no switch, every profile)
@@ -155,7 +163,7 @@ use `--no-upgrade`), no
 package-owned config file is edited, and kernel, boot, coreutils and APT
 sources are untouched. Only new files are added in `/etc`, existing ones are
 never overwritten. Every change is recorded in
-`~/workstation-undo-<timestamp>.sh`. Debs from the Ubuntu archive only: the
+`~/workstation-setup/workstation-undo-<timestamp>.sh`. Debs from the Ubuntu archive only: the
 desktop module installs no snaps and no Flatpaks.
 
 **Ubuntu releases.** `SUPPORTED_UBUNTU` in `workstation.conf` lists the LTS releases the setup is

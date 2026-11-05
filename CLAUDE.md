@@ -152,7 +152,7 @@ belong only inside the embedded module.
   in ~/.local/bin, not a shell function) copies generic; `ws-init --embedded`
   puts module variants first and adds `cmake/embedded-presets.json` to
   CMakePresets.json via jq `include`.
-- The cheat sheet (~/WORKSTATION-CHEATSHEET.md) is generated from
+- The cheat sheet (~/workstation-setup/WORKSTATION-CHEATSHEET.md) is generated from
   files/cheatsheet/00-core.md + modules/*/files/cheatsheet.md +
   99-maintenance.md and refreshed on every run.
 

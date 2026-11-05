@@ -292,6 +292,37 @@ LIST
   return $bad
 }
 check "uv/Helix/starship install functions: ~/.local, undo recorded, skip when current, fail cleanly" t_upstream_install
+# Earlier versions left the undo scripts, manifests, logs and the cheat sheet loose in ~: the records folder
+# (OUT_DIR, ~/workstation-setup) now holds them, and migrate_records moves the old ones (never overwriting).
+t_records_folder() {
+  local h="$TMP/rec" bad=0 out; rm -rf "$h"; mkdir -p "$h/.bashrc.d" "$h/workstation-setup"
+  : > "$h/workstation-undo-20260101-000000.sh"; : > "$h/workstation-undo-20250101-000000.sh.done-20250102-000000"
+  : > "$h/workstation-manifest-20260101-000000.txt"; : > "$h/workstation-setup-20260101-000000.log"
+  ln -s "$h/workstation-manifest-20260101-000000.txt" "$h/workstation-manifest-latest.txt"
+  echo "mine" > "$h/WORKSTATION-CHEATSHEET.md"
+  # shellcheck disable=SC2016
+  printf '%s\n' 'local f="$HOME/WORKSTATION-CHEATSHEET.md"' > "$h/.bashrc.d/10-workstation.sh"   # an earlier ws-help
+  echo "keep" > "$h/workstation-setup/workstation-undo-20260101-000000.sh"                 # must not be overwritten
+  out="$(HOME="$h" bash -c 'source <(head -n -1 ./setup.sh); init_undo_file; migrate_records; echo DONE' 2>&1)"
+  [[ $out == *DONE* ]] || { echo "migrate_records failed: $out"; return 1; }
+  local f
+  for f in workstation-undo-20250101-000000.sh.done-20250102-000000 workstation-manifest-20260101-000000.txt workstation-setup-20260101-000000.log WORKSTATION-CHEATSHEET.md; do
+    [[ -f $h/workstation-setup/$f && ! -e $h/$f || $f == WORKSTATION-CHEATSHEET.md ]] || { echo "$f was not moved"; bad=1; }
+  done
+  [[ "$(cat "$h/workstation-setup/workstation-undo-20260101-000000.sh")" == keep ]] || { echo "an existing file in the records folder was overwritten"; bad=1; }
+  [[ -f $h/workstation-undo-20260101-000000.sh ]] || { echo "the old undo file that would collide was not left alone"; bad=1; }
+  [[ "$(cat "$h/workstation-setup/WORKSTATION-CHEATSHEET.md")" == mine ]] || { echo "the cheat sheet was not moved with its content"; bad=1; }
+  [[ ! -e $h/workstation-manifest-latest.txt ]] || { echo "the dangling manifest-latest link was not removed"; bad=1; }
+  # the old ws-help still looks in ~: a link is left, and only because the old file is there
+  [[ -L $h/WORKSTATION-CHEATSHEET.md ]] || { echo "no compatibility link for the old ws-help"; bad=1; }
+  # a clean home gets no link and no loose files
+  rm -rf "$h"; mkdir -p "$h"
+  HOME="$h" bash -c 'source <(head -n -1 ./setup.sh); init_undo_file; migrate_records' >/dev/null 2>&1
+  [[ ! -e $h/WORKSTATION-CHEATSHEET.md ]] || { echo "a clean home must not get a link"; bad=1; }
+  [[ -n "$(find "$h/workstation-setup" -maxdepth 1 -name 'workstation-undo-*.sh' 2>/dev/null | head -n1)" ]] || { echo "the undo file is not in the records folder"; bad=1; }
+  return $bad
+}
+check "records (undo, manifest, log, cheat sheet) live in ~/workstation-setup; old loose files are moved, never overwritten" t_records_folder
 check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell

@@ -31,7 +31,7 @@
 #                                  versions, run the self-test. Then review and
 #                                  re-pin with --lock.
 #    ./setup.sh --undo [FILE]      Take back what an install run did: replays the undo
-#                                  file (newest ~/workstation-undo-*.sh by default)
+#                                  file (newest ~/workstation-setup/workstation-undo-*.sh by default)
 #                                  newest-first, after showing every command and asking.
 #                                  Add --dry-run to only list, --yes to skip the question.
 #                                  Never removes APT packages (see README, Undo).
@@ -70,7 +70,8 @@
 #    Never removes packages (apt --no-remove), never upgrades installed ones
 #    (no 'apt upgrade'; apt --no-upgrade), never edits package-owned
 #    config files, never touches kernel, boot, coreutils or APT sources.
-#    Every change is recorded in ~/workstation-undo-<timestamp>.sh.
+#    Every change is recorded in ~/workstation-setup/workstation-undo-<timestamp>.sh
+#    (that folder also holds the manifest, the log and the cheat sheet; WS_OUT_DIR changes it).
 #
 #  VERSIONS
 #    Ubuntu 24.04 LTS or 26.04 LTS (SUPPORTED_UBUNTU in workstation.conf): both are
@@ -148,8 +149,12 @@ RUST_CACHE_DIR="$DATA_DIR/rust-offline-cache"
 HASH_DB="$DATA_DIR/download-hashes.txt"
 SELFTEST_DIR="$DATA_DIR/selftest"
 SELFTEST_FILE="$DATA_DIR/selftest-results.txt"
-LOG_FILE="$HOME/workstation-setup-$TIMESTAMP.log"
-UNDO_FILE="$HOME/workstation-undo-$TIMESTAMP.sh"
+# The records of a run (undo script, manifest, log) and the generated cheat sheet live in ONE folder, not loose in
+# your home directory. WS_OUT_DIR (environment) picks another folder.
+OUT_DIR="${WS_OUT_DIR:-$HOME/workstation-setup}"
+CHEATSHEET_FILE="$OUT_DIR/WORKSTATION-CHEATSHEET.md"
+LOG_FILE="$OUT_DIR/workstation-setup-$TIMESTAMP.log"
+UNDO_FILE="$OUT_DIR/workstation-undo-$TIMESTAMP.sh"
 MANIFEST_FILE=""
 STATE_DIR="$(mktemp -d)"
 MISSING_FILE="$STATE_DIR/missing"
@@ -186,6 +191,7 @@ first_line() { timeout 15 "$@" 2>&1 | head -n1 || true; }
 record_undo() { printf '%s\n' "$*" >> "$UNDO_FILE"; }
 
 init_undo_file() {
+  mkdir -p "$OUT_DIR"
   cat > "$UNDO_FILE" <<EOF
 #!/usr/bin/env bash
 # Undo script for workstation-setup, run at $TIMESTAMP
@@ -688,7 +694,8 @@ cheatsheet_content() {
 }
 install_cheatsheet() {
   local FORCE_CONFIG=1
-  cheatsheet_content | write_config "$HOME/WORKSTATION-CHEATSHEET.md"
+  mkdir -p "$OUT_DIR"
+  cheatsheet_content | write_config "$CHEATSHEET_FILE"
 }
 
 # ----------------------------------------------------------------------------
@@ -1634,7 +1641,7 @@ check_mode() {
     elif on "$FORCE_CONFIG"; then echo "    replace   ~/$rel (backup kept)"
     else echo "    keep      ~/$rel (yours differs; FORCE_CONFIG=1 replaces it)"; fi
   done < <(home_files)
-  echo "    generated ~/WORKSTATION-CHEATSHEET.md (refreshed; backup kept if you edited it)"
+  echo "    generated $CHEATSHEET_FILE (refreshed; backup kept if you edited it)"
   echo "    templates ~/.local/share/workstation/templates (refreshed)"
 
   echo
@@ -2090,7 +2097,8 @@ self_test() {
 # ============================================================================
 write_manifest() {
   section "Manifest"
-  MANIFEST_FILE="$HOME/workstation-manifest-$TIMESTAMP.txt"
+  mkdir -p "$OUT_DIR"
+  MANIFEST_FILE="$OUT_DIR/workstation-manifest-$TIMESTAMP.txt"
   (
     set +e +o pipefail
     echo "# Workstation manifest"
@@ -2155,7 +2163,7 @@ write_manifest() {
     echo "## APT packages (all installed: name, version, architecture)"
     dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' | sort
   ) > "$MANIFEST_FILE" 2>&1
-  ln -sf "$MANIFEST_FILE" "$HOME/workstation-manifest-latest.txt"
+  ln -sf "$MANIFEST_FILE" "$OUT_DIR/workstation-manifest-latest.txt"
   ok "Manifest: $MANIFEST_FILE ($(wc -l < "$MANIFEST_FILE") lines)"
 }
 
@@ -2445,7 +2453,7 @@ STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Do
 STEP_TOUCHES["Containers"]="apt packages; ~/.config/containers/containers.conf (with podman); with Docker and JOIN_DOCKER_GROUP=1 also adds you to the 'docker' group (sudo)."
 
 STEP_WHY["Shell (bash) setup"]="Aliases, history, prompt and integrations (fzf, zoxide, direnv, starship) and the ws- helper commands (ws-init, ws-doctor), written to ~/.bashrc.d, plus the offline lock for uv, pip and cargo and the generated cheat sheet. They only take effect if ~/.bashrc loads ~/.bashrc.d: that single edit is ENABLE_SHELL_LOADER=1 (off by default; the summary prints the lines to add yourself)."
-STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball (checked against its published checksum; the archive's package only as a fallback)."
+STEP_TOUCHES["Shell (bash) setup"]="files in ~/.bashrc.d, ~/.inputrc, ~/.local/bin, ~/.config/starship.toml, ~/workstation-setup/WORKSTATION-CHEATSHEET.md; with ENABLE_SHELL_LOADER=1 one marked block in ~/.bashrc; network: starship's release tarball (checked against its published checksum; the archive's package only as a fallback)."
 
 STEP_WHY["Git setup"]="Switches lazygit's update check off. With SET_GIT_DEFAULTS=1 it also sets sensible global git defaults, only where you have not set a value yourself; GIT_NAME/GIT_EMAIL are applied if you give them."
 STEP_TOUCHES["Git setup"]="~/.config/lazygit/config.yml; ~/.gitconfig only with SET_GIT_DEFAULTS=1 or GIT_NAME/GIT_EMAIL."
@@ -2514,7 +2522,7 @@ EOT
           owned by a package, mask a service, add an APT repository or PPA,
           install a snap or Flatpak, or touch kernel, boot, coreutils or APT sources.
   Always: use apt with --no-remove --no-upgrade, keep an undo script
-          (~/workstation-undo-<time>.sh), verify downloads outside APT by SHA-256,
+          (~/workstation-setup/workstation-undo-<time>.sh), verify downloads outside APT by SHA-256,
           and, once the caches are filled, leave nothing that contacts the internet by itself.
   Next:   './setup.sh --check' shows the same plan down to package names and
           versions; './setup.sh' runs it; './setup.sh --self-test' verifies it.
@@ -2601,9 +2609,10 @@ undo_mode() {
   local file="${UNDO_ARG:-}" line i n=0 failed=0 answer
   local -a cmds=() failures=()
   if [[ -z $file ]]; then
-    file="$(find "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+    # the records folder first; ~ too, where earlier versions of this setup left them
+    file="$(find "$OUT_DIR" "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
   fi
-  [[ -n $file && -f $file ]] || die "No undo file found (looked for ~/workstation-undo-*.sh). Give one: ./setup.sh --undo FILE"
+  [[ -n $file && -f $file ]] || die "No undo file found (looked for $OUT_DIR/workstation-undo-*.sh). Give one: ./setup.sh --undo FILE"
   while IFS= read -r line; do
     case $line in ''|'#'*|'set -x') continue ;; esac
     cmds+=("$line")
@@ -2655,6 +2664,31 @@ remember_profile() {
   ok "Remembered profile '$PROFILE' in $PROFILE_STATE"
 }
 
+# Earlier versions left the records (undo scripts, manifests, logs) and the cheat sheet loose in your home
+# directory. Move them into OUT_DIR (never overwriting anything there). Your existing ~/.bashrc.d/10-workstation.sh is
+# never edited, and its old ws-help still looks for ~/WORKSTATION-CHEATSHEET.md, so a link is left there in that case.
+migrate_records() {
+  local f dest moved=0 old="$HOME/WORKSTATION-CHEATSHEET.md"
+  if [[ $OUT_DIR == "$HOME" ]]; then return 0; fi
+  mkdir -p "$OUT_DIR"
+  for f in "$HOME"/workstation-undo-*.sh "$HOME"/workstation-undo-*.sh.done-* "$HOME"/workstation-manifest-2*.txt "$HOME"/workstation-setup-*.log; do
+    if [[ ! -f $f || -L $f ]]; then continue; fi
+    dest="$OUT_DIR/${f##*/}"
+    if [[ -e $dest ]]; then continue; fi
+    if mv "$f" "$dest"; then moved=$((moved + 1)); fi
+  done
+  if [[ -L $HOME/workstation-manifest-latest.txt ]]; then rm -f "$HOME/workstation-manifest-latest.txt"; fi   # recreated in OUT_DIR
+  if [[ -f $old && ! -L $old && ! -e $CHEATSHEET_FILE ]]; then
+    if mv "$old" "$CHEATSHEET_FILE"; then moved=$((moved + 1)); fi
+  fi
+  if (( moved )); then ok "Moved $moved earlier record file(s) from ~ into $OUT_DIR"; fi
+  if [[ ! -e $old && ! -L $old ]] && grep -qs 'HOME/WORKSTATION-CHEATSHEET.md' "$HOME/.bashrc.d/10-workstation.sh"; then
+    ln -s "$CHEATSHEET_FILE" "$old"
+    record_undo "rm -f ~/WORKSTATION-CHEATSHEET.md"
+    log "Left a link ~/WORKSTATION-CHEATSHEET.md: your ~/.bashrc.d/10-workstation.sh (an earlier version, never edited by this setup) still looks there. Delete the link when you replace that file."
+  fi
+}
+
 main() {
   if (( LIST_PROFILES )); then list_profiles; return 0; fi
   if [[ $MODE == undo ]]; then undo_mode; return; fi
@@ -2686,6 +2720,7 @@ main() {
   exec > >(tee -a "$LOG_FILE") 2>&1
 
   section "Workstation setup — profile $PROFILE — $(date)"
+  migrate_records
   preflight
   remember_profile
 

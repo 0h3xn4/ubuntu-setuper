@@ -17,8 +17,9 @@ ws-doctor                # quick, read-only health check (no repository needed)
 ./setup.sh --list-profiles
 ```
 
-Each install run leaves `~/workstation-undo-<timestamp>.sh` (reverses changes),
-`~/workstation-manifest-latest.txt` and a log file in your home directory.
+Each install run leaves `workstation-undo-<timestamp>.sh` (reverses changes),
+`workstation-manifest-latest.txt` and a log file in `~/workstation-setup/`, next to this cheat sheet
+(`WS_OUT_DIR=/some/folder ./setup.sh` picks another folder).
 Installed APT packages can be reverted with `apt history-list` and
 `sudo apt history-undo <ID>` (APT 3 and later; otherwise see
 /var/log/apt/history.log).
