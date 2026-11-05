@@ -1115,6 +1115,95 @@ bash_lsp() {
   npm install -g "${specs[@]}"
 }
 
+# Set keys in ONE group of a KConfig (.ini style) file and touch nothing else.
+#   kconfig_set [--check] FILE GROUP KEY=VALUE...
+# Creates the file or the group if needed. With --check nothing is written: exit 0 = it would change, 10 = already as asked.
+kconfig_set() {
+  python3 -I - "$@" <<'PY'
+import os, sys, tempfile
+args = sys.argv[1:]
+check = args and args[0] == "--check"
+if check:
+    args = args[1:]
+path, group, *pairs = args
+kv = dict(p.split("=", 1) for p in pairs)
+lines = open(path, encoding="utf-8").read().splitlines() if os.path.exists(path) else []
+header = "[" + group + "]"
+out, in_group, found, done = [], False, False, set()
+def flush():
+    for k, v in kv.items():
+        if k not in done:
+            out.append(f"{k}={v}")
+            done.add(k)
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        if in_group:
+            flush()
+        in_group = stripped == header
+        found = found or in_group
+        out.append(line)
+        continue
+    if in_group and "=" in line:
+        key = line.split("=", 1)[0].strip()
+        if key in kv:
+            out.append(f"{key}={kv[key]}")
+            done.add(key)
+            continue
+    out.append(line)
+if in_group:
+    flush()
+if not found:
+    if out and out[-1].strip():
+        out.append("")
+    out.append(header)
+    flush()
+new = "\n".join(out) + "\n"
+old = ("\n".join(lines) + "\n") if lines else None
+if new == old:
+    sys.exit(10)
+if check:
+    sys.exit(0)
+d = os.path.dirname(path) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".kconfig-")
+with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    fh.write(new)
+if os.path.exists(path):
+    os.chmod(tmp, os.stat(path).st_mode & 0o777)
+os.replace(tmp, path)
+PY
+}
+
+# Switch Kate's plugins on or off (KATE_PLUGINS_ON / KATE_PLUGINS_OFF). Kate keeps this per SESSION, in
+# ~/.local/share/kate/anonymous.katesession (the session you get when you just start Kate) and
+# ~/.local/share/kate/sessions/*.katesession (named ones), group [Kate Plugins]. Only those keys are changed; every other
+# setting in those files stays. Each file is backed up first and the undo restores it. A session created later starts with
+# Kate's 8 defaults again: Settings > Configure Kate > Plugins, or copy the keys.
+kate_plugins() {
+  local dir="$HOME/.local/share/kate" f p bdir="$DATA_DIR/kate-backups/$TIMESTAMP" rc
+  local -a files=("$dir/anonymous.katesession") pairs=()
+  for f in "$dir"/sessions/*.katesession; do if [[ -f $f ]]; then files+=("$f"); fi; done
+  for p in "${KATE_PLUGINS_ON[@]}"; do pairs+=("$p=true"); done
+  for p in "${KATE_PLUGINS_OFF[@]}"; do pairs+=("$p=false"); done
+  if pgrep -x kate >/dev/null 2>&1; then
+    warn "Kate is running: it rewrites its session files when it quits and would undo the plugin settings. Quit Kate and run ./setup.sh again."
+  fi
+  for f in "${files[@]}"; do
+    rc=0; kconfig_set --check "$f" "Kate Plugins" "${pairs[@]}" || rc=$?
+    if (( rc == 10 )); then ok "Kate plugins already set in ${f/#$HOME/~}"; continue; fi
+    if (( rc != 0 )); then warn "Could not read ${f/#$HOME/~} (exit $rc); left alone"; continue; fi
+    if [[ -e $f ]]; then   # the undo record comes BEFORE the change, and only for what this run changes
+      mkdir -p "$bdir" && cp -p "$f" "$bdir/${f##*/}"
+      record_undo "cp -p $(printf %q "$bdir/${f##*/}") $(printf %q "$f")"
+    else
+      record_undo "rm -f $(printf %q "$f")"
+    fi
+    kconfig_set "$f" "Kate Plugins" "${pairs[@]}"
+    ok "Kate plugins set in ${f/#$HOME/~} (${#KATE_PLUGINS_ON[@]} on, ${#KATE_PLUGINS_OFF[@]} off on purpose)"
+  done
+}
+
 kate_setup() {
   apt_install "${PKGS_KATE[@]}"
   # Language servers for Kate's LSP client: ours (basedpyright, ruff, cmake, taplo) in
@@ -1122,6 +1211,7 @@ kate_setup() {
   # over Kate's built-in settings by Kate itself. JSON/YAML servers are not installed
   # on purpose: their defaults download schemas from the internet.
   install_file .config/kate/lspclient/settings.json
+  kate_plugins
 }
 
 nice_to_have() { apt_install "${PKGS_NICE_TO_HAVE[@]}"; }
@@ -2028,6 +2118,21 @@ assert servers["python"]["command"][0] == "basedpyright-langserver"
 print("Kate LSP settings parse; servers:", ", ".join(sorted(servers)))
 EOT
   QT_QPA_PLATFORM=offscreen kate --version
+  # The plugin set: every plugin we switch on must exist in this Kate, and the session file Kate starts from must say so.
+  # A plugin that is missing from the package (renamed in a newer Kate) would silently not load.
+  local p lib f="$HOME/.local/share/kate/anonymous.katesession" missing=()
+  for p in "${KATE_PLUGINS_ON[@]}"; do
+    lib="$(find /usr/lib -path '*ktexteditor*' -name "$p.so" -print -quit 2>/dev/null || true)"
+    if [[ -z $lib ]]; then missing+=("$p"); fi
+  done
+  if (( ${#missing[@]} )); then echo "these Kate plugins are not in the installed Kate (renamed?): ${missing[*]}"; return 1; fi
+  [[ -f $f ]] || { echo "$f does not exist: Kate's plugin set was not written"; return 1; }
+  for p in "${KATE_PLUGINS_ON[@]}"; do
+    grep -qx "$p=true" "$f" || { echo "$p is not switched on in $f"; return 1; }
+  done
+  for p in "${KATE_PLUGINS_OFF[@]}"; do
+    grep -qx "$p=false" "$f" || { echo "$p must be switched OFF in $f (it contacts the internet or can fetch remote files)"; return 1; }
+  done
   # Kate's built-in terminal panel needs konsole-kpart (Kate only suggests it): without it the panel says
   # "Konsole not installed". A part file, not a program to run, so check that the package is there.
   local st
@@ -2428,8 +2533,8 @@ STEP_TOUCHES["JetBrains Mono Nerd Font"]="~/.local/share/fonts/JetBrainsMonoNerd
 STEP_WHY["Oh My Bash"]="(Only with INSTALL_OH_MY_BASH=1.) The Oh My Bash framework (themes, aliases, plugins) from ONE pinned commit, loaded from ~/.bashrc.d/15-oh-my-bash.sh with its GitHub update check switched off. Its own installer is not used because it would replace your ~/.bashrc. While it is enabled it owns the prompt, so the starship prompt is not started."
 STEP_TOUCHES["Oh My Bash"]="~/.local/share/oh-my-bash (git clone of one commit), ~/.bashrc.d/15-oh-my-bash.sh; network: github.com, at install time only."
 
-STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak), plus konsole-kpart, the part behind Kate's built-in terminal panel (Kate only suggests it, so without it the panel says \"Konsole not installed\"). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files."
-STEP_TOUCHES["Kate editor"]="apt packages (kate and KDE libraries); ~/.config/kate/lspclient/settings.json."
+STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak), plus konsole-kpart, the part behind Kate's built-in terminal panel (Kate only suggests it, so without it the panel says \"Konsole not installed\"). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files. Kate switches on only 8 of its plugins by default, so this step also switches on a curated set for C/C++/Rust/Python/embedded work (Build, CMake Tools, Debugger, Symbol Viewer, Snippets, Formatting, Git Blame, File Browser, Colored Brackets), changing only the plugin keys in Kate's session files (backed up first, restored by --undo), and keeps Compiler Explorer (sends your code to godbolt.org) and XML Validation (xmllint may fetch schemas) OFF."
+STEP_TOUCHES["Kate editor"]="apt packages (kate, konsole-kpart and KDE libraries); ~/.config/kate/lspclient/settings.json; the [Kate Plugins] group of ~/.local/share/kate/anonymous.katesession and your existing ~/.local/share/kate/sessions/*.katesession (backed up under ~/.local/share/workstation/kate-backups)."
 
 STEP_WHY["Extra terminal tools"]="Nice-to-have terminal tools: zellij (a beginner-friendlier terminal multiplexer than tmux) and difftastic (structural diffs). Packages the archive of your Ubuntu release lacks are skipped and reported."
 STEP_TOUCHES["Extra terminal tools"]="apt packages."

@@ -323,6 +323,39 @@ t_records_folder() {
   return $bad
 }
 check "records (undo, manifest, log, cheat sheet) live in ~/workstation-setup; old loose files are moved, never overwritten" t_records_folder
+# Kate's plugin set: only the [Kate Plugins] keys of Kate's session files change (everything else, including what the user
+# set, stays), the files are backed up first with an undo record, and a second run changes and records nothing.
+t_kate_plugins() {
+  local h="$TMP/kp" bad=0 out undo; rm -rf "$h"; mkdir -p "$h/.local/share/kate/sessions"
+  printf '%s\n' '[General]' 'Last Session=work' '' '[Kate Plugins]' 'katebuildplugin=false' 'mycustomkey=keepme' '' '[Plugin:lspclientplugin:]' 'AutoHover=true' > "$h/.local/share/kate/sessions/work.katesession"
+  cp "$h/.local/share/kate/sessions/work.katesession" "$h/orig"
+  undo="$h/undo.sh"
+  run_() { KP_TS="$1" HOME="$h" bash -c 'source <(head -n -1 ./setup.sh); source ./workstation.conf; DATA_DIR="$HOME/.local/share/workstation"; TIMESTAMP=$KP_TS; UNDO_FILE="$HOME/undo.sh"; : > "$UNDO_FILE"; pgrep() { return 1; }; kate_plugins' 2>&1; }
+  out="$(run_ 20260101-000000)"
+  local anon="$h/.local/share/kate/anonymous.katesession" work="$h/.local/share/kate/sessions/work.katesession" k
+  for k in katebuildplugin=true kategdbplugin=true lspclientplugin=true compilerexplorer=false katexmlcheckplugin=false; do
+    grep -qx "$k" "$anon" || { echo "anonymous session lacks $k"; bad=1; }
+    grep -qx "$k" "$work" || { echo "named session lacks $k"; bad=1; }
+  done
+  grep -qx 'mycustomkey=keepme' "$work" || { echo "a key the user set in [Kate Plugins] was lost"; bad=1; }
+  if ! { grep -qx 'Last Session=work' "$work" && grep -qx 'AutoHover=true' "$work"; }; then echo "another group of the session file was damaged"; bad=1; fi
+  # the new keys sit inside [Kate Plugins], before the next group
+  awk '/^\[/ {g=$0} /^kategdbplugin=true$/ {print g}' "$work" | grep -qx '\[Kate Plugins\]' || { echo "plugin keys landed outside [Kate Plugins]"; bad=1; }
+  [[ -f $h/.local/share/workstation/kate-backups/20260101-000000/work.katesession ]] || { echo "no backup of the existing session file"; bad=1; }
+  cmp -s "$h/.local/share/workstation/kate-backups/20260101-000000/work.katesession" "$h/orig" || { echo "the backup is not the original"; bad=1; }
+  if ! { grep -q "^cp -p .*work.katesession" "$undo" && grep -q "^rm -f .*anonymous.katesession" "$undo"; }; then echo "undo records missing: $(cat "$undo")"; bad=1; fi
+  # undo really restores the original
+  bash -c "$(grep '^cp -p' "$undo")"
+  cmp -s "$work" "$h/orig" || { echo "the undo did not restore the original session file"; bad=1; }
+  # idempotent: a second run changes nothing and records nothing
+  run_ 20260101-000001 >/dev/null
+  out="$(run_ 20260101-000002)"
+  [[ $out == *"already set"* ]] || { echo "second run did not report 'already set': $out"; bad=1; }
+  if grep -qv '^#\|^set \|^$' "$undo"; then echo "an unchanged run recorded undo commands: $(cat "$undo")"; bad=1; fi
+  [[ ! -d $h/.local/share/workstation/kate-backups/20260101-000002 ]] || { echo "an unchanged run made a backup"; bad=1; }
+  return $bad
+}
+check "Kate plugins: only the [Kate Plugins] keys change, backed up with undo, idempotent" t_kate_plugins
 check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell

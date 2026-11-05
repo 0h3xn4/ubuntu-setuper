@@ -42,6 +42,16 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - **Kate's terminal panel works:** `konsole-kpart` (about 2 MB, the embedded terminal part, no network features) is installed with Kate.
   Kate only *suggests* it, so APT skipped it and the panel said "Konsole not installed". `t_kate` now checks for it.
 
+### Added (Kate is set up, not just installed)
+- **Kate's plugins are switched on** (your report: "all the plugins were missing"). Kate enables only 8 of its ~30 plugins by default
+  and stores the choice per session. The setup now switches on Build, CMake Tools, Debugger, Symbol Viewer, Snippets, Formatting,
+  Git Blame, File System Browser and Colored Brackets next to Kate's defaults (`KATE_PLUGINS_ON` in `workstation.conf`), and keeps
+  Compiler Explorer (sends code to godbolt.org) and XML Validation (xmllint may fetch schemas) **off** (`KATE_PLUGINS_OFF`). It edits
+  only the `[Kate Plugins]` keys of `~/.local/share/kate/anonymous.katesession` and your existing named sessions, backs each file up
+  first and records the undo; a second run changes nothing. Quit Kate before running the setup (it rewrites those files when it quits).
+  Plugin names were checked in the real Kate packages of 24.04 (23.08) and 26.04 (25.12). `t_kate` fails if a plugin of the set
+  is missing from the installed Kate or not switched on; `kconfig_set` (the small helper that does the edit) has its own test.
+
 ### Changed (rustup and lazygit follow the same upstream-first rule)
 - **rustup and lazygit now come from their projects' releases too**, for consistency with uv, Helix, starship and Node.js
   (your decision). rustup is `rustup-init` checked against the `.sha256` the Rust project publishes, installed in `~/.cargo`

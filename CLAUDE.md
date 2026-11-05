@@ -199,6 +199,16 @@ file nested `servers` inside each language (python -> servers -> basedpyright/ru
 self-test only checked that the JSON parsed. Now flat (python = basedpyright; ruff is Helix-only) and t_kate asserts the
 shape. Defaults: yaml/json servers exist in Kate (schema fetching: never install them).
 
+### Kate plugins (found on the user's real machine: "all the plugins were missing")
+Kate (23.08 and 25.12, source checked) enables only 8 plugins by default (katefiletree, katesearch, kateproject, tabswitcher,
+textfilter, externaltools, lspclient, katekonsole) and stores the choice PER SESSION in the group `[Kate Plugins]` of
+~/.local/share/kate/anonymous.katesession (the no-session start) and sessions/*.katesession, key = the plugin's .so file name.
+kate_plugins() (setup.sh) sets KATE_PLUGINS_ON=true / KATE_PLUGINS_OFF=false through kconfig_set (python edit of ONLY those keys;
+backup + undo record before a change; idempotent). OFF on purpose: compilerexplorer (QNetwork to godbolt.org) and katexmlcheckplugin
+(xmllint without --nonet). konsole-kpart is installed too (Kate only suggests it; without it the terminal panel says "Konsole not
+installed"). A new session starts with the 8 defaults again (no way around it short of patching Kate); a running Kate overwrites the
+files on exit (kate_plugins warns). When Kate's plugin set changes in a new release, t_kate fails on a missing plugin: update the lists.
+
 ### Terminal look
 `ls`/`ll`/`la`/`tree` are eza; icons (`--icons=auto`) are on when ~/.local/share/fonts/JetBrainsMonoNerdFont
 exists, `WS_ICONS=0|1` overrides. The user likes this look (long listing, folder/file icons, starship `❯`

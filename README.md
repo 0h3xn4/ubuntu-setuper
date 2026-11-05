@@ -140,7 +140,7 @@ run `./setup.sh --check` first.
 | `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release (one folder per version) |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
-| `~/.config/kate` | Kate's language-server settings |
+| `~/.config/kate`, `~/.local/share/kate` | Kate's language-server settings; its plugin selection (the `[Kate Plugins]` group of the session files) |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
 | `~/.bashrc.d` | shell setup files, loaded in name order (`10-workstation.sh`, `15-oh-my-bash.sh`, `16-aliases.sh`, `20-offline.sh`, `30-embedded.sh`) |
@@ -1210,6 +1210,24 @@ application, and it has no network features.
 apt_install kate konsole-kpart
 put "$WS/files/home/.config/kate/lspclient/settings.json" ~/.config/kate/lspclient/settings.json
 ```
+
+**Plugins.** Kate ships about 30 plugins but switches on only 8 by default (documents tree, search,
+projects, tab switcher, text filter, external tools, LSP client, terminal), and it keeps the choice **per
+session**. The script switches on a set for C/C++/Rust/Python/embedded work, in addition: **Build** (cmake, ninja,
+make, with the compiler errors parsed), **CMake Tools**, **Debugger** (gdb), **Symbol Viewer**, **Snippets**,
+**Formatting** (clang-format and friends, on request), **Git Blame** (your local git), **File System Browser** and
+**Colored Brackets**. It keeps two OFF on purpose, whatever the session says: **Compiler Explorer** (sends your code
+to godbolt.org) and **XML Validation** (runs `xmllint` without `--nonet`, so it can fetch the schemas a document
+names). All the others stay as they are. Nothing in the switched-on set contacts the internet (checked in Kate's
+source; Snippets' "Get new snippets" button only does so when you press it).
+
+By hand: *Settings > Configure Kate > Plugins*, tick the ones above. The script does the same by editing the
+`[Kate Plugins]` group (keys like `katebuildplugin=true`, the plugin's file name) of
+`~/.local/share/kate/anonymous.katesession` (the session you get when you just start Kate) and of your named sessions
+in `~/.local/share/kate/sessions/*.katesession`. It changes only those keys, backs each file up under
+`~/.local/share/workstation/kate-backups/` first, and `--undo` restores it. **Quit Kate first**: it rewrites these
+files when it quits. A session you create later starts with Kate's 8 defaults again; switch the plugins on there once
+the same way.
 
 The settings file points Kate's built-in language-server client at local
 servers: basedpyright (Python), cmake-language-server, taplo (TOML). Kate supports
