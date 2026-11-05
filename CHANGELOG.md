@@ -51,6 +51,11 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   first and records the undo; a second run changes nothing. Quit Kate before running the setup (it rewrites those files when it quits).
   Plugin names were checked in the real Kate packages of 24.04 (23.08) and 26.04 (25.12). `t_kate` fails if a plugin of the set
   is missing from the installed Kate or not switched on; `kconfig_set` (the small helper that does the edit) has its own test.
+- **Kate no longer complains on save** ("autopep8 is not installed", your report): the Format plugin I had switched on formats on SAVE by
+  default and only knows autopep8 for Python. The new `~/.config/kate/formatting/settings.json` turns format-on-save off (it would reformat
+  code, JSON and XML behind your back; `clang-format` switches it on for itself, so that is off too) and sends Kate's `autopep8` entry to
+  `~/.local/bin/ws-pyformat`, which formats with ruff (the formatter of your hooks). `t_kate` runs it for real, `check-all.sh` checks how it
+  calls ruff. My earlier plugin change should have set this up at once; I enabled the plugin without checking what it does on save.
 
 ### Changed (rustup and lazygit follow the same upstream-first rule)
 - **rustup and lazygit now come from their projects' releases too**, for consistency with uv, Helix, starship and Node.js

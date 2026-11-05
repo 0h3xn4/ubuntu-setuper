@@ -140,7 +140,7 @@ run `./setup.sh --check` first.
 | `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release (one folder per version) |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
-| `~/.config/kate`, `~/.local/share/kate` | Kate's language-server settings; its plugin selection (the `[Kate Plugins]` group of the session files) |
+| `~/.config/kate`, `~/.local/share/kate` | Kate's language-server and formatting settings; its plugin selection (the `[Kate Plugins]` group of the session files) |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
 | `~/.bashrc.d` | shell setup files, loaded in name order (`10-workstation.sh`, `15-oh-my-bash.sh`, `16-aliases.sh`, `20-offline.sh`, `30-embedded.sh`) |
@@ -1209,6 +1209,8 @@ application, and it has no network features.
 ```bash
 apt_install kate konsole-kpart
 put "$WS/files/home/.config/kate/lspclient/settings.json" ~/.config/kate/lspclient/settings.json
+put "$WS/files/home/.config/kate/formatting/settings.json" ~/.config/kate/formatting/settings.json
+put "$WS/files/home/.local/bin/ws-pyformat" ~/.local/bin/ws-pyformat 755
 ```
 
 **Plugins.** Kate ships about 30 plugins but switches on only 8 by default (documents tree, search,
@@ -1220,6 +1222,15 @@ make, with the compiler errors parsed), **CMake Tools**, **Debugger** (gdb), **S
 to godbolt.org) and **XML Validation** (runs `xmllint` without `--nonet`, so it can fetch the schemas a document
 names). All the others stay as they are. Nothing in the switched-on set contacts the internet (checked in Kate's
 source; Snippets' "Get new snippets" button only does so when you press it).
+
+**Formatting.** The Format plugin formats a file **when you save it** unless told otherwise, which would
+reformat your code, JSON and XML behind your back; and for Python it only knows `autopep8`, which is not installed
+(Kate then shows "autopep8 is not installed, please install it to be able to format this document!" on every
+save). `~/.config/kate/formatting/settings.json` therefore turns format-on-save **off** (for `clang-format` too, which
+switches it on for itself) so you format when you ask (the *Tools > Format* entries), and points Kate's `autopep8` entry
+at `~/.local/bin/ws-pyformat`, a three-line script that formats with **ruff**, the formatter your `pre-commit` hooks
+and `ruff format` use. C/C++ uses `clang-format`, Rust `rustfmt`, JSON `jq`, as Kate has it. Turn format-on-save back on in
+that file (`"formatOnSave": true`) if you want it.
 
 By hand: *Settings > Configure Kate > Plugins*, tick the ones above. The script does the same by editing the
 `[Kate Plugins]` group (keys like `katebuildplugin=true`, the plugin's file name) of
@@ -1251,7 +1262,7 @@ reports them, with where each one comes from. To find out yourself:
 `npm ls -g` (npm global) or `snap list` (snap). Remove it with the tool that installed it, after
 checking what else needs it (`apt rdepends --installed <package>`); the setup itself never removes anything.
 
-Undo: `rm ~/.config/kate/lspclient/settings.json`; the package via APT history.
+Undo: `rm ~/.config/kate/lspclient/settings.json ~/.config/kate/formatting/settings.json ~/.local/bin/ws-pyformat`; the package via APT history.
 
 ---
 

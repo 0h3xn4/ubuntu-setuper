@@ -639,7 +639,7 @@ home_files() {
   echo .config/lazygit/config.yml
   echo .config/tealdeer/config.toml
   if on "$INSTALL_OH_MY_BASH"; then echo .bashrc.d/15-oh-my-bash.sh; fi
-  if on "$INSTALL_KATE"; then echo .config/kate/lspclient/settings.json; fi
+  if on "$INSTALL_KATE"; then echo .config/kate/lspclient/settings.json; echo .config/kate/formatting/settings.json; echo .local/bin/ws-pyformat; fi
   if on "$ENFORCE_OFFLINE_ENV"; then echo .bashrc.d/20-offline.sh; fi
   if on "$INSTALL_CPP"; then echo .gdbinit; fi
   if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
@@ -1211,6 +1211,9 @@ kate_setup() {
   # over Kate's built-in settings by Kate itself. JSON/YAML servers are not installed
   # on purpose: their defaults download schemas from the internet.
   install_file .config/kate/lspclient/settings.json
+  # The Format plugin runs on SAVE by default and only knows autopep8 for Python: format on request only, with ruff.
+  install_file .config/kate/formatting/settings.json
+  install_file .local/bin/ws-pyformat 755
   kate_plugins
 }
 
@@ -2133,6 +2136,22 @@ EOT
   for p in "${KATE_PLUGINS_OFF[@]}"; do
     grep -qx "$p=false" "$f" || { echo "$p must be switched OFF in $f (it contacts the internet or can fetch remote files)"; return 1; }
   done
+  # The Format plugin: it formats on SAVE unless told otherwise (and would reformat code and JSON behind your back), and for
+  # Python it only knows autopep8, which is not installed ("autopep8 is not installed" on every save). Our settings turn
+  # format-on-save off and send "autopep8" to ws-pyformat (ruff). Check the shape Kate reads, then that ws-pyformat really formats.
+  python3 -I - "$HOME/.config/kate/formatting/settings.json" <<'EOT'
+import json, sys
+c = json.load(open(sys.argv[1]))
+assert c.get("formatOnSave") is False, "format on save must be off (Kate would reformat code on every save)"
+assert c.get("clang-format", {}).get("formatOnSave") is False, "clang-format sets formatOnSave true itself: it must be switched off too"
+assert c["autopep8"]["command"] == ["ws-pyformat"], "Python formatting must go through ws-pyformat (ruff)"
+print("Kate formatting settings: format on save off, Python formatted by ruff on request")
+EOT
+  if have ruff; then
+    printf 'x   =   [1,2,\n 3]\n' > fmt_sample.py
+    local out; out="$("$HOME/.local/bin/ws-pyformat" fmt_sample.py)"
+    [[ $out == "x = [1, 2, 3]" ]] || { echo "ws-pyformat did not format with ruff, got: $out"; return 1; }
+  fi
   # Kate's built-in terminal panel needs konsole-kpart (Kate only suggests it): without it the panel says
   # "Konsole not installed". A part file, not a program to run, so check that the package is there.
   local st
@@ -2534,7 +2553,7 @@ STEP_WHY["Oh My Bash"]="(Only with INSTALL_OH_MY_BASH=1.) The Oh My Bash framewo
 STEP_TOUCHES["Oh My Bash"]="~/.local/share/oh-my-bash (git clone of one commit), ~/.bashrc.d/15-oh-my-bash.sh; network: github.com, at install time only."
 
 STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak), plus konsole-kpart, the part behind Kate's built-in terminal panel (Kate only suggests it, so without it the panel says \"Konsole not installed\"). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files. Kate switches on only 8 of its plugins by default, so this step also switches on a curated set for C/C++/Rust/Python/embedded work (Build, CMake Tools, Debugger, Symbol Viewer, Snippets, Formatting, Git Blame, File Browser, Colored Brackets), changing only the plugin keys in Kate's session files (backed up first, restored by --undo), and keeps Compiler Explorer (sends your code to godbolt.org) and XML Validation (xmllint may fetch schemas) OFF."
-STEP_TOUCHES["Kate editor"]="apt packages (kate, konsole-kpart and KDE libraries); ~/.config/kate/lspclient/settings.json; the [Kate Plugins] group of ~/.local/share/kate/anonymous.katesession and your existing ~/.local/share/kate/sessions/*.katesession (backed up under ~/.local/share/workstation/kate-backups)."
+STEP_TOUCHES["Kate editor"]="apt packages (kate, konsole-kpart and KDE libraries); ~/.config/kate/lspclient/settings.json and ~/.config/kate/formatting/settings.json; ~/.local/bin/ws-pyformat; the [Kate Plugins] group of ~/.local/share/kate/anonymous.katesession and your existing ~/.local/share/kate/sessions/*.katesession (backed up under ~/.local/share/workstation/kate-backups)."
 
 STEP_WHY["Extra terminal tools"]="Nice-to-have terminal tools: zellij (a beginner-friendlier terminal multiplexer than tmux) and difftastic (structural diffs). Packages the archive of your Ubuntu release lacks are skipped and reported."
 STEP_TOUCHES["Extra terminal tools"]="apt packages."

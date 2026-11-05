@@ -356,6 +356,25 @@ t_kate_plugins() {
   return $bad
 }
 check "Kate plugins: only the [Kate Plugins] keys change, backed up with undo, idempotent" t_kate_plugins
+# ws-pyformat: Kate's Format plugin only knows autopep8 for Python; our Kate settings send that entry to this script, which must
+# hand the FILE to ruff on stdin and print ruff's result (nothing else) on stdout. A fake ruff records how it was called.
+t_pyformat() {
+  local d="$TMP/pf" bad=0 out; rm -rf "$d"; mkdir -p "$d/bin" "$d/home"
+  printf '#!/bin/sh\necho "ARGS:$*"\ncat\n' > "$d/bin/ruff"; chmod +x "$d/bin/ruff"
+  printf 'x   =   1\n' > "$d/sample.py"
+  out="$(HOME="$d/home" PATH="$d/bin:$PATH" files/home/.local/bin/ws-pyformat "$d/sample.py")"
+  [[ $out == *"ARGS:format --quiet --stdin-filename $d/sample.py -"* ]] || { echo "ruff was called wrongly: $out"; bad=1; }
+  [[ $out == *"x   =   1"* ]] || { echo "the file was not fed to ruff on stdin: $out"; bad=1; }
+  if files/home/.local/bin/ws-pyformat >/dev/null 2>&1; then echo "ws-pyformat without a file must fail"; bad=1; fi
+  python3 -I - files/home/.config/kate/formatting/settings.json <<'PY' || bad=1
+import json, sys
+c = json.load(open(sys.argv[1]))
+assert c["formatOnSave"] is False and c["clang-format"]["formatOnSave"] is False, "Kate must not format on save"
+assert c["autopep8"]["command"] == ["ws-pyformat"]
+PY
+  return $bad
+}
+check "Kate: format on save off, Python formatting goes through ws-pyformat (ruff on stdin)" t_pyformat
 check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell

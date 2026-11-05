@@ -208,6 +208,11 @@ backup + undo record before a change; idempotent). OFF on purpose: compilerexplo
 (xmllint without --nonet). konsole-kpart is installed too (Kate only suggests it; without it the terminal panel says "Konsole not
 installed"). A new session starts with the 8 defaults again (no way around it short of patching Kate); a running Kate overwrites the
 files on exit (kate_plugins warns). When Kate's plugin set changes in a new release, t_kate fails on a missing plugin: update the lists.
+The Format plugin (found the hard way on the user's machine: "autopep8 is not installed" on every save): formatOnSave defaults to TRUE
+(globally and, explicitly, for clang-format) and Kate 23.08 has no ruff formatter, only autopep8. files/home/.config/kate/formatting/settings.json
+(merged over Kate's defaults: objects merge, arrays replace) sets formatOnSave false (global AND clang-format) and maps the "autopep8" command to
+~/.local/bin/ws-pyformat (ruff format on stdin, prints the result: what Kate expects from autopep8). LESSON: before enabling a Kate plugin read
+what it does on its own (saves, background network) in its source; t_kate asserts this config and runs ws-pyformat for real.
 
 ### Terminal look
 `ls`/`ll`/`la`/`tree` are eza; icons (`--icons=auto`) are on when ~/.local/share/fonts/JetBrainsMonoNerdFont
