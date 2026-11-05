@@ -199,6 +199,24 @@ file nested `servers` inside each language (python -> servers -> basedpyright/ru
 self-test only checked that the JSON parsed. Now flat (python = basedpyright; ruff is Helix-only) and t_kate asserts the
 shape. Defaults: yaml/json servers exist in Kate (schema fetching: never install them).
 
+### basedpyright level (found on the user's real machine: "why all these errors in kate editor?")
+basedpyright's OWN default typeCheckingMode is "recommended" (very strict: reportUnknown*, reportMissingParameterType, reportUnusedImport as
+errors; verified in basedpyright 1.40.2's langserver: serverSettings.typeCheckingMode default 'recommended'). Working untyped code, or code on
+a library without stubs (pandas), then floods the editor. DECIDED by the user ("as per your recommendation"): "standard" everywhere by default.
+Mechanism, verified in the sources: server settings come from the section `basedpyright` (key `typeCheckingMode` directly in it) via
+workspace/configuration, or, when the client does not declare that capability, from the `settings` of workspace/didChangeConfiguration.
+Kate 23.08 sends the server entry's "settings" after start (didChangeConfiguration); Kate 25.12 declares workspace/configuration and answers it
+from the same "settings" by dotted section. So files/home/.config/kate/lspclient/settings.json python entry has
+"settings": {"basedpyright": {"typeCheckingMode": "standard"}}; Helix: [language-server.basedpyright.config.basedpyright] in languages.toml
+(Helix answers workspace/configuration from `config`). A project's pyrightconfig.json / [tool.basedpyright] still WINS (it overrides the
+editor default), and ws-init ships files/templates/pyrightconfig.json ("standard") for the command line, which reads project files only.
+Test: t_basedpyright_default (setup.sh self-test) runs the REAL basedpyright-langserver through files/selftest/lsp/default_level.py in both
+Kate modes on a small untyped file and requires no errors/warnings; the control without settings must be strict (else exit 78 warning: the
+upstream default changed). check-all t_lsp_default_level tests that client against a mock server (we never run downloaded binaries in the
+sandbox). The user's `uv python install` stays blocked (python-downloads = "never"): asked, answer "no, if not strictly need".
+Terminal: the user "occasionally" uses Terminator; a spaced-out-letters screenshot (apt output) came from a terminal whose font is not a true
+monospace; README troubleshooting has the Terminator steps (profile font = JetBrainsMono Nerd Font Mono). Not reproducible from here.
+
 ### Kate plugins (found on the user's real machine: "all the plugins were missing")
 Kate (23.08 and 25.12, source checked) enables only 8 plugins by default (katefiletree, katesearch, kateproject, tabswitcher,
 textfilter, externaltools, lspclient, katekonsole) and stores the choice PER SESSION in the group `[Kate Plugins]` of

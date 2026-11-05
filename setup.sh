@@ -1863,6 +1863,27 @@ t_clangd_host() {
   clangd --check=x.c
 }
 
+# basedpyright's own default level ("recommended") is so strict that ordinary working code shows a page of errors in
+# Kate and Helix (found on the user's real machine). The editors are given "standard" through the language-server
+# settings. This test speaks LSP to the real server the way Kate does (both Kate versions), with NO project config:
+# a small untyped but working file must come out quiet; the control without settings must be strict, or it proves nothing.
+t_basedpyright_default() {
+  needs basedpyright-langserver python3
+  local py="$FILES/selftest/lsp/default_level.py" kate="$HOME/.config/kate/lspclient/settings.json" settings mode rc=0
+  [[ -f $kate ]] || kate="$FILES/home/.config/kate/lspclient/settings.json"
+  settings="$(python3 -I -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1]))["servers"]["python"]["settings"]))' "$kate")" \
+    || { echo "the Python server entry in $kate has no \"settings\""; return 1; }
+  python3 -I -c 'import sys, tomllib; c = tomllib.load(open(sys.argv[1], "rb")); assert c["language-server"]["basedpyright"]["config"]["basedpyright"]["typeCheckingMode"] == "standard"' \
+    "$FILES/home/.config/helix/languages.toml" || { echo "Helix's basedpyright config does not set typeCheckingMode = standard"; return 1; }
+  for mode in didchange configuration; do
+    rc=0; python3 -I "$py" "$mode" "$settings" || rc=$?
+    (( rc == 0 )) || { echo "basedpyright is too noisy for an editor started the way Kate ($mode) does it, or did not answer (exit $rc)"; return 1; }
+  done
+  rc=0; python3 -I "$py" didchange none || rc=$?
+  if (( rc == 0 )); then echo "control: basedpyright without settings was NOT strict: its default changed, this test proves little now"; return 78; fi
+  (( rc == 3 )) || { echo "control run failed (exit $rc)"; return 1; }
+}
+
 t_python_tools() {
   needs ruff basedpyright
   cat > sample.py <<'EOF'
@@ -2198,6 +2219,7 @@ self_test() {
   run_test "ws-init copies starter files, never overwrites" t_ws_init
   run_test "clangd understands host code"             t_clangd_host
   run_test "Python: ruff + basedpyright"              t_python_tools
+  run_test "basedpyright is quiet in the editors"     t_basedpyright_default
   run_test "Python: offline install from wheelhouse"  t_python_offline
   run_test "Rust: host build"                         t_rust_host
   run_test "Rust: offline build from crate cache"     t_rust_offline

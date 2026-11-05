@@ -8,7 +8,7 @@ Press `q` to quit, `/` to search.
 | Command | What it does |
 |---|---|
 | `ws-help` | This cheat sheet |
-| `ws-init` | Copy generic starter files (.clang-format, .clang-tidy, .clangd, .editorconfig, pre-commit, ruff, host CMakePresets.json) into the current project; never overwrites |
+| `ws-init` | Copy generic starter files (.clang-format, .clang-tidy, .clangd, .editorconfig, pre-commit, ruff, pyrightconfig.json, host CMakePresets.json) into the current project; never overwrites |
 | `ws-doctor` | Quick health check: tools, editor, shell setup, no-cloud settings, offline caches (read-only, offline; `ws-doctor --quiet` shows only problems) |
 | `ws-init --list` | Show which starter-file sets are installed (modules add their own, e.g. `ws-init --embedded`) |
 | `cppref` / `pydocs` / `cmakedocs` / `rustdocs` | Open local documentation in the browser |
@@ -109,6 +109,10 @@ uv pip install numpy pytest                    # from the internet, or the local
 ruff check . && ruff format .                  # lint and format
 basedpyright                                   # type check
 ```
+
+**Type checker level.** basedpyright's own default ("recommended") is very strict. The editors use "standard" for every
+project; `ws-init` puts `{"typeCheckingMode": "standard"}` in a project's `pyrightconfig.json`. A strict project says
+`"recommended"` or `"strict"` there. Libraries without type hints (pandas) need `uv pip install pandas-stubs`.
 
 You are not blocked from the network: `uv add`, `uv pip install`, `cargo add` and friends fetch what you ask for.
 Available offline (for a machine without network): see `ls ~/.local/share/workstation/wheelhouse`

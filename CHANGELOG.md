@@ -42,6 +42,17 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - **Kate's terminal panel works:** `konsole-kpart` (about 2 MB, the embedded terminal part, no network features) is installed with Kate.
   Kate only *suggests* it, so APT skipped it and the panel said "Konsole not installed". `t_kate` now checks for it.
 
+### Changed (the Python type checker is quiet in the editors)
+- **basedpyright now checks at the "standard" level in Kate and Helix** (your question "why all these errors in kate editor?", answer "as per your
+  recommendation"). Its own default, "recommended", is very strict and flooded working untyped code, and anything built on a library without
+  type hints (pandas), with "Type of ... is unknown" / "Type annotation is missing ...". Kate gets it through a `settings` block on the Python
+  server entry (works with both Kate versions: 23.08 sends it with `didChangeConfiguration`, 25.12 answers `workspace/configuration` from it), Helix
+  through `[language-server.basedpyright.config.basedpyright]`. A project's own `pyrightconfig.json` / `[tool.basedpyright]` still wins; `ws-init` copies a
+  `pyrightconfig.json` (standard) into new projects for the command line. New self-test `t_basedpyright_default` starts the real language server
+  like Kate does and requires a clean result for a small untyped file (with a control that must be strict). **Existing installs keep their old
+  settings files** (never overwritten): see the README troubleshooting row for the two edits. `uv python install` stays blocked, as you asked.
+- README troubleshooting: a row for spaced-out terminal text (Terminator profile font).
+
 ### Added (Kate is set up, not just installed)
 - **Kate's plugins are switched on** (your report: "all the plugins were missing"). Kate enables only 8 of its ~30 plugins by default
   and stores the choice per session. The setup now switches on Build, CMake Tools, Debugger, Symbol Viewer, Snippets, Formatting,

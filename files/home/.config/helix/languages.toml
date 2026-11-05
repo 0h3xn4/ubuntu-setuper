@@ -19,6 +19,12 @@ args = [
 command = "basedpyright-langserver"
 args = ["--stdio"]
 
+# basedpyright's own default level, "recommended", is very strict: ordinary working code shows a page of errors
+# ("Type of ... is unknown", "Type annotation is missing ..."). "standard" is pyright's default. A project's own
+# pyrightconfig.json / [tool.basedpyright] still wins, so a project can ask for "recommended" or "strict".
+[language-server.basedpyright.config.basedpyright]
+typeCheckingMode = "standard"
+
 [language-server.ruff]
 command = "ruff"
 args = ["server"]

@@ -375,6 +375,58 @@ PY
   return $bad
 }
 check "Kate: format on save off, Python formatting goes through ws-pyformat (ruff on stdin)" t_pyformat
+# The client half of the basedpyright self-test (files/selftest/lsp/default_level.py), against a MOCK server that behaves like
+# basedpyright for the one thing that matters here: strict ("recommended") unless it was told "standard", either by
+# didChangeConfiguration (Kate 23.08) or by answering its workspace/configuration request (Kate 25.12). The real server only
+# runs in the self-test (CI): this proves the framing, both modes and the exit codes without running a downloaded binary.
+t_lsp_default_level() {
+  local d="$TMP/lsp" bad=0 rc settings='{"basedpyright": {"typeCheckingMode": "standard"}}'; rm -rf "$d"; mkdir -p "$d/bin"
+  cat > "$d/mock.py" <<'PY'
+import json, sys
+def send(m):
+    b = json.dumps(m).encode(); sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(b) + b); sys.stdout.buffer.flush()
+def read():
+    h = b""
+    while not h.endswith(b"\r\n\r\n"):
+        c = sys.stdin.buffer.read(1)
+        if not c: return None
+        h += c
+    n = int([x for x in h.decode().split("\r\n") if x.lower().startswith("content-length")][0].split(":")[1])
+    return json.loads(sys.stdin.buffer.read(n))
+mode, wants_cfg, pending = "recommended", False, None
+while True:
+    m = read()
+    if m is None: break
+    if m.get("method") == "initialize":
+        wants_cfg = bool(m["params"]["capabilities"].get("workspace", {}).get("configuration"))
+        send({"jsonrpc": "2.0", "id": m["id"], "result": {"capabilities": {}}})
+    elif m.get("method") == "workspace/didChangeConfiguration":
+        mode = (m["params"]["settings"].get("basedpyright") or {}).get("typeCheckingMode", mode)
+    elif m.get("method") == "textDocument/didOpen":
+        uri = m["params"]["textDocument"]["uri"]
+        if wants_cfg:
+            pending = uri
+            send({"jsonrpc": "2.0", "id": 500, "method": "workspace/configuration", "params": {"items": [{"section": "basedpyright"}]}})
+        else:
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": [] if mode == "standard" else [{"severity": 1, "code": "reportMissingParameterType", "message": "x"}]}})
+    elif m.get("id") == 500 and "result" in m:
+        mode = (m["result"][0] or {}).get("typeCheckingMode", mode)
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": pending, "diagnostics": [] if mode == "standard" else [{"severity": 1, "code": "reportMissingParameterType", "message": "x"}]}})
+    elif m.get("method") == "exit": break
+PY
+  printf '#!/bin/sh\nexec python3 -I %s\n' "$d/mock.py" > "$d/bin/basedpyright-langserver"; chmod +x "$d/bin/basedpyright-langserver"
+  local mode
+  for mode in didchange configuration; do
+    rc=0; PATH="$d/bin:$PATH" python3 -I files/selftest/lsp/default_level.py "$mode" "$settings" >/dev/null || rc=$?
+    (( rc == 0 )) || { echo "$mode with standard settings: expected quiet (exit 0), got $rc"; bad=1; }
+    rc=0; PATH="$d/bin:$PATH" python3 -I files/selftest/lsp/default_level.py "$mode" '{"basedpyright": {"typeCheckingMode": "recommended"}}' >/dev/null || rc=$?
+    (( rc == 1 )) || { echo "$mode with recommended settings: expected noisy (exit 1), got $rc"; bad=1; }
+  done
+  rc=0; PATH="$d/bin:$PATH" python3 -I files/selftest/lsp/default_level.py didchange none >/dev/null || rc=$?
+  (( rc == 3 )) || { echo "control without settings: expected strict (exit 3), got $rc"; bad=1; }
+  return $bad
+}
+check "basedpyright self-test client: both Kate ways of passing settings, noisy vs quiet, control (mock server)" t_lsp_default_level
 check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell

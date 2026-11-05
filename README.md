@@ -892,11 +892,13 @@ SHA-256 and the lock pins it afterwards). The script falls back to Ubuntu's pack
 (`apt_install helix`) only if the download fails; `HELIX_FROM_ARCHIVE=1` prefers it; an existing Helix is
 left alone, and `--upgrade` installs the newest release in `~/.local/bin`, in front of any package from Ubuntu.
 
-Configuration. `languages.toml` does two important things: it disables the
+Configuration. `languages.toml` does three important things: it disables the
 JSON and YAML language servers (their defaults download schemas from the
-internet; highlighting still works, validate with `jq`/`yamllint`), and it
+internet; highlighting still works, validate with `jq`/`yamllint`), it
 stops C/C++ auto-formatting on save so legacy code does not produce huge
-diffs.
+diffs, and it sets the Python type checker (basedpyright) to the **"standard"** level
+(see the note on levels in [B16](#b16-kate-editor-optional-install_kate-default-on)). Helix reads
+the file when it starts, so a Helix that is already open needs a restart.
 
 ```bash
 put "$WS/files/home/.config/helix/config.toml"    ~/.config/helix/config.toml
@@ -1074,7 +1076,8 @@ put "$WS/files/home/.config/lazygit/config.yml" ~/.config/lazygit/config.yml
 
 These are reference copies that `ws-init` copies into your projects
 (`.editorconfig`, `.clang-format`, `.clang-tidy`, `.clangd`, an
-**offline-only** pre-commit config, `ruff.toml`, host CMake presets). They
+**offline-only** pre-commit config, `ruff.toml`, `pyrightconfig.json` (the Python type-checker level, see
+[B16](#b16-kate-editor-optional-install_kate-default-on)), host CMake presets). They
 live in `~/.local/share/workstation/templates/generic/`:
 
 ```bash
@@ -1239,6 +1242,18 @@ in `~/.local/share/kate/sessions/*.katesession`. It changes only those keys, bac
 `~/.local/share/workstation/kate-backups/` first, and `--undo` restores it. **Quit Kate first**: it rewrites these
 files when it quits. A session you create later starts with Kate's 8 defaults again; switch the plugins on there once
 the same way.
+
+**How strict is the Python checker?** The Python server is **basedpyright**, and its own default level,
+"recommended", is very strict: ordinary, working, untyped code (and anything built on a library that ships no type
+hints, such as pandas without `pandas-stubs`) shows a page of red errors such as "Type of ... is unknown" and "Type
+annotation is missing for parameter ...". Both editors are therefore given the level **"standard"** (pyright's own
+default), for every project: in Kate through the `settings` block of the Python entry in the settings file below, in
+Helix through `languages.toml`. A project that wants more says so itself and wins: `pyrightconfig.json` (which
+`ws-init` copies into new projects, containing `"typeCheckingMode": "standard"`) or a `[tool.basedpyright]` section in
+`pyproject.toml`, with `"recommended"`, `"strict"` or `"all"`. The command line `basedpyright` reads the project file
+only, so it also needs that file (or `basedpyright --level`) to be as relaxed as the editors. The self-test starts the
+real language server the way Kate does (both Kate versions pass settings differently) and checks that a small untyped
+but working file comes out clean.
 
 The settings file points Kate's built-in language-server client at local
 servers: basedpyright (Python), cmake-language-server, taplo (TOML). Kate supports
@@ -1808,6 +1823,8 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
 | `uv`, `pip` or `cargo` refuse to download ("network disabled") | You have the strict offline lock ([D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default)): an older install of this setup had it on by default. Remove it: `rm ~/.bashrc.d/20-offline.sh` and open a new terminal. Or override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
 | `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |
+| Terminal text looks **spaced out** (a gap after every letter), in Terminator or another terminal | The terminal's font is not a true monospace font for that program, or its profile uses a different font than your main terminal. In **Terminator**: right-click > *Preferences* > *Profiles* > *General* > untick *Use the system fixed width font* and pick *JetBrainsMono Nerd Font Mono* (the exact name; not the plain *Nerd Font*, not a *Propo* variant), size 11. Check what is configured with `grep -n font ~/.config/terminator/config`, and what the system calls "monospace" with `fc-match monospace`. If only one window is affected it is that window's profile; if all are, it is the profile you edited. Close the terminal and open a new one after changing it. |
+| Kate or Helix show a page of Python errors on working code ("Type of ... is unknown", "Type annotation is missing ...") | basedpyright's own default level, "recommended", is very strict. This setup sets "standard" in both editors, but an older install keeps its old settings files (the setup never overwrites yours): `install -m 644 files/home/.config/kate/lspclient/settings.json ~/.config/kate/lspclient/` for Kate (quit Kate first), and add the `[language-server.basedpyright.config.basedpyright]` block from `files/home/.config/helix/languages.toml` to `~/.config/helix/languages.toml` for Helix. For one project: put `{"typeCheckingMode": "standard"}` in its `pyrightconfig.json`. A library without type hints (pandas) also needs its stubs: `uv pip install pandas-stubs`. |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |

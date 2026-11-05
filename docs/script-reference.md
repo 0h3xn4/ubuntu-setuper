@@ -94,7 +94,7 @@ The `--reset-shell` backup folder (`~/workstation-shell-backup-<time>/`) stays w
 ### Starter files in projects
 
 `ws-init` copies the generic starter files (editorconfig, clang-format/tidy,
-clangd, pre-commit, ruff, host CMake presets) into the current project and
+clangd, pre-commit, ruff, `pyrightconfig.json` with the Python type-checker level "standard", host CMake presets) into the current project and
 never overwrites. Modules add their own set: `ws-init --embedded` also copies
 CMake cross toolchain files and ARM/RISC-V presets (included from
 `CMakePresets.json`). `ws-init --list` shows what is installed.
