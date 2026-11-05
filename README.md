@@ -107,6 +107,31 @@ shell setup is installed but not active: `~/.cargo/bin` is not on your
 `PATH` and the offline lock for `uv`/`pip`/`cargo` does not apply to your
 shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
+### Which Ubuntu releases do I need?
+
+**24.04 LTS or 26.04 LTS: your choice, no upgrade required.** Both are verified: every package name
+checked against that release's real archive, and the full end-to-end test (a real `--full` install,
+undo and all) run on each in CI. The tools that come from Ubuntu are whatever your release ships
+(Canonical keeps them patched); everything that comes from upstream (Node.js LTS, uv, Rust, Helix,
+starship, probe-rs, the Nerd Font) is the newest version on either release. What differs:
+
+| | Ubuntu 24.04 LTS | Ubuntu 26.04 LTS |
+|---|---|---|
+| Python / GCC / clang+clangd / CMake | 3.12 / 13 / 18 / 3.28 | 3.14 / 15 / 21 / 4.2 |
+| QEMU / GDB / OpenOCD | 8.2 / 15.1 / 0.12 | 10.2 / 17.1 / 0.12 |
+| Kate (editor) | 23.08 | 25.12 |
+| Podman / eza / fzf | 4.9 / 0.18 / 0.44 | 5.7 / 0.23 / 0.67 |
+| Node.js in the archive (only a fallback) | 18 (end of life: the upstream LTS is used instead) | 22 |
+| RISC-V emulator | in `qemu-system-misc` | separate package `qemu-system-riscv` |
+| `lazygit` | not in the archive: taken from its release | in the archive |
+| `zellij`, `difftastic` | not in the archive: skipped | not in the archive: skipped |
+| `apt history-undo` (undoing APT installs) | not available (APT 2.7) | available (APT 3) |
+
+The setup handles these differences itself (skips a package that does not exist on your release,
+takes `lazygit` from its release, installs Node.js from nodejs.org on both). Releases older than
+24.04 are refused: their tools are too old. A release newer than 26.04 asks for confirmation:
+run `./setup.sh --check` first.
+
 ### Where things end up in your home directory
 
 | Path | Contents |
@@ -252,9 +277,11 @@ machine ends up in the same state.
 3. **Everything reversible.** Each section ends with an **Undo** line. The
    helpers in A2 also append the undo commands for the files you create to
    `~/workstation-undo.sh`.
-4. **Latest stable, long-term-supported versions.** Latest Ubuntu LTS; for
-   software with an LTS line the newest LTS; otherwise the newest stable
-   release. Never betas, release candidates or nightlies.
+4. **Latest stable, long-term-supported versions.** Ubuntu: the newest LTS, or any
+   older LTS release this guide supports (24.04 and 26.04 today): you do **not**
+   have to upgrade your system to use it. For software with an LTS line the
+   newest LTS; otherwise the newest stable release. Never betas, release
+   candidates or nightlies.
 5. **Verify what you download outside APT.** Where the project publishes a
    checksum (uv, rustup, starship, Nerd Fonts, probe-rs, lazygit) the guide
    compares the download with *that* checksum and refuses a mismatch. For the
@@ -300,16 +327,17 @@ echo "$VERSION"          # must contain "LTS"
 uname -m                 # x86_64 expected; other architectures lack some packages
 ```
 
-You need an Ubuntu **LTS** release, and it should be the **latest** LTS.
-After A3 installs `distro-info` you can check this offline:
+You need an Ubuntu **LTS** release that this guide supports: **24.04 or 26.04**
+(see [Which Ubuntu releases](#which-ubuntu-releases-do-i-need)). You do **not**
+need to upgrade to the newest one. Check yours:
 
 ```bash
-ubuntu-distro-info --lts           # codename of the latest LTS
-echo "$VERSION_CODENAME"           # yours: the two must be equal
+echo "$VERSION_ID"                 # 24.04 or 26.04 (the supported releases)
 ```
 
-If yours is older, upgrade first (`sudo do-release-upgrade`; LTS-to-LTS
-upgrades are offered once the new release's first point release is out).
+Older releases (22.04 and before) are too old for the tools used here (for
+example Python 3.11+ is needed); a non-LTS release or a newer LTS than 26.04 has not
+been verified, so check every package name before you rely on it.
 Also make sure you can use `sudo`, and run this guide from a logged-in
 desktop session (A6 and B13 change GNOME settings).
 
@@ -1168,10 +1196,13 @@ apt_install kate
 put "$WS/files/home/.config/kate/lspclient/settings.json" ~/.config/kate/lspclient/settings.json
 ```
 
-The settings file points Kate's built-in language-server client at the same
-local servers Helix uses: basedpyright and ruff (Python), cmake-language-server,
-taplo (TOML). Kate merges it over its own defaults, which already cover
-clangd, rust-analyzer and bash-language-server. Kate's defaults for JSON and
+The settings file points Kate's built-in language-server client at local
+servers: basedpyright (Python), cmake-language-server, taplo (TOML). Kate supports
+exactly **one** server per language (checked in the source of both Kate versions
+involved: 23.08 on Ubuntu 24.04 and 25.12 on 26.04), so Python gets basedpyright here;
+Helix, which can run several, also uses ruff. Each entry is a flat `command` list:
+a nested `servers` map inside a language is silently ignored by Kate. Kate merges the file
+over its own defaults, which already cover clangd, rust-analyzer and bash-language-server. Kate's defaults for JSON and
 YAML would use `vscode-json-languageserver` and `yaml-language-server`, which
 download schemas from the internet; they are not installed, so they are not
 used. Keep it that way:

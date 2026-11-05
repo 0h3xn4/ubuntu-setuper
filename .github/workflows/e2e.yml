@@ -2,6 +2,8 @@ name: E2E (full lifecycle)
 
 # A full end-to-end test: install everything (--full), self-test, health check,
 # idempotent re-install, manifest, lock, then undo and check nothing is left.
+# It runs on EVERY supported Ubuntu LTS release (24.04 and the newest, "latest"):
+# nobody has to upgrade to use the setup, and this is what proves it.
 # It is slow (about 12 to 22 minutes per job) and big, so it does NOT run on every change:
 #   - manually (Actions > E2E > Run workflow), or
 #   - on a pull request whose title contains "[e2e]".
@@ -21,12 +23,13 @@ jobs:
   # A real GitHub runner VM: real systemd, real sudo, a real network.
   e2e-vm:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.title, '[e2e]')
-    name: e2e vm (${{ matrix.profile }})
-    runs-on: ubuntu-latest
+    name: e2e vm ${{ matrix.ubuntu }} (${{ matrix.profile }})
+    runs-on: ubuntu-${{ matrix.ubuntu }}
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
+        ubuntu: ["24.04", "latest"]
         profile: [work, personal]
     steps:
       - uses: actions/checkout@v4
@@ -47,20 +50,21 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: e2e-vm-${{ matrix.profile }}
+          name: e2e-vm-${{ matrix.ubuntu }}-${{ matrix.profile }}
           path: e2e-logs
           retention-days: 7
 
-  # The newest Ubuntu LTS (the Docker image tagged "latest"), no systemd, no desktop.
+  # Each supported LTS as a Docker image ("latest" is always the newest LTS), no systemd, no desktop.
   e2e-lts-container:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.title, '[e2e]')
-    name: e2e newest LTS container (${{ matrix.profile }})
+    name: e2e container ${{ matrix.ubuntu }} (${{ matrix.profile }})
     runs-on: ubuntu-latest
-    container: ubuntu:latest
+    container: ubuntu:${{ matrix.ubuntu }}
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
+        ubuntu: ["24.04", "latest"]
         profile: [work, personal]
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -91,6 +95,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: e2e-lts-container-${{ matrix.profile }}
+          name: e2e-container-${{ matrix.ubuntu }}-${{ matrix.profile }}
           path: e2e-logs
           retention-days: 7

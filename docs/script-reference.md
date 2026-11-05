@@ -3,8 +3,8 @@
 This page documents the **automated** route (`setup.sh`). The step-by-step manual
 route, which does the same things by hand, is the [README](../README.md).
 
-Sets up a workstation on the latest Ubuntu LTS release for software
-development, for work and personal use: C/C++/Rust/Python toolchains, the
+Sets up a workstation on Ubuntu 24.04 LTS or 26.04 LTS (no upgrade to the newest
+is required) for software development, for work and personal use: C/C++/Rust/Python toolchains, the
 Helix editor with language servers, git tooling, static analysis, offline
 documentation and a comfortable bash. Optional modules add embedded tooling
 (ARM and RISC-V cross compilers, QEMU, debug probe, serial and CAN tools) or
@@ -158,10 +158,17 @@ never overwritten. Every change is recorded in
 `~/workstation-undo-<timestamp>.sh`. Debs from the Ubuntu archive only: the
 desktop module installs no snaps and no Flatpaks.
 
-**Versions.** Always the latest Ubuntu LTS release: the setup detects it
-(offline, via distro-info) and warns on older or non-LTS releases. For
-software with an LTS line, the newest LTS; otherwise the newest stable
-release. Never betas, release candidates or nightlies. A lock file is a
+**Ubuntu releases.** `SUPPORTED_UBUNTU` in `workstation.conf` lists the LTS releases the setup is
+verified on (24.04 and 26.04): every package name checked against that release's real archive and the full
+end-to-end test run on it in CI. Any of them works; **nobody has to upgrade to the newest**. Releases older than the
+oldest listed one are refused (their tools are too old), a non-LTS release is refused, a release newer than any listed
+one asks for confirmation (run `--check` first). `PKG_SINCE` lists packages that exist as separate packages only from a
+given release on (`qemu-system-riscv` from 26.04; on 24.04 RISC-V is in `qemu-system-misc`): they are skipped on older
+releases with a note, not a warning. To add a release: add it to `SUPPORTED_UBUNTU` only after `--check` on its real
+archive is clean and the E2E workflow is green on it (add it to the matrices in `.github/workflows`).
+
+**Versions.** For software with an LTS line, the newest LTS; otherwise the newest stable
+release. What Ubuntu itself ships is whatever your supported release has (Canonical patches it). Never betas, release candidates or nightlies. A lock file is a
 deliberate snapshot of "newest at that time"; `--upgrade` moves forward.
 **Node.js** is the one tool with an LTS line that is installed, and there the newest *upstream* LTS
 wins over the archive's older Node.js (your decision): the setup unpacks the release from nodejs.org
@@ -203,8 +210,8 @@ desktop module only places policy files for Firefox and Thunderbird.
 | `tools/install-hooks.sh` | Enable the git pre-commit hook (`check-all.sh --quick`) in this clone |
 
 CI (`.github/workflows/ci.yml`): `check-all.sh` on every push and PR, then for each profile a
-`--check` against the real archive of the newest Ubuntu LTS and a reduced real install in a container.
-The E2E workflow (`.github/workflows/e2e.yml`, about 12 to 22 minutes per job, started manually (Actions > E2E > Run workflow, or the API's workflow_dispatch on any branch, no pull request needed) or by a PR titled with `[e2e]`)
+`--check` against the real archive and a reduced real install in a container, on 24.04 and on the newest LTS.
+The E2E workflow (`.github/workflows/e2e.yml`, eight jobs: runner VM and container, on 24.04 and the newest LTS, each for `work` and `personal`; about 12 to 22 minutes per job, started manually (Actions > E2E > Run workflow, or the API's workflow_dispatch on any branch, no pull request needed) or by a PR titled with `[e2e]`)
 runs `tools/e2e.sh` for both profiles on a GitHub runner VM and in an `ubuntu:latest` container. It
 purges the runner's preinstalled `gh` first and removes the container image's dpkg excludes, so the
 machine looks like a normal Ubuntu install. Results of the latest runs: README, "How well tested is this?".

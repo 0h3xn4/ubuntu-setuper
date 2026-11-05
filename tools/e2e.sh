@@ -31,6 +31,7 @@
 #                           (e.g. "System tuning" in a container without sysctl access)
 #   E2E_ALLOW_MISSING       regex of packages allowed to be missing from the archive
 #                           (default: lazygit|zellij|difftastic)
+# It runs once per supported Ubuntu release (24.04 and the newest LTS; see .github/workflows/e2e.yml).
 # Things the test knows about a machine it did not set up itself: if rustup (~/.rustup,
 # ~/.cargo/bin/rustup) already exists before the install, it is not counted as a leftover; the CI VM job
 # purges the runner's preinstalled `gh` (the no-cloud policy forbids it) and the container job removes the

@@ -73,9 +73,10 @@
 #    Every change is recorded in ~/workstation-undo-<timestamp>.sh.
 #
 #  VERSIONS
-#    Always the latest Ubuntu LTS release (detected, never hardcoded). For
-#    software with an LTS line, the newest LTS; otherwise the newest stable
-#    release, never betas, release candidates or nightlies.
+#    Ubuntu 24.04 LTS or 26.04 LTS (SUPPORTED_UBUNTU in workstation.conf): both are
+#    verified, nobody has to upgrade to the newest. For software with an LTS line,
+#    the newest LTS; otherwise the newest stable release, never betas, release
+#    candidates or nightlies.
 #
 #  REPRODUCIBILITY
 #    Versions of tools outside APT are pinned per profile in
@@ -251,6 +252,13 @@ apt_candidates() {
 apt_install() {
   local available=() pkg ver
   local -A cand=()
+  local -a want=()
+  for pkg in "$@"; do
+    if pkg_applies "$pkg"; then want+=("$pkg")
+    else log "Not needed on Ubuntu $(os_version_id): $pkg (${PKG_SINCE_NOTE[$pkg]:-it exists only on newer releases})"; fi
+  done
+  set -- "${want[@]}"
+  (( $# )) || return 0
   while read -r pkg ver; do cand[$pkg]=$ver; done < <(apt_candidates "$@")
   for pkg in "$@"; do
     if [[ -n ${cand[$pkg]:-} ]]; then
@@ -712,31 +720,51 @@ py_norm() {
   printf '%s' "${n//[_.]/-}"
 }
 
-# Checks that this is Ubuntu, an LTS release, and the LATEST LTS release.
-# Uses distro-info's offline release database (no network access).
-# Sets OS_PROBLEM to a description of the first problem found, or "".
+# Checks that this is Ubuntu, an LTS release, and one of the releases this setup is verified on
+# (SUPPORTED_UBUNTU in workstation.conf). An older supported release is NOT a problem: nobody has to
+# upgrade to the newest. Sets OS_PROBLEM to a description of the first problem found, or "";
+# OS_INFO to a friendly note; OS_VERIFIED=1 for a supported release. No network access.
 os_check() {
   OS_PROBLEM=""
+  OS_INFO=""
   OS_VERIFIED=0
-  # shellcheck disable=SC1091
-  . /etc/os-release
+  # shellcheck disable=SC1090,SC1091
+  . "${OS_RELEASE_FILE:-/etc/os-release}"
+  local ver="${VERSION_ID:-?}" oldest newest
+  local -a rel=()
+  read -ra rel <<<"${SUPPORTED_UBUNTU:-}"
+  oldest="$(printf '%s\n' "${rel[@]}" | sort -V | head -n1)"
+  newest="$(printf '%s\n' "${rel[@]}" | sort -V | tail -n1)"
   if [[ ${ID:-} != ubuntu ]]; then
     OS_PROBLEM="This setup is for Ubuntu; detected ${PRETTY_NAME:-an unknown system}."
   elif [[ ${VERSION:-} != *LTS* ]]; then
-    OS_PROBLEM="Ubuntu ${VERSION_ID:-?} is not a long-term support (LTS) release. Use the latest LTS release."
-  elif ! have ubuntu-distro-info; then
-    warn "Cannot verify that Ubuntu ${VERSION_ID:-?} is the LATEST LTS release (package distro-info missing)."
-  else
-    local latest latest_name
-    latest="$(ubuntu-distro-info --lts 2>/dev/null || true)"
-    latest_name="$(ubuntu-distro-info --lts --fullname 2>/dev/null || echo "$latest")"
-    if [[ -n $latest ]]; then OS_VERIFIED=1; fi
-    if [[ -n $latest && $latest != "${VERSION_CODENAME:-}" ]]; then
-      OS_PROBLEM="Ubuntu ${VERSION_ID:-?} is an LTS release, but the latest LTS is ${latest_name}.
-   Upgrade with: sudo do-release-upgrade   (LTS-to-LTS upgrades are offered
-   once the new release's first point release, .1, is available)."
+    OS_PROBLEM="Ubuntu $ver is not a long-term support (LTS) release. Use an LTS release (verified: ${rel[*]})."
+  elif [[ " ${rel[*]} " == *" $ver "* ]]; then
+    OS_VERIFIED=1
+    if [[ $ver != "$newest" ]]; then
+      OS_INFO="Ubuntu $ver LTS is supported. The newest verified LTS is $newest; upgrading is optional, nothing here requires it."
     fi
+  elif version_lt "$ver" "$oldest"; then
+    OS_PROBLEM="Ubuntu $ver LTS is older than the oldest release this setup supports ($oldest): its tools are too old
+   (for example Python 3.11+ is needed). Verified releases: ${rel[*]}."
+  else
+    OS_PROBLEM="Ubuntu $ver LTS is newer than any release this setup has been verified on (${rel[*]}).
+   Run ./setup.sh --check first: package names may differ."
   fi
+}
+
+# version_lt A B: A is an older version than B (24.04 < 26.04).
+version_lt() { [[ $1 != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" == "$1" ]]; }
+
+# The Ubuntu release number of this machine (24.04, 26.04, ...).
+# shellcheck disable=SC1090,SC1091
+os_version_id() { ( . "${OS_RELEASE_FILE:-/etc/os-release}"; echo "${VERSION_ID:-}" ); }
+
+# pkg_applies PACKAGE: false if the package exists only from a newer release than this one (PKG_SINCE).
+pkg_applies() {
+  local since="${PKG_SINCE[$1]:-}"
+  [[ -z $since ]] && return 0
+  ! version_lt "$(os_version_id)" "$since"
 }
 
 # ============================================================================
@@ -749,6 +777,8 @@ preflight() {
     warn "$OS_PROBLEM"
     read -rp "Continue anyway? [y/N] " answer
     [[ "$answer" == [yY] ]] || exit 1
+  elif [[ -n $OS_INFO ]]; then
+    log "$OS_INFO"
   fi
   [[ "$(uname -m)" == x86_64 ]] || warn "Not x86_64: some packages may be unavailable."
   have sudo || die "sudo is not available."
@@ -1352,7 +1382,10 @@ check_mode() {
   log "System:  ${PRETTY_NAME:-unknown}, kernel $(uname -r), $(uname -m)"
   os_check
   if [[ -n $OS_PROBLEM ]]; then warn "$OS_PROBLEM"
-  elif (( OS_VERIFIED )); then ok "Latest Ubuntu LTS release"; fi
+  elif (( OS_VERIFIED )); then
+    ok "Ubuntu ${VERSION_ID:-?} LTS: a release this setup is verified on (${SUPPORTED_UBUNTU})"
+    if [[ -n $OS_INFO ]]; then log "$OS_INFO"; fi
+  fi
   log "Profile: $PROFILE   modules: core${MODULES[*]:+ }${MODULES[*]}"
   log "Config:  $CONF_FILE"
   if [[ -f $LOCK_FILE ]]; then log "Lock:    $LOCK_FILE (versions pinned)"
@@ -1382,6 +1415,10 @@ check_mode() {
     (( ${#pkgs[@]} )) || continue
     printf '\n  %s\n' "$g"
     for pkg in "${pkgs[@]}"; do
+      if ! pkg_applies "$pkg"; then
+        printf '    %-34s not needed on Ubuntu %s (%s)\n' "$pkg" "$(os_version_id)" "${PKG_SINCE_NOTE[$pkg]:-it exists only on newer releases}"
+        continue
+      fi
       inst="${INST[$pkg]:-}"
       cand="${CAND[$pkg]:-}"
       if [[ -n $inst ]]; then
@@ -1871,7 +1908,13 @@ t_kate() {
   python3 -I - "$HOME/.config/kate/lspclient/settings.json" <<'EOT'
 import json, sys
 servers = json.load(open(sys.argv[1]))["servers"]
-assert servers["python"]["servers"]["basedpyright"]["command"][0] == "basedpyright-langserver"
+# Kate (23.08 in Ubuntu 24.04 and 25.12 in 26.04, checked in its source) supports ONE server per language, with a
+# flat "command" list; a nested "servers" map inside a language is silently ignored. Check the shape Kate reads.
+for lang, entry in servers.items():
+    assert "servers" not in entry, f"{lang}: nested 'servers' is ignored by Kate; use a flat 'command'"
+    cmd = entry["command"]
+    assert isinstance(cmd, list) and cmd and all(isinstance(x, str) for x in cmd), f"{lang}: 'command' must be a list of strings"
+assert servers["python"]["command"][0] == "basedpyright-langserver"
 print("Kate LSP settings parse; servers:", ", ".join(sorted(servers)))
 EOT
   QT_QPA_PLATFORM=offscreen kate --version

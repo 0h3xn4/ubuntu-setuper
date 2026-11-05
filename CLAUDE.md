@@ -60,10 +60,19 @@ conversation; this file carries that context over.
 3. **Everything reversible.** Every system/config change calls record_undo.
 4. **Always the latest stable, long-term supported version** (decided by the
    user), for the OS and for software in general:
-   - OS: the latest Ubuntu LTS release. Never hardcode a release: os_check
-     detects it at runtime via distro-info's offline database and warns on
-     older or non-LTS releases. Release-specific features (e.g. APT 3's
-     history) must be optional or explained as "on newer APT".
+   - OS: DECIDED by the user: users on an OLDER Ubuntu LTS (24.04) must be able to use the setup
+     WITHOUT upgrading, and everything must be compatible with their release. SUPPORTED_UBUNTU in
+     workstation.conf lists the verified LTS releases ("24.04 26.04"); os_check accepts any of them silently (an
+     info line only), refuses a release older than the oldest (22.04: no Python 3.11 tomllib etc.) and non-LTS,
+     and asks for confirmation on a release newer than any listed (verify first). A release is added ONLY after
+     (1) `--check` on its real archive is clean (the sandbox is 24.04; the 26.04 index is readable at
+     archive.ubuntu.com/ubuntu/dists/resolute/{main,universe}/binary-amd64/Packages.gz) and (2) the E2E is green
+     on it (matrices in ci.yml and e2e.yml). Release differences are data, not scattered if-statements:
+     PKG_SINCE / PKG_SINCE_NOTE in workstation.conf (a package that exists only from a release on is skipped with a
+     note on older ones; today qemu-system-riscv from 26.04, on 24.04 RISC-V is in qemu-system-misc). Features of
+     newer releases (e.g. APT 3's history) must be optional or explained as "on newer APT". Components of a
+     release are whatever that release ships (24.04: Kate 23.08, Python 3.12, QEMU 8.2, archive Node 18 which is
+     EOL: the upstream-LTS rule matters most there); upstream-downloaded tools are the newest on both.
    - Software with an LTS line (Node.js, Java, container base images, ...):
      the newest LTS. Software without one (Rust, Helix, ruff, uv, ...): the
      newest stable release. Never betas, RCs, nightlies.
@@ -161,6 +170,14 @@ the mode checks `id -u` so a fake id can stand in for a non-root user) and e2e.s
 VERIFIED GREEN in run #11).
 README A7 is the manual version.
 
+### Kate's LSP settings (a bug found while adding 24.04)
+Kate supports exactly ONE server per language with a flat "command" list (lspclientservermanager.cpp, both 23.08.5
+and 25.12.3); json::merge replaces arrays and merges objects recursively; the user file is read from
+`<AppConfigLocation>/lspclient/settings.json` = ~/.config/kate/lspclient/settings.json by default. The earlier settings
+file nested `servers` inside each language (python -> servers -> basedpyright/ruff), which Kate IGNORES, and the old
+self-test only checked that the JSON parsed. Now flat (python = basedpyright; ruff is Helix-only) and t_kate asserts the
+shape. Defaults: yaml/json servers exist in Kate (schema fetching: never install them).
+
 ### Terminal look
 `ls`/`ll`/`la`/`tree` are eza; icons (`--icons=auto`) are on when ~/.local/share/fonts/JetBrainsMonoNerdFont
 exists, `WS_ICONS=0|1` overrides. The user likes this look (long listing, folder/file icons, starship `❯`
@@ -186,8 +203,12 @@ an older archive version (today: the archive if it has them, else the project's 
   made it flaky passes now (0 failures in the last runs), so it can be made blocking when the user
   agrees; the E2E workflow is the one that blocks.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
-  `./setup.sh --profile X --check` verifies package names for real (only `lazygit` was
-  missing on 24.04). It is NOT the latest LTS (26.04), so names may differ there.
+  `./setup.sh --profile X --check` verifies package names for real on 24.04 (only lazygit/zellij/difftastic
+  are missing, qemu-system-riscv is skipped as "not needed"). For 26.04 read the archive index (see
+  requirement 4); the E2E is what verifies it for real. `apt-get download PKG` + `dpkg -x` into a scratch
+  directory lets you read what a package ships (man pages, example files) without running anything.
+  Real Kate behaviour: read its SOURCE at the tag (git fetch --depth 1 from github.com/KDE/kate, tags
+  v23.08.5 = 24.04, v25.12.3 = 26.04), never run Python from inside the downloaded directory.
 - A real install (`./setup.sh` without --check) is BLOCKED in the cloud sandbox by its
   guard ("modify shared resources": sudo, packages, a test user with sudo rights), and
   must not be worked around. Real installs belong in the CI workflow (container) or in a

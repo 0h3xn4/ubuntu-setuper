@@ -20,6 +20,23 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Added (Ubuntu 24.04 LTS support: no forced upgrade)
+- **Ubuntu 24.04 LTS and 26.04 LTS are both supported** (`SUPPORTED_UBUNTU` in `workstation.conf`). Before, an older
+  LTS got an upgrade nag and a confirmation question. Now a supported release is accepted without fuss; a release older
+  than 24.04 (Python 3.11+ is needed) and non-LTS releases are refused; a release newer than any listed asks first.
+- **Release differences are data:** `PKG_SINCE` / `PKG_SINCE_NOTE` (a package that exists only from a release on, e.g.
+  `qemu-system-riscv` from 26.04, is skipped with a note on 24.04, where RISC-V is part of `qemu-system-misc`).
+- Verified for real against 24.04's archive (`--check`, both profiles: nothing missing but `lazygit`/`zellij`/`difftastic`,
+  648 and 846 packages, none removed), and the tools' real 24.04 versions (eza 0.18 `--icons=auto`, fzf 0.44 key-bindings,
+  `containers.conf` `pull_policy`, CMake 3.28 presets v6).
+- CI: `ci.yml` and `e2e.yml` now run on 24.04 and on the newest LTS (8 E2E jobs). README "Which Ubuntu releases do I need?"
+  compares the two. Unit test for the release logic in `tools/check-all.sh`.
+
+### Fixed (Kate's language-server settings were ignored)
+- Kate supports ONE server per language with a flat `command` (checked in the source of 23.08.5 on 24.04 and 25.12.3 on
+  26.04). The settings file nested a `servers` map inside each language, which Kate silently ignores, so Python, CMake and
+  TOML help never worked in Kate. Now flat (Python = basedpyright); the self-test checks the shape, not just that the JSON parses.
+
 ### Fixed (found by the first run on a real machine)
 - **Oh My Bash replaced the `ls`/`ll`/`la`/`grep` aliases** (no eza, no icons, a plain `ls -lh`): it defines its own
   while it loads, after `10-workstation.sh`. The aliases now live in `~/.bashrc.d/16-aliases.sh`, which loads after
