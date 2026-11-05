@@ -384,7 +384,7 @@ add_to_groups() {
 fetch_verified() {
   local url="$1" dest="$2" tmp sum pinned
   tmp="$(mktemp)"
-  if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$tmp"; then
+  if ! curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$url" -o "$tmp"; then
     rm -f "$tmp"; warn "Download failed: $url"; return 1
   fi
   sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
@@ -416,7 +416,7 @@ fetch_verified() {
 fetch_published() {
   local url="$1" dest="$2" sumurl="$3" name="${4:-}" tmp sums expected actual
   tmp="$(mktemp)"
-  if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$tmp"; then
+  if ! curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$url" -o "$tmp"; then
     rm -f "$tmp"; warn "Download failed: $url"; return 1
   fi
   # The project publishes this checksum, so it MUST be reachable. A network hiccup is retried; if it still fails
@@ -424,7 +424,7 @@ fetch_published() {
   # tampered file accepted). Only a SHA-256 pinned in the lock file can stand in for it.
   local try=1 tries="${FETCH_SUMS_TRIES:-4}" delay="${FETCH_SUMS_DELAY:-3}"
   sums=""
-  while ! sums="$(curl -fsSL --retry 3 --connect-timeout 20 "$sumurl" 2>/dev/null)" && (( try < tries )); do
+  while ! sums="$(curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$sumurl" 2>/dev/null)" && (( try < tries )); do
     sleep $(( try * delay )); try=$(( try + 1 ))
   done
   if [[ -z $sums ]]; then
@@ -556,7 +556,7 @@ node_arch() {
 # Pinned version (NODE_LTS_VERSION, e.g. v26.13.0), else the newest release the project's index marks "lts".
 node_version() {
   if [[ -n ${NODE_LTS_VERSION:-} ]]; then echo "$NODE_LTS_VERSION"; return 0; fi
-  curl -fsSL --retry 3 --connect-timeout 20 https://nodejs.org/dist/index.json 2>/dev/null \
+  curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 https://nodejs.org/dist/index.json 2>/dev/null \
     | python3 -I -c 'import json, sys
 for r in json.load(sys.stdin):
     if r.get("lts"):
@@ -945,7 +945,7 @@ lazygit_install_upstream() {
   local base arch=x86_64 asset ver bin="$HOME/.local/bin" fresh=0; base="$(lazygit_base_url)"
   if [[ $(host_arch) == aarch64 ]]; then arch=arm64; fi
   # Not fatal: a failed curl in this pipeline (pipefail) used to abort the whole calling step.
-  asset="$(curl -fsSL --retry 3 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
+  asset="$(curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
            | awk -v a="_linux_$arch.tar.gz" 'index($2, a) { print $2; exit }' || true)"
   if [[ -z $asset ]]; then warn "Could not find a lazygit release for this CPU (or the download failed)"; return 1; fi
   ver="${asset#lazygit_}"; ver="${ver%%_*}"

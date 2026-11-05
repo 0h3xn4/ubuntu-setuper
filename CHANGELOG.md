@@ -42,6 +42,12 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - **Kate's terminal panel works:** `konsole-kpart` (about 2 MB, the embedded terminal part, no network features) is installed with Kate.
   Kate only *suggests* it, so APT skipped it and the panel said "Konsole not installed". `t_kate` now checks for it.
 
+### Fixed (downloads ride out a short GitHub outage)
+- **Downloads now retry for up to about a minute (6 tries, growing pauses) instead of 3 tries within seconds.** In one E2E run GitHub answered HTTP 504 for
+  the probe-rs release in five of eight jobs at the same moment (the other three got the file): the step was reported as failed and the E2E failed on it,
+  as designed, but 3 quick retries cannot outlast even a short CDN hiccup, for you or for CI. Applies to the project downloads (checksum files, tarballs,
+  the lazygit asset list, the Node.js index). A real failure (404, a checksum mismatch) is still refused at once.
+
 ### Changed (the Python type checker is quiet in the editors)
 - **basedpyright now checks at the "standard" level in Kate and Helix** (your question "why all these errors in kate editor?", answer "as per your
   recommendation"). Its own default, "recommended", is very strict and flooded working untyped code, and anything built on a library without
