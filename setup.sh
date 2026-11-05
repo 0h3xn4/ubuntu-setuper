@@ -549,6 +549,7 @@ pkg_groups() {
 # features install. The cheat sheet is generated, see install_cheatsheet.
 home_files() {
   echo .bashrc.d/10-workstation.sh
+  echo .bashrc.d/16-aliases.sh
   echo .inputrc
   echo .local/bin/ws-init
   echo .local/bin/ws-doctor
@@ -1158,6 +1159,7 @@ EOF
   fi
 
   install_file .bashrc.d/10-workstation.sh
+  install_file .bashrc.d/16-aliases.sh      # after 15-oh-my-bash.sh on purpose: Oh My Bash replaces ls/ll/la/grep
   if on "$ENFORCE_OFFLINE_ENV"; then install_file .bashrc.d/20-offline.sh; fi
   install_file .inputrc
   install_file .local/bin/ws-init 755
@@ -1739,6 +1741,23 @@ t_groups() {
 # Core checks plus those of every module (hook nocloud_problems prints one
 # line per problem, nocloud_warnings one per warning). Problems fail the
 # test; warnings only report (status WARN).
+# Where an installed command came from, in plain words and with the command that removes it
+# (used by the no-cloud self-test, which finds tools this setup did not install itself).
+describe_installed() {
+  local path real pkg
+  path="$(command -v "$1" 2>/dev/null || true)"; [[ -n $path ]] || { echo "not found"; return 0; }
+  real="$(readlink -f "$path" 2>/dev/null || echo "$path")"
+  if pkg="$(dpkg -S "$real" 2>/dev/null | head -n1 | cut -d: -f1)" && [[ -n $pkg ]]; then
+    echo "$path, from the APT package $pkg; check what it is and what needs it ('apt show $pkg', 'apt rdepends --installed $pkg') before you remove it"
+  elif [[ $real == */node_modules/* ]]; then
+    echo "$path, an npm global package: npm uninstall -g $1"
+  elif [[ $path == /snap/* || $real == /snap/* ]]; then
+    echo "$path, from a snap: sudo snap remove $1"
+  else
+    echo "$path, installed by hand or by another tool; remove or rename that file"
+  fi
+}
+
 t_nocloud_policy() {
   local problems=() warnings=() u line
   if have gh; then problems+=("gh (GitHub CLI) is installed"); fi
@@ -1780,7 +1799,7 @@ EOF
     # Kate's default JSON/YAML language servers download schemas from the internet:
     # fine while they are not installed, a policy problem if someone installs them.
     for u in vscode-json-languageserver yaml-language-server; do
-      if have "$u"; then problems+=("$u is installed: Kate would use it, and it fetches schemas online"); fi
+      if have "$u"; then problems+=("$u is installed ($(describe_installed "$u")): Kate would use it, and it fetches schemas online. This setup never installs it, so it was already on this machine: remove it as described, or keep it knowingly"); fi
     done
     [[ -f $HOME/.config/kate/lspclient/settings.json ]] || problems+=("Kate LSP settings missing (~/.config/kate/lspclient/settings.json)")
   fi

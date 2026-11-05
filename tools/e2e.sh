@@ -170,6 +170,7 @@ ph_shell() {
     echo "UV_OFFLINE=$UV_OFFLINE"; echo "CARGO_NET_OFFLINE=$CARGO_NET_OFFLINE"
     echo "LAUNCHER=$CMAKE_C_COMPILER_LAUNCHER"; echo "EDITOR=$EDITOR"; echo "OSH=${OSH:-}"; echo "PS1_SET=${PS1:+yes}"
     for t in ws-init ws-doctor uv hx cargo rustc ruff clangd cmake; do command -v "$t" >/dev/null && echo "have:$t" || echo "MISSING:$t"; done
+    echo "ALIAS_LS=$(alias ls 2>&1)"; echo "ALIAS_LL=$(alias ll 2>&1)"; echo "ALIAS_LA=$(alias la 2>&1)"; echo "ALIAS_GREP=$(alias grep 2>&1)"
   ' 2>&1 | strip)"
   printf '%s\n' "$out" | grep -E '=|MISSING' | sed 's/^/  /'
   grep -q '^MISSING:' <<<"$out" && bad=1
@@ -178,6 +179,14 @@ ph_shell() {
   grep -q '^LAUNCHER=ccache$' <<<"$out" || { echo "ccache launcher not set"; bad=1; }
   grep -q '^EDITOR=hx$' <<<"$out" || { echo "EDITOR is not hx"; bad=1; }
   grep -q '^OSH=.*oh-my-bash' <<<"$out" || { echo "Oh My Bash not loaded (OSH unset)"; bad=1; }
+  # The aliases themselves, not just the environment. Oh My Bash (on in --full) defines its own ls/ll/la/grep
+  # while it loads; ours (16-aliases.sh) must come after it. This was only found on a real machine.
+  if command -v eza >/dev/null; then
+    for t in LS LL LA; do
+      grep -q "^ALIAS_$t=alias ${t,,}='eza" <<<"$out" || { echo "alias ${t,,} is not eza in a new shell (Oh My Bash replaced it?): $(grep "^ALIAS_$t=" <<<"$out")"; bad=1; }
+    done
+  fi
+  grep -q "^ALIAS_GREP=alias grep='grep --color=auto'$" <<<"$out" || { echo "alias grep is not ours in a new shell: $(grep '^ALIAS_GREP=' <<<"$out")"; bad=1; }
   return $bad
 }
 

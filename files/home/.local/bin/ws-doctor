@@ -77,6 +77,15 @@ if have cargo; then
   case ":$ORIG_PATH:" in *":$HOME/.cargo/bin:"*) pass "~/.cargo/bin is on PATH" ;; *) warn "~/.cargo/bin is not on PATH in this shell (the shell loader adds it)" ;; esac
 fi
 
+# The aliases only exist in an interactive shell, so ask one. 'ls' and 'll' should be eza (icons); a plain
+# alias means something replaced ours, typically Oh My Bash when 16-aliases.sh is missing.
+if have eza && grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
+  al="$(bash -ic 'alias ls ll' 2>/dev/null || true)"
+  if [[ $al == *"alias ls='eza"* && $al == *"alias ll='eza"* ]]; then pass "ls and ll are eza (file icons)"
+  elif [[ -f $HOME/.bashrc.d/16-aliases.sh ]]; then warn "ls/ll are not eza in a new shell: something redefines them after ~/.bashrc.d/16-aliases.sh ('type ls ll' shows what)"
+  else warn "ls/ll are not eza: ~/.bashrc.d/16-aliases.sh is missing (older install; Oh My Bash replaces the aliases). Copy it from the setup folder: install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/"; fi
+fi
+
 head1 "No-cloud settings"
 if have gh; then fail "gh (GitHub CLI) is installed: it talks to a cloud forge"; else pass "no gh (GitHub CLI)"; fi
 chk() { # chk FILE PATTERN MESSAGE  — only when the tool uses that file

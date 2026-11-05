@@ -114,6 +114,9 @@ machine's exact package versions are recorded in its manifest
 contacts external services: cloud-connected tools aren't installed, update
 checks and telemetry are disabled, and uv/pip/cargo/podman work only from
 local caches filled during installation (see `files/home/.bashrc.d/20-offline.sh`).
+The shell files in `~/.bashrc.d` load in name order: `10-workstation.sh` (PATH, history, integrations),
+`15-oh-my-bash.sh` (opt-in), `16-aliases.sh` (the everyday aliases; after Oh My Bash on purpose, because
+Oh My Bash replaces `ls`/`ll`/`la`/`grep`), `20-offline.sh` (the offline lock).
 The self-test verifies this, including one check per desktop app.
 
 For apps that are networked by nature (browser, mail): traffic *you* direct to

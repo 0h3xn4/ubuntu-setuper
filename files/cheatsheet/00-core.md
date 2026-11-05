@@ -150,7 +150,8 @@ starship preset nerd-font-symbols -o ~/.config/starship.toml    # icon prompt (a
 starship preset plain-text-symbols -o ~/.config/starship.toml   # no special font needed
 ```
 
-`ls`, `ll`, `la` and `tree` are `eza` with file icons, which need this font in the terminal.
+`ls`, `ll`, `la` and `tree` are `eza` with file icons, which need this font in the terminal
+(defined in `~/.bashrc.d/16-aliases.sh`, which loads after Oh My Bash on purpose; `type ls ll` shows what you really get).
 Boxes instead of icons? The terminal still uses another font: pick the Nerd Font, or `export WS_ICONS=0`.
 
 Prompt: starship by default. If Oh My Bash is enabled (`INSTALL_OH_MY_BASH=1`)

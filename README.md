@@ -118,7 +118,7 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 | `~/.config/kate` | Kate's language-server settings |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
 | `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
-| `~/.bashrc.d` | shell setup files (`10-workstation.sh`, `15-oh-my-bash.sh`, `20-offline.sh`, `30-embedded.sh`) |
+| `~/.bashrc.d` | shell setup files, loaded in name order (`10-workstation.sh`, `15-oh-my-bash.sh`, `16-aliases.sh`, `20-offline.sh`, `30-embedded.sh`) |
 | `~/.local/share/workstation` | project starter files, Python wheelhouse, Rust crate cache, download checksums, SPICE kernels |
 | `~/WORKSTATION-CHEATSHEET.md` | the cheat sheet (`ws-help`) |
 | `~/workstation-undo.sh`, `~/workstation-manifest-*.txt` | your undo commands, the record of what was installed |
@@ -183,7 +183,10 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   user: it installs a real `zsh`, makes it the login shell, runs `./setup.sh --reset-shell`
   (the zsh files go to a backup folder, the login shell becomes bash again, tested
   against the real `usermod`) and then `--undo` (zsh and the files come back); it passed
-  in all four jobs. The checks that are skipped
+  in all four jobs. The shell-setup phase also checks the aliases themselves in a new shell
+  (`ls`, `ll`, `la` must be `eza`, `grep` must be ours) with the real Oh My Bash switched on:
+  that check exists because a real-machine run found Oh My Bash replacing them, which the
+  tests had missed; `ws-doctor` now checks it too. The checks that are skipped
   are skipped on purpose (SPICE kernels are off by default; image caching is off in
   a container, which cannot run podman; the VM run covers the rest). It took six
   runs to get here: the bugs found are in `CHANGELOG.md` (package names that
@@ -927,15 +930,19 @@ EOF
 fi
 ```
 
-**Files.** `10-workstation.sh` sets PATH, history, aliases, `fzf`/`zoxide`/
+**Files.** `10-workstation.sh` sets PATH, history, `fzf`/`zoxide`/
 `direnv`/`starship` integration, the offline-documentation shortcuts
-(`cppref`, `pydocs`, ...) and `ws-help`. `.inputrc` adds history search on
+(`cppref`, `pydocs`, ...) and `ws-help`. `16-aliases.sh` holds the everyday aliases
+(`ls`/`ll`/`la`/`tree` through `eza` with icons, `grep`, `bat`, `fd`, `lg`); it is a
+separate file because it must load *after* Oh My Bash (B15), which otherwise replaces
+`ls`, `ll`, `la` and `grep` with its own. `.inputrc` adds history search on
 the arrow keys. `ws-init` copies project starter files (B12). Read them
 before installing.
 
 ```bash
 less "$WS/files/home/.bashrc.d/10-workstation.sh"
 put "$WS/files/home/.bashrc.d/10-workstation.sh" ~/.bashrc.d/10-workstation.sh
+put "$WS/files/home/.bashrc.d/16-aliases.sh"     ~/.bashrc.d/16-aliases.sh
 put "$WS/files/home/.inputrc"                    ~/.inputrc
 put "$WS/files/home/.local/bin/ws-init"          ~/.local/bin/ws-init 755
 put "$WS/files/home/.local/bin/ws-doctor"        ~/.local/bin/ws-doctor 755
@@ -1077,7 +1084,7 @@ It is not in the Ubuntu archive, so it comes from the project's GitHub
 release. It is installed for **your user only** (no system font directory).
 The script runs this right after B1; the order does not matter.
 
-**File icons in `ls`/`ll`.** `10-workstation.sh` gives `eza` (installed in B1) file
+**File icons in `ls`/`ll`.** `16-aliases.sh` gives `eza` (installed in B1) file
 icons (`--icons=auto`) whenever this font's directory exists, so `ll` looks like
 a long listing with a folder/file-type icon per entry. The icons only render if your
 **terminal** uses the font: GNOME Terminal > Preferences > your profile > Custom font >
@@ -1172,6 +1179,13 @@ used. Keep it that way:
 ```bash
 for s in vscode-json-languageserver yaml-language-server; do command -v "$s" && echo "REMOVE $s: it fetches schemas online"; done
 ```
+
+This setup never installs them, but they may already be on your machine (an earlier `npm install -g`,
+an APT package, a snap, another editor's tooling). The self-test's *No-cloud policy* check then
+reports them, with where each one comes from. To find out yourself:
+`readlink -f "$(command -v yaml-language-server)"`, then `dpkg -S <that path>` (APT package),
+`npm ls -g` (npm global) or `snap list` (snap). Remove it with the tool that installed it, after
+checking what else needs it (`apt rdepends --installed <package>`); the setup itself never removes anything.
 
 Undo: `rm ~/.config/kate/lspclient/settings.json`; the package via APT history.
 
@@ -1709,11 +1723,13 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `lazygit` on 24.04, and `zellij` and `difftastic` on both 24.04 and 26.04). The guide has a fallback where one exists (lazygit); otherwise skip it. |
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
 | `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
+| `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | I use zsh / Oh My Zsh and the aliases, the prompt or the offline lock are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
+| Self-test: "No-cloud policy ... yaml-language-server (or vscode-json-languageserver) is installed" | That language server fetches JSON/YAML schemas from the internet and Kate would use it. This setup never installs it, so it was already on your machine; the message says where it comes from. Remove it with the tool that installed it ([B16](#b16-kate-editor-optional-install_kate-default-on)), or keep it knowingly. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
 | Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |
 | Wireshark can capture only as root | The opt-in `JOIN_WIRESHARK_GROUP` is off ([C1](#c1-embedded-part-work-and-personal-profiles)). |

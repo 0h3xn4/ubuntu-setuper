@@ -235,6 +235,11 @@ an older archive version (today: the archive if it has them, else the project's 
 - Use `if ...; then ...; fi`, not `cmd && cmd`, in functions run under set -e.
 - Never pipe into `grep -q` under pipefail (SIGPIPE makes the pipeline fail): capture into a variable
   first. This bit three times (ws-init test, check-all, the E2E lock phase).
+- Files in ~/.bashrc.d load in NAME order: 10-workstation (env, history, integrations), 15-oh-my-bash (opt-in),
+  16-aliases (everyday aliases), 20-offline. Aliases MUST come after Oh My Bash: it defines its own ls/ll/la/l/grep
+  (lib/directories.sh, lib/grep.sh, ls init function) while loading and silently replaces earlier ones (found on the
+  user's real machine; the E2E now asserts the aliases, ws-doctor checks them). install_file never overwrites an
+  existing file, so an old 10-workstation.sh keeps its aliases and the new 16 file adds the right ones.
 - Order matters for services: anything that disables a unit (privacy_hardening) runs AFTER all package
   installs, because a dependency can switch its timer back on. Every `record_undo` must be recorded
   BEFORE the thing that can fail, and only for what THIS run created (check "did it exist?" first).
@@ -261,6 +266,13 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+E2E RUN #13 (workflow_dispatch on the branch, head f71d2fa): GREEN, 11/11 phases in all four jobs, with the alias fix:
+the shell phase now asserts ls/ll/la are eza and grep is ours WITH the real Oh My Bash on (--full), ws-doctor reports
+"ls and ll are eza" in all four; self-test 33/36 (VM), 32/35 (container), 0 failed. Origin of the fix: the USER'S REAL
+MACHINE (first non-CI run, profile work, --full): 32/33 self-test passed, the failure was an already-installed
+yaml-language-server (message improved, see CHANGELOG), and the user saw no icons and wrong aliases because Oh My Bash
+replaced ls/ll/la/grep (16-aliases.sh loads after it now). LESSON: CI cannot see what a real machine shows; ask the user
+for the self-test output and `type ls ll` first.
 E2E WITH PHASE 11 (GitHub run #11, workflow_dispatch on the branch, head a56737a): GREEN, 11/11 phases in all four jobs.
 Phase 11 = `--reset-shell` with a REAL zsh and REAL `sudo usermod` (VM user "runner", container user "tester"): login
 shell zsh -> bash, files in the backup folder, then `--undo` -> zsh and files back, original shell restored. Self-test
