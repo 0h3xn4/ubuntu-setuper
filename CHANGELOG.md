@@ -42,6 +42,12 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - **Kate's terminal panel works:** `konsole-kpart` (about 2 MB, the embedded terminal part, no network features) is installed with Kate.
   Kate only *suggests* it, so APT skipped it and the panel said "Konsole not installed". `t_kate` now checks for it.
 
+### Verified (this batch)
+- **E2E run #24 on the final code (head `1bfb316`): all eight jobs (24.04 and 26.04, runner VM and container, `work` and `personal`) passed all 12 phases**; self-test 33/36
+  (container) and 34/37 (VM) passed, 0 failed. It covered rustup/lazygit/uv/Helix/probe-rs from upstream, the opt-in offline lock (new shell not blocked), the records
+  folder, Kate's plugin set and Format settings (`ws-pyformat` with the real ruff), and the real `basedpyright-langserver` started like Kate does (quiet on an untyped file).
+  The run before it failed five jobs only on GitHub's HTTP 504 for the probe-rs download, which is why the retries were raised (below).
+
 ### Fixed (downloads ride out a short GitHub outage)
 - **Downloads now retry for up to about a minute (6 tries, growing pauses) instead of 3 tries within seconds.** In one E2E run GitHub answered HTTP 504 for
   the probe-rs release in five of eight jobs at the same moment (the other three got the file): the step was reported as failed and the E2E failed on it,

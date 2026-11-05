@@ -345,6 +345,15 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+FINAL E2E OF THIS BATCH (GitHub run #24, workflow_dispatch on the branch, head 1bfb316): 8/8 GREEN, 12/12 phases in every job; self-test 33/36
+(container work/personal) and 34/37 (VM), 0 failed, only SPICE/container-image skips. Verified in it: rustup 1.29.3 (rustup-init, container jobs; the VM image's own
+rustup is left alone), lazygit 0.66.2, uv 0.13.7, Helix 25.07.1, probe-rs 0.32.0 all from upstream with no archive fallback; the default install does not
+block uv/cargo in a new shell (strict lock opt-in); Kate plugin set + t_kate PASS on Kate 23.08 (24.04) and 25.12 (26.04); ws-pyformat run with the real ruff;
+t_basedpyright_default PASSED against the REAL basedpyright-langserver in both Kate modes (written without being able to run the server: it worked on first
+contact). History of this batch: run #21 (bc04a24) 8/8; run #23 (6c7dcec) failed 5/8 ONLY on GitHub HTTP 504 for the probe-rs release (curl 22, 4 quick tries,
+same minute in 5 jobs) -> download retries raised to --retry 6 --retry-max-time 180 (1bfb316), the E2E correctly failed on the failed step instead of hiding it.
+LESSON: read WHY a job failed (summary.md install block, install.log) before calling it flaky; here the log said 504 outright. The CI self-test (blocking) still has
+not been seen on a PULL REQUEST yet.
 E2E WITH UPSTREAM-FIRST uv/Helix/starship (GitHub run #18, workflow_dispatch on the branch, head a4f6899): 8/8 GREEN, all 12
 phases everywhere (phase 12 = starship installed from its real release in a scratch HOME; --full turns Oh My Bash on, so the main
 install never installs starship). uv 0.13.7 and Helix 25.07.1 were installed from upstream in all eight jobs, none used the

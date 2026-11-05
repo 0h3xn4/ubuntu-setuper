@@ -210,10 +210,16 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   unverified downloads); both are fixed and the second run passed all eight. The install
   step took 10 to 19 minutes, once 51 minutes on a slow runner.
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
-  (the 24.04 archive has Node 18, which is end of life). **uv and Helix come from their projects' releases
-  too** (checked in all eight jobs: uv 0.13.7 and Helix 25.07.1 landed in `~/.local`, none fell back to Ubuntu's
-  package); a third eight-job run on the code with the upstream-first rule passed all 12 phases everywhere (self-test
-  33 and 36 passed on the VM, 32 and 35 in the container, 0 failed). The ARM and RISC-V programs run
+  (the 24.04 archive has Node 18, which is end of life). **uv, Helix, lazygit and rustup come from their
+  projects' releases too** (checked in every job: uv 0.13.7, Helix 25.07.1 and lazygit 0.66.2 landed in `~/.local`, rustup
+  1.29.3 in `~/.cargo` in the container jobs (a runner VM ships its own rustup, which the setup leaves alone); none fell back
+  to Ubuntu's package). The latest full run (eight jobs, 12 phases each, on the final code) passed everywhere: self-test 33
+  and 36 passed in the container (`work`, `personal`) and 34 and 37 on the VM, 0 failed. It checks, against the real
+  programs, that a default install does **not** block `uv`/`cargo` in a new shell (the strict offline lock is opt-in), that
+  Kate starts with its plugin set (every plugin exists in Kate 23.08 and 25.12 and is switched on), that `ws-pyformat` formats
+  with the real ruff, and that the real `basedpyright-langserver`, started the way Kate does, is quiet on a small untyped
+  file. One earlier run lost the probe-rs download to GitHub's HTTP 504 in five of eight jobs at the same moment (a GitHub
+  hiccup, handled as designed: the step was reported as failed); downloads now retry for about a minute. The ARM and RISC-V programs run
   in QEMU (RISC-V through `qemu-system-misc` on 24.04, `qemu-system-riscv` on 26.04). An
   eleventh phase plays a zsh user: it installs a real `zsh`, makes it the login shell, runs
   `./setup.sh --reset-shell` (the zsh files go to a backup folder, the login shell becomes bash
