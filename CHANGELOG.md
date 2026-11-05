@@ -43,6 +43,8 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   stand in. Unit-tested (`tools/check-all.sh`).
 - Result of that run: 24.04 `work`/`personal` on the runner VM and `work` in the container passed all 11 phases
   (RISC-V QEMU via `qemu-system-misc`, Kate, Node.js 26 from nodejs.org, `lazygit` from its release).
+- **Verified:** a second full run on the fixed code passed **all eight jobs** (24.04 and 26.04, runner VM and container,
+  `work` and `personal`; self-test 33/36 on the VM and 32/35 in the container on both releases, 0 failed).
 
 ### Fixed (Kate's language-server settings were ignored)
 - Kate supports ONE server per language with a flat `command` (checked in the source of 23.08.5 on 24.04 and 25.12.3 on

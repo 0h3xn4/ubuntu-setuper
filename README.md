@@ -194,32 +194,36 @@ seconds, without network.
 Be skeptical, and check for yourself; this is what has and has not been verified
 (newest facts first; the details and dates are in `CHANGELOG.md` and `CLAUDE.md`).
 
-- **Full end-to-end test on Ubuntu 26.04.1 LTS (in CI, `tools/e2e.sh`):** the
-  *whole* life cycle of both profiles passes in all four jobs (a GitHub runner VM
-  and an `ubuntu:latest` container, each for `work` and `personal`; `personal`
-  includes the embedded part): `--check` against the real archive, a full `--full`
-  install as a normal user with `sudo` (the install step took 9 to 19 minutes, depending on the runner), the self-test (33 and 36
-  checks passed, 0 failed, on the VM for `work` and `personal`; 32 and 35 in the
-  container), `ws-doctor` in a fresh shell, an idempotent second run, manifest,
-  lock (it pins Node.js too), `--undo` of every undo file, and a check that
-  nothing the setup created is left behind (APT packages stay by design).
-  **Node.js 26 (the newest LTS) from nodejs.org is installed and used in all four
-  jobs**, and the ARM and RISC-V programs run in QEMU. An eleventh phase plays a zsh
-  user: it installs a real `zsh`, makes it the login shell, runs `./setup.sh --reset-shell`
-  (the zsh files go to a backup folder, the login shell becomes bash again, tested
-  against the real `usermod`) and then `--undo` (zsh and the files come back); it passed
-  in all four jobs. The shell-setup phase also checks the aliases themselves in a new shell
-  (`ls`, `ll`, `la` must be `eza`, `grep` must be ours) with the real Oh My Bash switched on:
-  that check exists because a real-machine run found Oh My Bash replacing them, which the
-  tests had missed; `ws-doctor` now checks it too. The checks that are skipped
-  are skipped on purpose (SPICE kernels are off by default; image caching is off in
-  a container, which cannot run podman; the VM run covers the rest). It took six
-  runs to get here: the bugs found are in `CHANGELOG.md` (package names that
-  changed on 26.04, undo gaps, service handling in containers, an ordering problem
-  in the privacy step), and one was only visible by reading a green run's log: a
-  RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation into its
-  own package (`qemu-system-riscv`). The E2E test now fails on such a skip. No
-  desktop session was involved in any of this.
+- **Full end-to-end test on Ubuntu 24.04 LTS and 26.04 LTS (in CI, `tools/e2e.sh`):**
+  the *whole* life cycle of both profiles passes on **both releases**, in a GitHub runner
+  VM and in an Ubuntu container, for `work` and `personal` (eight jobs; `personal` includes
+  the embedded part): `--check` against the real archive, a full `--full` install as a normal
+  user with `sudo`, the self-test (33 and 36 checks passed on the VM for `work` and `personal`,
+  32 and 35 in the container, 0 failed, on 24.04 and 26.04 alike), `ws-doctor` in a fresh
+  shell, an idempotent second run, manifest, lock (it pins Node.js too), `--undo` of every
+  undo file, and a check that nothing the setup created is left behind (APT packages stay by
+  design). Two full eight-job runs on the final code base: in the first, seven jobs passed
+  and one (24.04 container, `personal`) hit a transient GitHub download error, which exposed
+  two real bugs (an optional `lazygit` download aborting its step, and a silent fallback to
+  unverified downloads); both are fixed and the second run passed all eight. The install
+  step took 10 to 19 minutes, once 51 minutes on a slow runner.
+  **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
+  (the 24.04 archive has Node 18, which is end of life), and the ARM and RISC-V programs run
+  in QEMU (RISC-V through `qemu-system-misc` on 24.04, `qemu-system-riscv` on 26.04). An
+  eleventh phase plays a zsh user: it installs a real `zsh`, makes it the login shell, runs
+  `./setup.sh --reset-shell` (the zsh files go to a backup folder, the login shell becomes bash
+  again, tested against the real `usermod`) and then `--undo` (zsh and the files come back).
+  The shell-setup phase also checks the aliases themselves in a new shell (`ls`, `ll`, `la`
+  must be `eza`, `grep` must be ours) with the real Oh My Bash switched on: that check exists
+  because a real-machine run found Oh My Bash replacing them, which the tests had missed;
+  `ws-doctor` now checks it too. The checks that are skipped are skipped on purpose (SPICE
+  kernels are off by default; image caching is off in a container, which cannot run podman; the
+  VM run covers the rest). The bugs found on the way are in `CHANGELOG.md` (package names that
+  changed on 26.04, undo gaps, service handling in containers, an ordering problem in the
+  privacy step, Kate's ignored language-server settings), and one was only visible by reading a
+  green run's log: a RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation
+  into its own package. The E2E test now fails on such a skip. No desktop session was involved
+  in any of this.
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and

@@ -291,6 +291,14 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
+E2E ON 24.04 + 26.04 (GitHub runs #15 and #16, workflow_dispatch on the branch, matrix ubuntu 24.04/latest x vm/container x work/personal =
+8 jobs; headers say "Ubuntu 24.04.5 LTS" / "Ubuntu 26.04.1 LTS"). Run #15 (head 05ea021): 7/8 green; the failure (container 24.04
+personal) was a transient GitHub error during two downloads: it aborted the Base CLI tools step via a pipefail curl in
+lazygit_fallback (24.04 only: lazygit is not in its archive) BEFORE the tealdeer config was written, and fetch_published silently
+fell back to TOFU for the Nerd Font (security downgrade). Fixed in 480a823 (see Conventions). Run #16 (head 480a823): 8/8 GREEN, all
+11 phases everywhere; self-test 33/36 (VM work/personal) and 32/35 (container) on BOTH releases, 0 failed; RISC-V QEMU passes on
+24.04 via qemu-system-misc; Kate starts; Node v26.13.0 from nodejs.org on both (archive Node 18 is EOL); lazygit from its release on
+24.04. Install step 10-19 min, one 26.04 VM job took 51 min (slow runner, no log hint; get_job_logs of a RUNNING job is 404).
 E2E RUN #13 (workflow_dispatch on the branch, head f71d2fa): GREEN, 11/11 phases in all four jobs, with the alias fix:
 the shell phase now asserts ls/ll/la are eza and grep is ours WITH the real Oh My Bash on (--full), ws-doctor reports
 "ls and ll are eza" in all four; self-test 33/36 (VM), 32/35 (container), 0 failed. Origin of the fix: the USER'S REAL
