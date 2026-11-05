@@ -1,8 +1,10 @@
 # Changelog
 
 All notable changes to this repository. Newest first. The full life cycle of both profiles
-has been run end to end in CI on Ubuntu 26.04.1 LTS (a VM and a container); it has not yet
-been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks.
+has been run end to end in CI on Ubuntu 24.04 and 26.04 LTS (a VM and a container each); the
+self-test has also been run once on the author's real machine (profile `work`, `--full`), which found
+several problems CI could not see (aliases replaced by Oh My Bash, the offline lock blocking `uv`, Kate's plugins, the Format plugin, noisy basedpyright; see below). The desktop module's app settings have not been checked
+in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
@@ -52,6 +54,9 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - The README troubleshooting has a row for the `yaml-language-server` self-test failure (an npm global that fetches schemas by itself).
 
 ### Verified (this batch)
+- **E2E run #26 on the final code (head `79905b7`, the settings-migration fix): all eight jobs passed all 12 phases**; self-test 33/36 (container) and 34/37 (VM)
+  on both releases, 0 failed, 0 warnings, only the SPICE and container-image skips. The PR's own CI (static checks, `--check`, reduced real installs with the
+  blocking self-test on 24.04 and the newest LTS) was green too, the first time the blocking self-test step was seen passing on a pull request.
 - **E2E run #24 on the final code (head `1bfb316`): all eight jobs (24.04 and 26.04, runner VM and container, `work` and `personal`) passed all 12 phases**; self-test 33/36
   (container) and 34/37 (VM) passed, 0 failed. It covered rustup/lazygit/uv/Helix/probe-rs from upstream, the opt-in offline lock (new shell not blocked), the records
   folder, Kate's plugin set and Format settings (`ws-pyformat` with the real ruff), and the real `basedpyright-langserver` started like Kate does (quiet on an untyped file).

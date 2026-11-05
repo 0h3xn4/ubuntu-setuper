@@ -62,9 +62,11 @@
 #  NO-CLOUD POLICY (fixed, every profile)
 #    Downloading during installation is allowed. Afterwards, no installed
 #    tool contacts external services: no cloud-connected tools, update
-#    checks and telemetry are disabled, and uv/pip/cargo/podman work only
-#    from local caches that are filled during installation. Networked apps
-#    (browser, mail) only do what you direct them to do.
+#    checks and telemetry are disabled, and podman never pulls on its own.
+#    You are never blocked from the network: uv, pip, cargo and podman fetch
+#    what YOU ask them to (a strict lock that limits them to the local caches
+#    is opt-in, ENFORCE_OFFLINE_ENV=1). Networked apps (browser, mail) only
+#    do what you direct them to do.
 #
 #  SAFETY POLICY (fixed, every profile)
 #    Never removes packages (apt --no-remove), never upgrades installed ones

@@ -204,11 +204,10 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   32 and 35 in the container, 0 failed, on 24.04 and 26.04 alike), `ws-doctor` in a fresh
   shell, an idempotent second run, manifest, lock (it pins Node.js too), `--undo` of every
   undo file, and a check that nothing the setup created is left behind (APT packages stay by
-  design). Two full eight-job runs on the final code base: in the first, seven jobs passed
-  and one (24.04 container, `personal`) hit a transient GitHub download error, which exposed
-  two real bugs (an optional `lazygit` download aborting its step, and a silent fallback to
-  unverified downloads); both are fixed and the second run passed all eight. The install
-  step took 10 to 19 minutes, once 51 minutes on a slow runner.
+  design). The newest full run (eight jobs on the final code, after the last merge) passed all
+  12 phases everywhere. Earlier runs found real bugs: a transient GitHub download error exposed two
+  (an optional `lazygit` download aborting its step, and a silent fallback to unverified downloads),
+  both fixed. The install step takes 10 to 19 minutes (once 51 on a slow runner).
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
   (the 24.04 archive has Node 18, which is end of life). **uv, Helix, lazygit and rustup come from their
   projects' releases too** (checked in every job: uv 0.13.7, Helix 25.07.1 and lazygit 0.66.2 landed in `~/.local`, rustup
@@ -1651,9 +1650,11 @@ hx --health c cpp python rust
 printf '%s\n' -std=c11 > compile_flags.txt; echo 'int main(void){return 0;}' > x.c; clangd --check=x.c
 ```
 
-**Python and Rust offline.** These must work *without* network:
+**Python and Rust from the local caches.** To prove the caches work *without* network, switch the network off for these
+commands only (the same variables the strict lock of D4 sets; your normal shell is not changed):
 
 ```bash
+export UV_OFFLINE=1 PIP_NO_INDEX=1 CARGO_NET_OFFLINE=true     # this terminal only; close it afterwards
 cd "$(mktemp -d)" && uv venv --python /usr/bin/python3 venv && uv pip install --python venv/bin/python pytest
 cargo new --vcs none --lib t && cd t && cargo add anyhow && cargo build
 pre-commit --version        # hooks are all local (no remote repositories)
