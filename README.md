@@ -79,7 +79,7 @@ only if you want it. The script lists them with their state:
 | `SET_GNOME_FONT` | GNOME monospace font: JetBrainsMono Nerd Font Mono 11 (JetBrains Mono 11 without B14) | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
 | `SET_GNOME_PRIVACY` | GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search in Activities | B13 | `gsettings set` back |
 | `JOIN_DOCKER_GROUP` | Adds you to group `docker` (equivalent to root; only if you install Docker) | [B9](#b9-containers-optional-install_podman-install_docker) | `gpasswd -d` |
-| `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt, offline lock) | [B10](#b10-shell-bash) | delete the block |
+| `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt) | [B10](#b10-shell-bash) | delete the block |
 | `SET_GIT_DEFAULTS` | Global git defaults, only options you have not set | [B11](#b11-git) | `git config --unset` |
 | `INSTALL_OH_MY_BASH` | Oh My Bash from one pinned commit, loaded from `~/.bashrc.d` with its update check off; replaces the starship prompt (not a system change, but opt-in) | [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default) | delete the clone and the file |
 | `JOIN_SERIAL_GROUPS` | *(embedded)* adds you to groups `dialout`, `plugdev`: serial ports and debug probes without `sudo` | [C1](#c1-embedded-part-work-and-personal-profiles) | `gpasswd -d` |
@@ -104,7 +104,7 @@ If you skip them, everything is still installed and works; you just
 use `sudo` where those changes would have avoided it. **One consequence
 to know about:** without the shell loader (`ENABLE_SHELL_LOADER`), the new
 shell setup is installed but not active: `~/.cargo/bin` is not on your
-`PATH` and the offline lock for `uv`/`pip`/`cargo` does not apply to your
+`PATH` and the aliases and prompt do not apply to your
 shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 
 ### Which Ubuntu releases do I need?
@@ -159,8 +159,11 @@ run `./setup.sh --check` first.
   container registry) and, if you choose, the SPICE kernels.
 - **Afterwards (not allowed unless you ask):** nothing connects by itself.
   Update checks, telemetry and online lookups of the installed tools are
-  switched off, and `uv`, `pip`, `cargo` and `podman` work only from the
-  local caches. Parts of Ubuntu itself (apt, snapd, time sync) are outside
+  switched off by their own settings (and `podman` never pulls an image on its own).
+  **You are never blocked from the network**: when you type `uv add`, `uv pip install`,
+  `cargo add` or `podman pull` yourself, it works. (A strict lock that limits `uv`, `pip` and
+  `cargo` to the local caches exists for air-gapped or policy machines: [D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default),
+  off by default.) Parts of Ubuntu itself (apt, snapd, time sync) are outside
   this guide; see [Still network-connected](#still-network-connected-os-level).
 
 ### What it never does
@@ -317,9 +320,8 @@ machine ends up in the same state.
 - Some tools may be absent from your Ubuntu release's archive. The
   `apt_install` helper in A2 skips and tells you about missing packages,
   like the script does.
-- Do the steps in order. In particular, **D4 (lock-down) comes last** on
-  purpose: it makes your shell refuse downloads, which would break the
-  downloads in the earlier steps.
+- Do the steps in order. D4 (the strict offline lock) is **optional and off by default**: you are not
+  blocked from the network. If you do choose it, do it **last**, because it makes your shell refuse downloads.
 
 ---
 
@@ -564,9 +566,9 @@ Undo: the `record_undo` lines above; the commands are in `~/workstation-setup/wo
 *Mirrors `./setup.sh --reset-shell`, function `reset_shell_mode`.*
 
 Everything in this guide is for **bash**: the aliases, the prompt, the history settings, the
-`fzf`/`zoxide`/`direnv`/`starship` hooks and above all the offline lock for `uv`, `pip` and `cargo`
-(D4) live in `~/.bashrc.d` and are loaded by `~/.bashrc`. A zsh session never reads them, so in zsh
-the tools are installed but the shell experience and **the offline protection are missing**.
+`fzf`/`zoxide`/`direnv`/`starship` hooks (and the optional strict offline lock of D4, if you
+chose it) live in `~/.bashrc.d` and are loaded by `~/.bashrc`. A zsh session never reads them, so in zsh
+the tools are installed but the shell experience is missing (and the strict lock, if you chose it, does not apply).
 If you use zsh (often with Oh My Zsh) and want this setup, the simplest honest route is to go back
 to bash first. This section is that "factory reset" for the shell. **Nothing is deleted**: your zsh
 files are *moved* into a backup folder, and every step is recorded for undo. Do it once, before
@@ -949,8 +951,7 @@ created for you (your own `~/.bashrc`, not a package-owned file under
 loads them: add this line to `~/.bashrc` yourself when you are ready (or load
 them by hand with `. ~/.bashrc.d/10-workstation.sh`):
 `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f`.
-Until then `~/.cargo/bin` is not on your `PATH`, and the aliases, prompt and
-offline lock are not active.
+Until then `~/.cargo/bin` is not on your `PATH`, and the aliases and the prompt are not active.
 
 ```bash
 mkdir -p ~/.bashrc.d
@@ -986,8 +987,8 @@ put "$WS/files/home/.local/bin/ws-init"          ~/.local/bin/ws-init 755
 put "$WS/files/home/.local/bin/ws-doctor"        ~/.local/bin/ws-doctor 755
 ```
 
-(`20-offline.sh`, the runtime no-cloud lock, is installed last, in
-[D4](#d4-enforce-the-offline-environment).)
+(`20-offline.sh`, the optional strict offline lock, is not part of the default install; see
+[D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default).)
 
 **Prompt (starship)** *(optional: `INSTALL_STARSHIP`; skip it if you use
 Oh My Bash, [B15](#b15-oh-my-bash-opt-in-install_oh_my_bash-off-by-default))*.
@@ -1200,10 +1201,13 @@ Flatpak), and being a KDE program it brings in a set of KDE libraries. Skip
 this section on a machine without a desktop. In Kate's build files (checked in
 its repository) I found no telemetry or update-check dependency; only use its
 "download"/"get new" buttons if you accept an online request. The script runs
-this after Helix; the order does not matter.
+this after Helix; the order does not matter. `konsole-kpart` (about 2 MB) is what Kate's built-in
+terminal panel (the *Terminal* tab at the bottom) needs; Kate only *suggests* it, so APT does not install it on its
+own, and without it the panel says "Konsole not installed". It is the embedded terminal part, not the Konsole
+application, and it has no network features.
 
 ```bash
-apt_install kate
+apt_install kate konsole-kpart
 put "$WS/files/home/.config/kate/lspclient/settings.json" ~/.config/kate/lspclient/settings.json
 ```
 
@@ -1461,10 +1465,11 @@ Re-do the cheat sheet command in B10 with the `desktop` line enabled.
 
 ---
 
-# Part D. Offline caches and lock-down
+# Part D. Offline caches and the optional strict lock
 
-Everything below is **downloaded now, used offline later**. After D4,
-`uv`, `pip`, `cargo` and `podman` work only from these local caches.
+Everything below is **downloaded now, available offline later** (useful on a machine that will have no
+network). **You are not blocked from the network**: `uv`, `pip`, `cargo` and `podman` work as usual and fetch
+what you ask for. Only if you choose the strict lock in D4 do they work from these local caches alone.
 
 ## D1. Python wheelhouse *(optional: `CACHE_PYTHON`)*
 
@@ -1526,11 +1531,17 @@ when you cache images. A `podman run`/`distrobox create` that names a missing im
 fails instead of downloading; an explicit `podman pull` (as above) still works. If you
 skipped B9, run its `containers.conf` block now.
 
-## D4. Enforce the offline environment
+## D4. The strict offline lock *(optional: `ENFORCE_OFFLINE_ENV`, **off by default**)*
 
 *Mirrors `files/home/.bashrc.d/20-offline.sh` (switch `ENFORCE_OFFLINE_ENV`).
 The script installs it early but clears these variables for its own run; by
 hand, install it **last**.*
+
+**You do not need this section.** By default you are never blocked from the network: `uv add`,
+`uv pip install`, `cargo add`, `pip install` fetch what *you* ask for, and the tools' own background
+network features (update checks, telemetry, implicit Python or image downloads) stay switched off by
+their own settings. The lock below is for an air-gapped or policy machine. Be aware of what it does: it is
+an environment setting of your terminal, so it also blocks the commands you type yourself.
 
 ```bash
 less "$WS/files/home/.bashrc.d/20-offline.sh"
@@ -1540,10 +1551,10 @@ put  "$WS/files/home/.bashrc.d/20-offline.sh" ~/.bashrc.d/20-offline.sh
 It exports `UV_OFFLINE=1`, `PIP_NO_INDEX=1`, `CARGO_NET_OFFLINE=true` and
 points uv/pip at the wheelhouse. It only takes effect in shells that load
 `~/.bashrc.d`, i.e. after the loader from [B10](#b10-shell-bash)
-(opt-in `ENABLE_SHELL_LOADER`) is in place. To fetch something deliberately (for
-example from an internal mirror approved by your IT), override for one
+(opt-in `ENABLE_SHELL_LOADER`) is in place. With the lock on, override for one
 command only: `UV_OFFLINE=0 uv add <pkg>` or `CARGO_NET_OFFLINE=false cargo update`.
-Remove the file to switch the enforcement off.
+Remove the file (`rm ~/.bashrc.d/20-offline.sh`) and open a new terminal to switch the lock off; an older
+install of this setup had it on by default, so you may have it: the setup never deletes your files.
 
 ---
 
@@ -1651,7 +1662,7 @@ npm config get update-notifier                                 # false
 grep 'pull_policy = "never"'  ~/.config/containers/containers.conf
 grep '^export DISABLE_AUTO_UPDATE=true' ~/.bashrc.d/15-oh-my-bash.sh   # only if you did B15
 fc-list : family | grep 'JetBrainsMono Nerd Font Mono'                 # only if you did B14
-env | grep -E '^(UV_OFFLINE|PIP_NO_INDEX|CARGO_NET_OFFLINE)='  # all three set (D4)
+env | grep -E '^(UV_OFFLINE|PIP_NO_INDEX|CARGO_NET_OFFLINE)='  # only with the strict lock of D4: all three set; by default none
 grep -Eq 'repo:[[:space:]]*https?://' ~/.local/share/workstation/templates/generic/.pre-commit-config.yaml || echo "pre-commit template: local hooks only"
 python3 -I - <<'EOF'
 import tomllib, os
@@ -1752,8 +1763,8 @@ Each section above ended with its undo. In general:
   above record these for you; the script's `--undo` replays them.
 - **Cache folders**: `rm -rf ~/.local/share/workstation` (templates,
   wheelhouse, crate cache, hashes) and `~/.cargo/registry` for downloaded crates.
-- **Switch the offline lock off** without uninstalling anything:
-  `rm ~/.bashrc.d/20-offline.sh`.
+- **Switch the strict offline lock off** (older installs had it on by default) without uninstalling anything:
+  `rm ~/.bashrc.d/20-offline.sh`, then open a new terminal.
 
 ---
 
@@ -1766,13 +1777,13 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 |---|---|
 | `apt_install` says "not in archive" for a package | Your Ubuntu release does not have it (for example `zellij` and `difftastic` on both 24.04 and 26.04). Skip it, or take the project's own release if it has one. |
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
-| `uv`, `pip` or `cargo` refuse to download | That is the offline lock working ([D4](#d4-enforce-the-offline-environment)). Override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
+| `uv`, `pip` or `cargo` refuse to download ("network disabled") | You have the strict offline lock ([D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default)): an older install of this setup had it on by default. Remove it: `rm ~/.bashrc.d/20-offline.sh` and open a new terminal. Or override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
 | `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
-| I use zsh / Oh My Zsh and the aliases, the prompt or the offline lock are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
+| I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
 | Self-test: "No-cloud policy ... yaml-language-server (or vscode-json-languageserver) is installed" | That language server fetches JSON/YAML schemas from the internet and Kate would use it. This setup never installs it, so it was already on your machine; the message says where it comes from. Remove it with the tool that installed it ([B16](#b16-kate-editor-optional-install_kate-default-on)), or keep it knowingly. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |
 | Serial port or debug probe: "permission denied" | You are not in the groups `dialout`/`plugdev` (opt-in `JOIN_SERIAL_GROUPS`, [C1](#c1-embedded-part-work-and-personal-profiles)), or you have not logged out and in since joining. |

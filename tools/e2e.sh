@@ -208,8 +208,11 @@ ph_shell() {
   ' 2>&1 | strip)"
   printf '%s\n' "$out" | grep -E '=|MISSING' | sed 's/^/  /'
   grep -q '^MISSING:' <<<"$out" && bad=1
-  grep -q '^UV_OFFLINE=1$' <<<"$out" || { echo "offline lock not active (UV_OFFLINE)"; bad=1; }
-  grep -q '^CARGO_NET_OFFLINE=true$' <<<"$out" || { echo "offline lock not active (CARGO_NET_OFFLINE)"; bad=1; }
+  # The user is NOT blocked from the network (their decision): the strict lock is opt-in (ENFORCE_OFFLINE_ENV=1) and
+  # must not be active after a default install. Checked in a new interactive shell, where the lock would apply.
+  grep -q '^UV_OFFLINE=$' <<<"$out" || { echo "uv is blocked from the network in a new shell (UV_OFFLINE is set): the strict lock must be off by default"; bad=1; }
+  grep -q '^CARGO_NET_OFFLINE=$' <<<"$out" || { echo "cargo is blocked from the network in a new shell (CARGO_NET_OFFLINE is set)"; bad=1; }
+  [[ ! -e $HOME/.bashrc.d/20-offline.sh ]] || { echo "$HOME/.bashrc.d/20-offline.sh was installed although ENFORCE_OFFLINE_ENV is off by default"; bad=1; }
   grep -q '^LAUNCHER=ccache$' <<<"$out" || { echo "ccache launcher not set"; bad=1; }
   grep -q '^EDITOR=hx$' <<<"$out" || { echo "EDITOR is not hx"; bad=1; }
   grep -q '^OSH=.*oh-my-bash' <<<"$out" || { echo "Oh My Bash not loaded (OSH unset)"; bad=1; }

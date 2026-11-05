@@ -30,6 +30,18 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   Tests: `check-all.sh` checks the migration (moved, never overwritten, link only when needed); the E2E fails if any such file is
   loose in `~` after an install.
 
+### Changed (you are not blocked from the network; Kate gets its terminal panel)
+- **The strict offline lock is now opt-in** (`ENFORCE_OFFLINE_ENV`, default **0**; your request: "dont block me, as the user from the
+  network"). `~/.bashrc.d/20-offline.sh` (`UV_OFFLINE=1`, `PIP_NO_INDEX=1`, `CARGO_NET_OFFLINE=true`) is an environment setting of your own
+  terminal, so it blocked the commands you typed yourself (`uv pip install pandas-stubs` failed with "network disabled"). By default
+  `uv`, `pip` and `cargo` now work as on any machine. What stays off are the tools' OWN background network features (update checks,
+  telemetry, `podman` pulling by itself, uv downloading Pythons: `uv python install` is still blocked, ask if you want that
+  relaxed). The local caches are still filled during installation. **An install that predates this change still has the file:**
+  `rm ~/.bashrc.d/20-offline.sh` and open a new terminal (the setup never deletes your files). `ws-doctor` says what the lock does
+  if it is there. The E2E now fails if a default install blocks `uv` or `cargo` in a new shell.
+- **Kate's terminal panel works:** `konsole-kpart` (about 2 MB, the embedded terminal part, no network features) is installed with Kate.
+  Kate only *suggests* it, so APT skipped it and the panel said "Konsole not installed". `t_kate` now checks for it.
+
 ### Changed (rustup and lazygit follow the same upstream-first rule)
 - **rustup and lazygit now come from their projects' releases too**, for consistency with uv, Helix, starship and Node.js
   (your decision). rustup is `rustup-init` checked against the `.sha256` the Rust project publishes, installed in `~/.cargo`

@@ -2028,6 +2028,12 @@ assert servers["python"]["command"][0] == "basedpyright-langserver"
 print("Kate LSP settings parse; servers:", ", ".join(sorted(servers)))
 EOT
   QT_QPA_PLATFORM=offscreen kate --version
+  # Kate's built-in terminal panel needs konsole-kpart (Kate only suggests it): without it the panel says
+  # "Konsole not installed". A part file, not a program to run, so check that the package is there.
+  local st
+  # shellcheck disable=SC2016
+  st="$(dpkg-query -W -f='${Status}' konsole-kpart 2>/dev/null || true)"   # captured: no pipe into grep -q under pipefail
+  [[ $st == *"install ok installed"* ]] || { echo "konsole-kpart is missing: Kate's terminal panel would say 'Konsole not installed'"; return 1; }
 }
 
 t_nerd_font() {
@@ -2422,7 +2428,7 @@ STEP_TOUCHES["JetBrains Mono Nerd Font"]="~/.local/share/fonts/JetBrainsMonoNerd
 STEP_WHY["Oh My Bash"]="(Only with INSTALL_OH_MY_BASH=1.) The Oh My Bash framework (themes, aliases, plugins) from ONE pinned commit, loaded from ~/.bashrc.d/15-oh-my-bash.sh with its GitHub update check switched off. Its own installer is not used because it would replace your ~/.bashrc. While it is enabled it owns the prompt, so the starship prompt is not started."
 STEP_TOUCHES["Oh My Bash"]="~/.local/share/oh-my-bash (git clone of one commit), ~/.bashrc.d/15-oh-my-bash.sh; network: github.com, at install time only."
 
-STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files."
+STEP_WHY["Kate editor"]="Kate, the KDE text editor (a graphical editor next to Helix), as a Debian package from the Ubuntu archive (not a snap or Flatpak), plus konsole-kpart, the part behind Kate's built-in terminal panel (Kate only suggests it, so without it the panel says \"Konsole not installed\"). It brings in KDE libraries. Its built-in language-server client is pointed at the same local servers Helix uses (clangd, rust-analyzer, basedpyright, ruff, taplo, cmake, bash); I found no telemetry or update-check dependency in Kate's build files."
 STEP_TOUCHES["Kate editor"]="apt packages (kate and KDE libraries); ~/.config/kate/lspclient/settings.json."
 
 STEP_WHY["Extra terminal tools"]="Nice-to-have terminal tools: zellij (a beginner-friendlier terminal multiplexer than tmux) and difftastic (structural diffs). Packages the archive of your Ubuntu release lacks are skipped and reported."

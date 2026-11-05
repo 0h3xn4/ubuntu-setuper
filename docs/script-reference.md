@@ -120,11 +120,16 @@ machine's exact package versions are recorded in its manifest
 
 **No cloud.** Downloading during installation is allowed. Afterwards, no tool
 contacts external services: cloud-connected tools aren't installed, update
-checks and telemetry are disabled, and uv/pip/cargo/podman work only from
-local caches filled during installation (see `files/home/.bashrc.d/20-offline.sh`).
+checks and telemetry are disabled by the tools' own settings, and podman never pulls an image on its own.
+**You are never blocked from the network** (your decision): a command you type yourself (`uv add`, `uv pip install`,
+`cargo add`, `podman pull`) works. The local caches (wheelhouse, crate cache, images) are filled during installation for
+a machine that will have no network. The strict lock that limits `uv`, `pip` and `cargo` to those caches
+(`files/home/.bashrc.d/20-offline.sh`, `ENFORCE_OFFLINE_ENV=1`) is opt-in, for air-gapped or policy machines; it also blocks
+what you type yourself, because it is an environment setting of your terminal. An install that predates this decision
+may still have the file: `rm ~/.bashrc.d/20-offline.sh`.
 The shell files in `~/.bashrc.d` load in name order: `10-workstation.sh` (PATH, history, integrations),
 `15-oh-my-bash.sh` (opt-in), `16-aliases.sh` (the everyday aliases; after Oh My Bash on purpose, because
-Oh My Bash replaces `ls`/`ll`/`la`/`grep`), `20-offline.sh` (the offline lock).
+Oh My Bash replaces `ls`/`ll`/`la`/`grep`), `20-offline.sh` (the opt-in strict offline lock).
 The self-test verifies this, including one check per desktop app.
 
 For apps that are networked by nature (browser, mail): traffic *you* direct to

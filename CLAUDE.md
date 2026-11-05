@@ -16,9 +16,15 @@ conversation; this file carries that context over.
    normal use: no telemetry, update checks, online lookups, implicit
    downloads. Downloading DURING INSTALLATION is explicitly allowed.
    Cloud-connected tools (gh, schema-fetching JSON/YAML LSPs, snaps, ...)
-   are never installed. Runtime enforcement: files/home/.bashrc.d/20-offline.sh,
-   uv.toml, containers.conf, lazygit/tealdeer/npm/rustup settings, and the
-   desktop module's per-app settings.
+   are never installed. Runtime enforcement: uv.toml, containers.conf, lazygit/tealdeer/npm/rustup
+   settings, and the desktop module's per-app settings (the tools' OWN background network features).
+   DECIDED by the user ("dont block me, as the user from the network"): the USER is never blocked from the
+   network. The strict env lock files/home/.bashrc.d/20-offline.sh (UV_OFFLINE=1, PIP_NO_INDEX=1,
+   CARGO_NET_OFFLINE=true) applied to the user's own terminal and blocked what they typed, so it is OPT-IN now
+   (ENFORCE_OFFLINE_ENV default 0, for air-gapped/policy machines). What requirement 1 forbids is a tool contacting
+   the network by itself (telemetry, update checks, implicit downloads), not a command the user types. An older
+   install may still have the file; the setup never deletes user files: tell the user `rm ~/.bashrc.d/20-offline.sh`.
+   Still blocked on purpose, ask before changing: `uv python install` (python-downloads = "never", system Python).
    Inherently networked apps (browser, mail): the user did NOT confirm Claude's proposed strict
    definition ("only traffic the user directs"). Their answer: such apps "of course might have
    network access, naturally". So the setup does not try to cut off the network use that is the
@@ -179,8 +185,8 @@ It lists everything and asks (--dry-run, --yes), records every step for --undo (
 last), and NEVER removes the zsh package (requirement 2: no package removal; it only prints the apt command).
 Deliberate exception to "every system change has a default-off switch in the opt_in table": it is an explicit one-off
 mode like --undo, not part of an install, and --full does not turn it on (the usermod only happens because the user
-ran this command and confirmed). Without a reset, zsh sessions never load ~/.bashrc.d, so the offline lock is NOT
-enforced there: that is why the reset exists. Tests: check-all.sh t_reset_shell (fake getent/sudo/id, fake /etc/skel;
+ran this command and confirmed). Without a reset, zsh sessions never load ~/.bashrc.d, so none of the shell setup (aliases, prompt, PATH, the optional
+offline lock) applies there: that is why the reset exists. Tests: check-all.sh t_reset_shell (fake getent/sudo/id, fake /etc/skel;
 the mode checks `id -u` so a fake id can stand in for a non-root user) and e2e.sh phase 11 (real zsh and usermod;
 VERIFIED GREEN in run #11).
 README A7 is the manual version.
@@ -258,8 +264,8 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
   put/git_set/loader/template/cheat-sheet/LibreOffice/GIMP blocks were run
   in a scratch HOME. Changes in behaviour (not just lists) must be mirrored
   by hand.
-- In the manual, `20-offline.sh` (the runtime lock) is installed LAST (D4);
-  the script installs it early but clears its variables for its own run.
+- In the manual, `20-offline.sh` (the OPT-IN strict lock, D4) is installed LAST if at all;
+  the script installs it early (only with ENFORCE_OFFLINE_ENV=1) but clears its variables for its own run.
 
 ## Conventions in setup.sh
 - `set -Eeuo pipefail`; each install step runs via `step` in a subshell so one
