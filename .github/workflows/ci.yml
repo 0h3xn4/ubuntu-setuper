@@ -63,8 +63,18 @@ jobs:
             DESKTOP_LIBREOFFICE=0 DESKTOP_VLC=0 DESKTOP_GIMP=0 DESKTOP_INKSCAPE=0 DESKTOP_DEJADUP=0 \
             DESKTOP_KEEPASSXC=0 \
             bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --profile ${{ matrix.profile }} </dev/null"
-      # Still non-blocking ("|| true"). Its last run had 0 failures (the QEMU test passes), so it can be
-      # made blocking; the full, authoritative run is the E2E workflow (e2e.yml), which does block.
+      # BLOCKING on purpose (it used to end in "|| true"). Why:
+      #  - This is the only step that proves the installed tools WORK (compilers build, Helix and Kate start,
+      #    the offline lock holds, no tool phones home). The install step above only proves that the commands
+      #    exited; a tool can install fine and still be broken, or break the no-cloud rule.
+      #  - With "|| true" a failing test left the whole workflow green, which is worse than no test: people read
+      #    green as "works". This repository has been bitten by exactly that (a green run whose log showed a
+      #    skipped RISC-V test).
+      #  - The reason it was lenient is gone: it was the QEMU test being flaky, and that test has passed in
+      #    every recent run (0 failures). The self-test's exit status is already the right one: it fails only
+      #    when a test FAILS. Warnings (status 78) and skips (77) do not fail it, so a missing optional
+      #    thing cannot turn it red, but a real failure now does.
+      # If a test is wrong, fix or skip THAT test (with a stated reason); do not make the step lenient again.
       - name: Self-test of what was installed
         run: |
           sudo -u tester -H env \
@@ -74,7 +84,7 @@ jobs:
             CACHE_CONTAINER_IMAGES=0 PROBE_RS_PREBUILT=0 \
             DESKTOP_LIBREOFFICE=0 DESKTOP_VLC=0 DESKTOP_GIMP=0 DESKTOP_INKSCAPE=0 DESKTOP_DEJADUP=0 \
             DESKTOP_KEEPASSXC=0 \
-            bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --profile ${{ matrix.profile }} --self-test || true"
+            bash -c "cd '$GITHUB_WORKSPACE' && ./setup.sh --profile ${{ matrix.profile }} --self-test"
       - name: ws-doctor and undo
         run: |
           sudo -u tester -H bash -c "~/.local/bin/ws-doctor --quiet || true"

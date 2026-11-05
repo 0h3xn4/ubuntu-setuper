@@ -91,7 +91,19 @@ conversation; this file carries that context over.
      project's SHASUMS256.txt; NO APT repository (no NodeSource). NODE_LTS_VERSION pins (lock),
      NODE_FROM_ARCHIVE=1 or a failed download falls back to the archive's nodejs/npm (the fallback is
      recorded in MISSING_FILE so the E2E flags it). NOT extended to tools without an LTS line
-     (uv, Helix, starship still prefer the archive when it has them): ask before changing that.
+     (uv, Helix, starship used to prefer the archive when it had them: DECIDED by the user later,
+     "upstream please": the newest upstream release wins for these three as well, see below).
+   - DECIDED by the user: uv, Helix and starship (no LTS line) also take the newest UPSTREAM stable release over an
+     older archive package. install_upstream_first() (setup.sh) holds the rule: not installed -> release (uv and
+     starship checked with the checksum the project publishes, Helix trust-on-first-use + lock pin) into ~/.local;
+     a failed download -> the archive's package, written to MISSING_FILE ("<tool> newest release (used the
+     archive's)") so the E2E fails on it; UV/HELIX/STARSHIP_FROM_ARCHIVE=1 prefers the archive;
+     ALLOW_CURL_INSTALLERS=0 uses the archive silently; an already installed tool is left alone, `--upgrade`
+     installs the newest release in ~/.local/bin (in front of Ubuntu's package, never removed). Pins: UV_VERSION,
+     HELIX_VERSION, STARSHIP_VERSION (v-prefixed tag). NOT extended to rustup and lazygit (still archive first):
+     ask before changing that. Tests: check-all t_upstream_first (the order, with fakes), t_upstream_install
+     (the install functions against fake releases), e2e.sh checks uv/hx land in ~/.local/bin and phase 12
+     installs starship for real (--full turns Oh My Bash on, which owns the prompt, so the main install skips it).
      Components the OS itself depends on (system Python, gcc, glibc,
      systemd) must ALWAYS stay the archive version under requirement 2.
 
@@ -192,16 +204,16 @@ prompt) and uses JetBrains Mono Nerd Font in their terminal.
   Claude recommended. Still UNVERIFIED whether the snaps read /etc/<app>/policies/policies.json.
 - `embedded` is part of `personal`.
 - Newest upstream LTS wins over the archive: requirement 4.
-Still open: whether tools WITHOUT an LTS line (uv, Helix, starship) should also prefer upstream over
-an older archive version (today: the archive if it has them, else the project's release).
+Answered later: tools WITHOUT an LTS line (uv, Helix, starship) also prefer upstream (requirement 4).
 
 ## Checks you can run (and CI)
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
   `tools/install-hooks.sh`). CI (.github/workflows/ci.yml) runs it, then per profile
   `--check` against the real archive of `ubuntu:latest` and a reduced real install. It ran
-  green (PR #5, #6, #8); its self-test step is still non-blocking ("|| true"). The QEMU test that
-  made it flaky passes now (0 failures in the last runs), so it can be made blocking when the user
-  agrees; the E2E workflow is the one that blocks.
+  green (PR #5, #6, #8). Its self-test step is BLOCKING since the user agreed (it used to end in "|| true"):
+  it is the only CI step that proves the installed tools work, a lenient step lets a broken run look green, and the
+  QEMU test that made it flaky passes in every recent run. It fails only when a test FAILS (warnings 78 and skips 77
+  do not). If a test is wrong, fix or skip THAT test with a stated reason; never make the step lenient again.
 - The cloud sandbox is Ubuntu 24.04 with a reachable archive: `apt-get update` works, so
   `./setup.sh --profile X --check` verifies package names for real on 24.04 (only lazygit/zellij/difftastic
   are missing, qemu-system-riscv is skipped as "not needed"). For 26.04 read the archive index (see

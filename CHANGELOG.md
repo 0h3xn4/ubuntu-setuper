@@ -20,6 +20,25 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
   GitHub Actions workflow (static checks, plus `--check` and a real install on the newest LTS).
 - README: troubleshooting table, "first day" page in the cheat sheet.
 
+### Changed (the newest upstream release wins for uv, Helix and starship; the CI self-test blocks)
+- **uv, Helix and starship now come from their projects' releases, not from Ubuntu's older package** (your decision,
+  the rule Node.js already followed). They are unpacked into your home directory (`~/.local/bin`, Helix in
+  `~/.local/opt`), uv and starship after checking the checksum the project publishes, Helix on trust-on-first-use
+  (no checksum is published), all pinned by the lock (`UV_VERSION`, `HELIX_VERSION`, new `STARSHIP_VERSION`).
+  Ubuntu's package is the fallback if a download fails (reported in the summary; the E2E fails on it).
+  `UV_FROM_ARCHIVE`, `HELIX_FROM_ARCHIVE` and `STARSHIP_FROM_ARCHIVE` (default 0) give the old behaviour back;
+  `ALLOW_CURL_INSTALLERS=0` forbids the downloads. A tool you already have is left alone; `--upgrade` installs the newest
+  release in `~/.local/bin`, in front of any package from Ubuntu, which is never removed. `rustup` and `lazygit`
+  still prefer the archive. `--check` now says which source each tool will use and which archive version it passes over.
+  `helix_version` reads the release redirect first (no API call, no rate limit), the API only as a fallback; the Helix
+  tarball name follows the CPU (`aarch64` too).
+- **The CI self-test step is blocking** (it ended in `|| true`). It is the only CI step that proves the installed tools
+  work; a lenient step lets a broken run look green; the QEMU test that made it flaky has passed in every recent run.
+  It fails only when a test fails (warnings and skips do not). Reasoning is in `ci.yml`.
+- Tests: `check-all.sh` checks the install order (`t_upstream_first`) and the install functions against fake releases
+  (`t_upstream_install`); `e2e.sh` checks that uv and Helix land in `~/.local/bin`, that the lock pins uv, and has a new
+  twelfth phase that installs starship from its real release (`--full` turns Oh My Bash on, which owns the prompt).
+
 ### Added (Ubuntu 24.04 LTS support: no forced upgrade)
 - **Ubuntu 24.04 LTS and 26.04 LTS are both supported** (`SUPPORTED_UBUNTU` in `workstation.conf`). Before, an older
   LTS got an upgrade nag and a confirmation question. Now a supported release is accepted without fuss; a release older

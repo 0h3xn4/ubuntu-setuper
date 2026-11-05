@@ -19,6 +19,8 @@
 #   10 leftovers       nothing the setup created is left behind (except APT packages)
 #   11 reset-shell     a zsh / Oh My Zsh user: real zsh, login shell zsh, then ./setup.sh --reset-shell
 #                      (files moved to a backup folder, login shell back to bash), then --undo (zsh again)
+#   12 starship        the real starship install from its release (--full turns Oh My Bash on, which owns
+#                      the prompt, so the main install never exercises it): scratch HOME, checks the undo line
 #
 # DANGER: this installs software, changes services, groups, /etc and your shell
 # files, then undoes what it can. Run it only in a throw-away VM or container.
@@ -60,7 +62,7 @@ done
 if (( PLAN )); then
   echo "Plan for profile '$PROFILE' (nothing is run):"
   printf '  %2d. %s\n' 1 "explain+check" 2 "install (--full)" 3 "self-test" 4 "doctor (fresh interactive shell)" \
-    5 "shell checks" 6 "idempotent re-install" 7 "manifest" 8 "lock" 9 "undo (--undo --yes, all undo files)" 10 "leftovers" 11 "reset-shell (zsh user, then undo)"
+    5 "shell checks" 6 "idempotent re-install" 7 "manifest" 8 "lock" 9 "undo (--undo --yes, all undo files)" 10 "leftovers" 11 "reset-shell (zsh user, then undo)" 12 "starship (real release, scratch HOME)"
   exit 0
 fi
 
@@ -138,12 +140,26 @@ ph_explain_check() {
 }
 
 ph_install() {
-  local t0=$SECONDS rc=0
+  local t0=$SECONDS rc=0 t pre=""
+  # What was on the machine BEFORE the setup (a runner image may ship uv): such a tool is left alone, by design.
+  for t in uv hx helix starship; do if command -v "$t" >/dev/null 2>&1; then pre+=" $t"; fi; done
+  echo "tools already on the machine before the setup:${pre:- (none)}"
   setup > "$LOG/install.log" 2>&1 || rc=$?
   echo "setup.sh exit status $rc after $((SECONDS - t0))s"
   strip < "$LOG/install.log" | grep -E 'Self-test:|All steps completed|Steps that did not' | sed 's/^/  /'
   (( rc == 0 )) || { strip < "$LOG/install.log" | tail -n 30; return 1; }
-  check_install_log "$LOG/install.log"
+  # The newest upstream release wins over the archive's older package (uv, Helix, starship): each of them must
+  # have been installed by the setup into ~/.local/bin, not taken from Ubuntu. A fallback to the archive after a
+  # failed download is written to the "skipped or failed" list, which check_install_log below rejects.
+  local bad=0 want="uv"
+  if grep -q 'INSTALL_HELIX=0' <<<"${E2E_SWITCHES:-}"; then :; else want+=" hx"; fi
+  for t in $want; do
+    if [[ " $pre " == *" $t "* ]]; then echo "(already there before the setup, left alone) $t"; continue; fi
+    if [[ -x $HOME/.local/bin/$t ]]; then echo "upstream: $t -> $("$HOME/.local/bin/$t" --version | head -n 1)"
+    else echo "NOT UPSTREAM: $t is not in ~/.local/bin (resolves to: $(command -v "$t" || echo nothing))"; bad=1; fi
+  done
+  check_install_log "$LOG/install.log" || bad=1
+  return $bad
 }
 
 ph_selftest() {
@@ -220,12 +236,13 @@ ph_lock() {
   grep -c '^  \["' "$lock" | sed 's/^/pins written: /'
   grep -q 'declare -gA UV_PINS' "$lock" || { echo "lock lacks UV_PINS"; bad=1; }
   grep -q 'RUST_TOOLCHAIN:=' "$lock" || { echo "lock lacks the Rust toolchain version"; bad=1; }
+  grep -q 'UV_VERSION:=' "$lock" || { echo "lock lacks the uv version"; bad=1; }
   if [[ "$(readlink "$HOME/.local/bin/node" 2>/dev/null || true)" == */opt/node-v* ]]; then
     grep -q 'NODE_LTS_VERSION:=v' "$lock" || { echo "lock lacks the Node.js version"; bad=1; }
   fi
   local checked; checked="$(WORKSTATION_LOCK="$lock" setup --check 2>&1 | strip || true)"   # captured: grep -q on a pipe can SIGPIPE under pipefail
   grep -q 'versions pinned' <<<"$checked" || { echo "--check did not load the lock"; bad=1; }
-  grep -E 'UV_VERSION|HELIX_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
+  grep -E 'UV_VERSION|HELIX_VERSION|STARSHIP_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
   return $bad
 }
 
@@ -310,7 +327,24 @@ ph_reset_shell() {
   return $bad
 }
 
-echo; echo "Running 11 phases (this takes a while: it is a full install)"
+# --full turns Oh My Bash on, and while it is on it owns the prompt, so the main install never installs starship.
+# This phase runs the real starship install (real download, real published checksum) the way a default run does,
+# in a scratch HOME, and checks that it lands in ~/.local/bin, runs, records its undo line and is skipped the
+# second time because the newest release is already there.
+ph_starship() {
+  local h bad=0 out; h="$(mktemp -d)"
+  out="$(HOME="$h" bash -c 'source <(head -n -1 ./setup.sh); init_undo_file
+    starship_install_upstream && starship_install_upstream
+    echo "VERSION=$("$HOME/.local/bin/starship" --version | head -n1)"; echo "UNDO=$(grep -c "^rm -f ~/.local/bin/starship" "$UNDO_FILE")"' 2>&1 | strip)"
+  printf '%s\n' "$out" | tail -n 6
+  grep -q '^VERSION=starship [0-9]' <<<"$out" || { echo "starship was not installed from its release"; bad=1; }
+  grep -q '^UNDO=1$' <<<"$out" || { echo "expected exactly one undo line"; bad=1; }
+  grep -q 'is the newest stable release' <<<"$out" || { echo "the second run did not recognise the installed release"; bad=1; }
+  rm -rf "$h"
+  return $bad
+}
+
+echo; echo "Running 12 phases (this takes a while: it is a full install)"
 run_phase "explain+check" ph_explain_check
 run_phase install        ph_install
 run_phase self-test      ph_selftest
@@ -322,6 +356,7 @@ run_phase lock           ph_lock
 run_phase undo           ph_undo
 run_phase leftovers      ph_leftovers
 run_phase reset-shell    ph_reset_shell
+run_phase starship       ph_starship
 
 # ------------------------------------------------------------------ summary
 {
