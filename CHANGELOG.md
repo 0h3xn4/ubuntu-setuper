@@ -32,6 +32,18 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - CI: `ci.yml` and `e2e.yml` now run on 24.04 and on the newest LTS (8 E2E jobs). README "Which Ubuntu releases do I need?"
   compares the two. Unit test for the release logic in `tools/check-all.sh`.
 
+### Fixed (found by the first Ubuntu 24.04 end-to-end run)
+- **A failed optional download no longer breaks unrelated settings.** On 24.04 `lazygit` comes from its release; a curl
+  failure inside a `pipefail` pipeline aborted the whole "Base CLI tools" step before the tealdeer privacy config was
+  written (self-test: "tldr auto-update is not disabled"). The settings that switch things off now come first, and a
+  failed `lazygit` download is reported and recorded, never fatal.
+- **`fetch_published` no longer falls back to trust-on-first-use** when the project's checksum file cannot be fetched
+  (it did, silently, for example for the Nerd Font during the same GitHub hiccup): that let anyone able to block the
+  checksum file get a tampered download accepted. It now retries, then refuses; only a SHA-256 pinned in the lock can
+  stand in. Unit-tested (`tools/check-all.sh`).
+- Result of that run: 24.04 `work`/`personal` on the runner VM and `work` in the container passed all 11 phases
+  (RISC-V QEMU via `qemu-system-misc`, Kate, Node.js 26 from nodejs.org, `lazygit` from its release).
+
 ### Fixed (Kate's language-server settings were ignored)
 - Kate supports ONE server per language with a flat `command` (checked in the source of 23.08.5 on 24.04 and 25.12.3 on
   26.04). The settings file nested a `servers` map inside each language, which Kate silently ignores, so Python, CMake and

@@ -223,9 +223,16 @@ t_published_checksum() {
     [[ -s $tmp/ok.bin ]] || exit 11
     fetch_published "file://$tmp/pay.bin" "$tmp/evil.bin" "file://$tmp/bad.sha" pay.bin >/dev/null 2>&1 && exit 12
     [[ ! -e $tmp/evil.bin ]] || exit 13
+    # The project publishes a checksum but it cannot be fetched: refuse (no silent trust-on-first-use) ...
+    FETCH_SUMS_TRIES=1 FETCH_SUMS_DELAY=0 fetch_published "file://$tmp/pay.bin" "$tmp/noverify.bin" "file://$tmp/does-not-exist.sha" pay.bin >/dev/null 2>&1 && exit 14
+    [[ ! -e $tmp/noverify.bin ]] || exit 15
+    # ... unless the lock file pins the SHA-256 of that download
+    DOWNLOAD_SHA256["file://$tmp/pay.bin"]="$(sha256sum "$tmp/pay.bin" | cut -d" " -f1)"
+    FETCH_SUMS_TRIES=1 FETCH_SUMS_DELAY=0 fetch_published "file://$tmp/pay.bin" "$tmp/pinned.bin" "file://$tmp/does-not-exist.sha" pay.bin >/dev/null 2>&1 || exit 16
+    [[ -s $tmp/pinned.bin ]] || exit 17
     exit 0' _ "$REPO" "$LIB" "$TMP"
 }
-check "fetch_published accepts the right checksum and refuses a wrong one" t_published_checksum
+check "fetch_published: right checksum accepted, wrong or unreachable one refused (no silent trust-on-first-use)" t_published_checksum
 
 t_lo_helper() {
   local x="$TMP/lo.xcu" py=modules/desktop/files/lo_update_check.py

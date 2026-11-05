@@ -413,10 +413,22 @@ fetch_published() {
   if ! curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$tmp"; then
     rm -f "$tmp"; warn "Download failed: $url"; return 1
   fi
-  if ! sums="$(curl -fsSL --retry 3 --connect-timeout 20 "$sumurl" 2>/dev/null)"; then
+  # The project publishes this checksum, so it MUST be reachable. A network hiccup is retried; if it still fails
+  # we do NOT fall back to trusting the download (anyone able to block the checksum file could then get a
+  # tampered file accepted). Only a SHA-256 pinned in the lock file can stand in for it.
+  local try=1 tries="${FETCH_SUMS_TRIES:-4}" delay="${FETCH_SUMS_DELAY:-3}"
+  sums=""
+  while ! sums="$(curl -fsSL --retry 3 --connect-timeout 20 "$sumurl" 2>/dev/null)" && (( try < tries )); do
+    sleep $(( try * delay )); try=$(( try + 1 ))
+  done
+  if [[ -z $sums ]]; then
     rm -f "$tmp"
-    warn "No published checksum at $sumurl; falling back to trust-on-first-use"
-    fetch_verified "$url" "$dest"; return
+    if [[ -n ${DOWNLOAD_SHA256[$url]:-} ]]; then
+      warn "The published checksum at $sumurl is not reachable; verifying against the SHA-256 pinned in the lock file"
+      fetch_verified "$url" "$dest"; return
+    fi
+    warn "REFUSED: $url. The project publishes a checksum ($sumurl) but it could not be fetched, so this download cannot be verified. Try again later."
+    return 1
   fi
   if [[ -n $name ]]; then
     expected="$(awk -v n="$name" '{ f = $2; sub(/^\*/, "", f); sub(/^\.\//, "", f); if (f == n) { print $1; exit } }' <<<"$sums")"
@@ -870,9 +882,10 @@ lazygit_fallback() {
   on "$ALLOW_CURL_INSTALLERS" || return 0
   local base="https://github.com/jesseduffield/lazygit/releases/latest/download" arch=x86_64 asset
   if [[ $(host_arch) == aarch64 ]]; then arch=arm64; fi
+  # Not fatal: a failed curl in this pipeline (pipefail) used to abort the whole calling step.
   asset="$(curl -fsSL --retry 3 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
-           | awk -v a="_linux_$arch.tar.gz" 'index($2, a) { print $2; exit }')"
-  [[ -n $asset ]] || { warn "Could not find a lazygit release for this CPU"; return 0; }
+           | awk -v a="_linux_$arch.tar.gz" 'index($2, a) { print $2; exit }' || true)"
+  [[ -n $asset ]] || { warn "Could not find a lazygit release for this CPU (or the download failed)"; return 1; }
   fetch_published "$base/$asset" "$STATE_DIR/$asset" "$base/checksums.txt" "$asset"
   mkdir -p "$HOME/.local/bin"
   tar -xzf "$STATE_DIR/$asset" -C "$HOME/.local/bin" lazygit
@@ -882,10 +895,16 @@ lazygit_fallback() {
 
 base_cli() {
   apt_install "${PKGS_BASE[@]}"
-  lazygit_fallback
+  # The settings that switch things OFF come before anything that needs the network, so a failed download
+  # can never leave the privacy configuration unwritten.
+  if have tldr; then install_file .config/tealdeer/config.toml; fi
+  # lazygit is optional where the archive lacks it (24.04): a failed download is reported, never fatal.
+  if ! lazygit_fallback; then
+    warn "lazygit was not installed (download failed); re-run ./setup.sh later"
+    echo "lazygit (not installed: download failed)" >> "$MISSING_FILE"
+  fi
   if have tldr; then
     # Fetch the example pages ONCE now; auto-update stays off afterwards.
-    install_file .config/tealdeer/config.toml
     tldr --update || warn "Could not download tldr pages"
   fi
 }

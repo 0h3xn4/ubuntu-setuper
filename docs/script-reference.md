@@ -179,7 +179,9 @@ after checking it against the `SHASUMS256.txt` the project publishes. No APT rep
 glibc, systemd) always stay the archive version.
 
 **Checksums.** Where the project publishes a checksum (uv, rustup-init, starship, lazygit,
-probe-rs, the Nerd Font), the download is compared with *that* and a mismatch is refused. Other
+probe-rs, the Nerd Font, Node.js), the download is compared with *that* and a mismatch is refused. If the
+published checksum itself cannot be fetched (after retries), the download is **refused**, never trusted blindly;
+only a SHA-256 pinned in the lock file can stand in for it. Other
 downloads outside APT (the Helix tarball, SPICE kernels) are verified against SHA-256 values in the
 lock file; without a lock their checksum is recorded on first download (trust on first use) and pinned
 by `--lock`. Compare them with the publisher's values if your process requires it. Package managers

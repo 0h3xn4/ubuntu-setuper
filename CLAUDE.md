@@ -268,8 +268,12 @@ an older archive version (today: the archive if it has them, else the project's 
   whatever the config says: judge a config by before/after, not by one failing call).
 - NEVER locate code in setup.sh with a text search for "main() {": it also
   occurs inside self-test heredocs (C/C++ sources).
+- Optional downloads must never abort the step they sit in: `x="$(curl ... | awk ...)"` under pipefail dies on a
+  curl error (exit 22 = HTTP error); append `|| true`, and write the OFF-switching config (tealdeer, ...) BEFORE
+  anything that needs the network (found on the first 24.04 run, where lazygit comes from its release).
 - Downloads outside APT: prefer `fetch_published URL DEST SUMS_URL [NAME]` (checks the
-  checksum the PROJECT publishes; refuses a mismatch; records "<url> <sha> published"
+  checksum the PROJECT publishes; refuses a mismatch; if the checksum file cannot be fetched it RETRIES then
+  REFUSES, never trust-on-first-use, unless the lock pins the SHA-256; records "<url> <sha> published"
   in the hash DB, which --lock skips) over `fetch_verified` (trust on first use + lock
   pin). Read a release tag with `release_tag_of <latest/download URL>` (redirect, no API).
   Never run a freshly downloaded binary in the cloud sandbox to "test" it: the auto-mode
