@@ -6,7 +6,7 @@ exactly what `setup.sh` in this repository does, in the same order, so you
 can read, understand and control every change from start to finish. If you
 would rather automate it, see [Automated route](#automated-route) at the end.
 
-What you get: C/C++/Rust/Python toolchains, the Helix editor (terminal) and
+What you get: C/C++/Rust/Python toolchains, the Helix and Neovim editors (terminal) and
 Kate (graphical) with language servers, git tooling, static analysis, offline documentation and a
 comfortable bash. Two optional parts: the **embedded** part (ARM and RISC-V
 cross compilers, QEMU, debug probes, serial and CAN tools, verification
@@ -28,7 +28,7 @@ lists them all.
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
 - [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*, A7 coming from zsh *(only if you use zsh)*
-- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate
+- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate, B17 Neovim
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
 - [Part E. Verify](#part-e-verify)
@@ -57,7 +57,7 @@ machine?" before the step-by-step part shows how.
 | Zone | What happens there | Needs `sudo`? |
 |---|---|---|
 | **1. Packages** | Programs from the Ubuntu archive are installed with `apt`. Nothing is removed, nothing already installed is upgraded, no repositories or PPAs are added, no snaps or Flatpaks. (APT may still pull newer versions of the *libraries* a new program needs; that is how dependencies work.) | yes, for `apt` |
-| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix, starship, lazygit; the newest upstream release wins over Ubuntu's older package), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
+| **2. Your home directory** | A few tools from official installers or `cargo`/`npm`/`uv` (uv, rustup, Rust tools, Helix, Neovim, starship, lazygit; the newest upstream release wins over Ubuntu's older package), new config files and helper commands, starter files for projects, the offline caches (Python wheels, Rust crates, container images), a cheat sheet, and an undo script. All below `~`, all new files (an existing file of yours is never overwritten). | no |
 | **3. The system itself** | **Nothing by default.** Only the opt-in changes in the table below, and only the ones you switch on. | yes, per change |
 
 ### Opt-in changes to the system and to your login files
@@ -112,7 +112,7 @@ shell until you load `~/.bashrc.d` yourself (B10 shows the one line).
 **24.04 LTS or 26.04 LTS: your choice, no upgrade required.** Both are verified: every package name
 checked against that release's real archive, and the full end-to-end test (a real `--full` install,
 undo and all) run on each in CI. The tools that come from Ubuntu are whatever your release ships
-(Canonical keeps them patched); everything that comes from upstream (Node.js LTS, uv, Rust, Helix,
+(Canonical keeps them patched); everything that comes from upstream (Node.js LTS, uv, Rust, Helix, Neovim,
 starship, probe-rs, the Nerd Font) is the newest version on either release. What differs:
 
 | | Ubuntu 24.04 LTS | Ubuntu 26.04 LTS |
@@ -120,6 +120,7 @@ starship, probe-rs, the Nerd Font) is the newest version on either release. What
 | Python / GCC / clang+clangd / CMake | 3.12 / 13 / 18 / 3.28 | 3.14 / 15 / 21 / 4.2 |
 | QEMU / GDB / OpenOCD | 8.2 / 15.1 / 0.12 | 10.2 / 17.1 / 0.12 |
 | Kate (editor) | 23.08 | 25.12 |
+| Neovim in the archive (only a fallback) | 0.9.5 (the upstream release is used instead) | 0.11.6 (the upstream release is used instead) |
 | Podman / eza / fzf | 4.9 / 0.18 / 0.44 | 5.7 / 0.23 / 0.67 |
 | Node.js in the archive (only a fallback) | 18 (end of life: the upstream LTS is used instead) | 22 |
 | RISC-V emulator | in `qemu-system-misc` | separate package `qemu-system-riscv` |
@@ -136,13 +137,13 @@ run `./setup.sh --check` first.
 
 | Path | Contents |
 |---|---|
-| `~/.local/bin` | `uv`, `uvx`, `starship`, `ws-init`, `ws-devname`, `hx` (a link into `~/.local/opt`), `node`/`npm`/`npx` (links into `~/.local/opt`), npm tools |
-| `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix release (one folder per version) |
+| `~/.local/bin` | `uv`, `uvx`, `starship`, `ws-init`, `ws-devname`, `hx` and `nvim` (links into `~/.local/opt`), `node`/`npm`/`npx` (links into `~/.local/opt`), npm tools |
+| `~/.local/opt` | Node.js (the newest LTS release, one folder per version; `node`, `npm`, `npx` are linked from `~/.local/bin`), Helix and Neovim releases (one folder per version) |
 | `~/.local/share/fonts` | JetBrains Mono Nerd Font (32 font files), installed for your user only |
 | `~/.local/share/oh-my-bash` | Oh My Bash, one pinned commit (only if you chose it) |
 | `~/.config/kate`, `~/.local/share/kate` | Kate's language-server and formatting settings; its plugin selection (the `[Kate Plugins]` group of the session files) |
 | `~/.cargo`, `~/.rustup` | Rust toolchain, cargo tools, downloaded crates |
-| `~/.config/...` | helix, lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
+| `~/.config/...` | helix, nvim (`init.lua`), lazygit, tealdeer, uv, containers, starship (and the desktop apps' settings) |
 | `~/.bashrc.d` | shell setup files, loaded in name order (`10-workstation.sh`, `15-oh-my-bash.sh`, `16-aliases.sh`, `20-offline.sh`, `30-embedded.sh`) |
 | `~/.local/share/workstation` | project starter files, Python wheelhouse, Rust crate cache, download checksums, SPICE kernels |
 | `~/workstation-setup/` | **one folder for everything the setup writes for you to read**: `WORKSTATION-CHEATSHEET.md` (`ws-help`), `workstation-undo-<time>.sh` (your undo commands), `workstation-manifest-<time>.txt` plus `workstation-manifest-latest.txt` (the record of what was installed) and `workstation-setup-<time>.log`. Nothing of this sits loose in `~`; `WS_OUT_DIR=/some/folder ./setup.sh` picks another folder. Earlier versions left these files in `~`: the next run moves them here and never overwrites anything. |
@@ -152,8 +153,8 @@ run `./setup.sh --check` first.
 - **While you set up (allowed):** `apt`; the release downloads for `uv`,
   `rustup`, `starship`, `lazygit` and `probe-rs` (checked against the
   checksums those projects publish), the Node.js LTS tarball from nodejs.org
-  (checked against its `SHASUMS256.txt`) and the Helix release (which publishes no
-  checksum: trust on first use, then pinned by the lock); `uv tool install`, `cargo install`, `npm install`; `tldr --update`
+  (checked against its `SHASUMS256.txt`) and the Helix and Neovim releases (no checksum file was confirmed for
+  them: trust on first use, then pinned by the lock); `uv tool install`, `cargo install`, `npm install`; `tldr --update`
   once; the Nerd Font release from GitHub and, if you choose, the Oh My
   Bash clone from GitHub; the three offline caches (PyPI, crates.io, the
   container registry) and, if you choose, the SPICE kernels.
@@ -204,11 +205,10 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   32 and 35 in the container, 0 failed, on 24.04 and 26.04 alike), `ws-doctor` in a fresh
   shell, an idempotent second run, manifest, lock (it pins Node.js too), `--undo` of every
   undo file, and a check that nothing the setup created is left behind (APT packages stay by
-  design). Two full eight-job runs on the final code base: in the first, seven jobs passed
-  and one (24.04 container, `personal`) hit a transient GitHub download error, which exposed
-  two real bugs (an optional `lazygit` download aborting its step, and a silent fallback to
-  unverified downloads); both are fixed and the second run passed all eight. The install
-  step took 10 to 19 minutes, once 51 minutes on a slow runner.
+  design). The newest full run (eight jobs on the final code, after the last merge) passed all
+  12 phases everywhere. Earlier runs found real bugs: a transient GitHub download error exposed two
+  (an optional `lazygit` download aborting its step, and a silent fallback to unverified downloads),
+  both fixed. The install step takes 10 to 19 minutes (once 51 on a slow runner).
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
   (the 24.04 archive has Node 18, which is end of life). **uv, Helix, lazygit and rustup come from their
   projects' releases too** (checked in every job: uv 0.13.7, Helix 25.07.1 and lazygit 0.66.2 landed in `~/.local`, rustup
@@ -238,6 +238,9 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   green run's log: a RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation
   into its own package. The E2E test now fails on such a skip. No desktop session was involved
   in any of this.
+- **Neovim (B17) is newer than the latest full run.** Its install function is tested against fake releases (the check-all
+  suite), but the real tarball, the real `init.lua` and the self-test that starts the real `basedpyright-langserver` inside
+  Neovim have only run in the CI E2E from the commit that added them on; see `CHANGELOG.md` for the result.
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
@@ -1285,6 +1288,61 @@ checking what else needs it (`apt rdepends --installed <package>`); the setup it
 
 Undo: `rm ~/.config/kate/lspclient/settings.json ~/.config/kate/formatting/settings.json ~/.local/bin/ws-pyformat`; the package via APT history.
 
+## B17. Neovim *(optional: `INSTALL_NVIM`, default on)*
+
+*Mirrors `step "Neovim editor"`, function `nvim_setup`.*
+
+Some people prefer Neovim, so it is installed **next to** Helix: `$EDITOR` stays Helix (B10), and `nvim` is just
+there. Same rule as Helix: never a snap, and **the newest upstream release wins** over Ubuntu's package (0.9.5 on
+24.04, 0.11.6 on 26.04), your decision for tools without an LTS line. Take the newest **stable** release from
+`https://github.com/neovim/neovim/releases` (the one marked "Latest", not "nightly"); replace `VERSION` with its tag.
+On an ARM machine the file is `nvim-linux-arm64.tar.gz`.
+
+```bash
+VERSION=...        # the tag of the latest stable release, e.g. v0.12.6
+command -v nvim || {
+  download "https://github.com/neovim/neovim/releases/download/${VERSION}/nvim-linux-x86_64.tar.gz" /tmp/nvim.tar.gz
+  mkdir -p ~/.local/opt ~/.local/bin
+  mkdir ~/.local/opt/nvim-"$VERSION"
+  tar -xzf /tmp/nvim.tar.gz -C ~/.local/opt/nvim-"$VERSION" --strip-components=1
+  ln -sf ~/.local/opt/nvim-"$VERSION"/bin/nvim ~/.local/bin/nvim    # nvim finds its runtime next to the real binary
+  record_undo "rm -rf ~/.local/opt/nvim-$VERSION ~/.local/bin/nvim"
+}
+```
+
+This download is trusted on first use (the script records its SHA-256 and the lock pins it afterwards): when
+this was written, a checksum file next to the release could not be confirmed. The script falls back to
+Ubuntu's package (`apt_install neovim`) only if the download fails; `NVIM_FROM_ARCHIVE=1` prefers it; an existing
+`nvim` is left alone, and `--upgrade` installs the newest release in `~/.local/bin`, in front of any package from Ubuntu.
+
+Configuration. `init.lua` is **plugin-free on purpose**: there is no plugin manager, so Neovim never downloads
+anything when it starts. It does four things:
+
+- Switches off what could reach for the network or other languages by itself: the spell-file downloader
+  (`loaded_spellfile_plugin`) and the node/perl/python3/ruby "providers".
+- Sensible editing defaults (line numbers, 4-space indent like Helix, mouse, system clipboard when `wl-clipboard`
+  or `xclip` is installed; a project's `.editorconfig` overrides the indent).
+- Connects Neovim's built-in language-server client to the **same local servers** as Helix and Kate: `clangd`,
+  `basedpyright` (at the **"standard"** level, see the note in [B16](#b16-kate-editor-optional-install_kate-default-on)),
+  `ruff`, `rust-analyzer` (with clippy), `taplo`, `bash-language-server`, `cmake-language-server`. A server that is not
+  installed is skipped. JSON and YAML get none (their usual servers download schemas).
+- Formats Python, Rust and TOML on save, like Helix; C and C++ are not formatted on save. Keys: `gd` definition,
+  `gr` references, `K` documentation, `Space f` format, `Space rn` rename, `Space ca` code action, `Space e` message.
+
+```bash
+put "$WS/files/home/.config/nvim/init.lua" ~/.config/nvim/init.lua      # never overwrites a file of yours
+nvim --version | head -n 2
+```
+
+If you already have your own `~/.config/nvim/init.lua`, nothing is touched: `put` leaves it alone. If you have an
+`init.vim`, do **not** add `init.lua` (Neovim refuses to load both: "Conflicting configs"); the script skips it with a
+warning. In both cases the self-test says so (a warning, not a failure). Check the setup with the self-test (*Neovim loads its
+configuration, quiet LSP*): it starts the real Neovim headless on a small Python file and requires that basedpyright
+reports the one real mistake and none of the strict-mode noise.
+
+Undo: `rm -rf ~/.local/opt/nvim-VERSION ~/.local/bin/nvim ~/.config/nvim/init.lua` (the script records exactly this
+for what it created); the package via APT history.
+
 ---
 
 # Part C. Optional parts
@@ -1648,12 +1706,15 @@ for s in clangd rust-analyzer ruff basedpyright-langserver cmake-language-server
   command -v "$s" >/dev/null && echo "ok  $s" || echo "MISSING $s"
 done
 hx --health c cpp python rust
+nvim --version | head -n 2      # the second editor
 printf '%s\n' -std=c11 > compile_flags.txt; echo 'int main(void){return 0;}' > x.c; clangd --check=x.c
 ```
 
-**Python and Rust offline.** These must work *without* network:
+**Python and Rust from the local caches.** To prove the caches work *without* network, switch the network off for these
+commands only (the same variables the strict lock of D4 sets; your normal shell is not changed):
 
 ```bash
+export UV_OFFLINE=1 PIP_NO_INDEX=1 CARGO_NET_OFFLINE=true     # this terminal only; close it afterwards
 cd "$(mktemp -d)" && uv venv --python /usr/bin/python3 venv && uv pip install --python venv/bin/python pytest
 cargo new --vcs none --lib t && cd t && cargo add anyhow && cargo build
 pre-commit --version        # hooks are all local (no remote repositories)
@@ -1831,10 +1892,11 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |
 | Terminal text looks **spaced out** (a gap after every letter), in Terminator or another terminal | The terminal's font is not a true monospace font for that program, or its profile uses a different font than your main terminal. In **Terminator**: right-click > *Preferences* > *Profiles* > *General* > untick *Use the system fixed width font* and pick *JetBrainsMono Nerd Font Mono* (the exact name; not the plain *Nerd Font*, not a *Propo* variant), size 11. Check what is configured with `grep -n font ~/.config/terminator/config`, and what the system calls "monospace" with `fc-match monospace`. If only one window is affected it is that window's profile; if all are, it is the profile you edited. Close the terminal and open a new one after changing it. |
 | Self-test: "No-cloud policy ... yaml-language-server is installed ... an npm global package" | An npm-installed `yaml-language-server` (this setup never installs it) is on the machine, and Kate would use it: it fetches YAML schemas from the internet by itself. Remove it with the command the message prints (`sudo npm uninstall -g yaml-language-server` for a package in `/usr/local`), then re-run `./setup.sh --self-test`. The check cannot be satisfied any other way: a server that fetches by itself is exactly what the no-cloud rule forbids. |
-| Kate or Helix show a page of Python errors on working code ("Type of ... is unknown", "Type annotation is missing ...") | basedpyright's own default level, "recommended", is very strict. This setup sets "standard" in both editors, but an older install keeps its old settings files (the setup never overwrites yours). **Re-run `./setup.sh`** (quit Kate first): it adds what is missing to your existing Kate settings files and the basedpyright level to your Helix `languages.toml`, leaves everything you set alone, makes a backup under `~/.local/share/workstation/settings-backups/` and records the undo. By hand: copy the files from the repository (`install -m 644 files/home/.config/kate/lspclient/settings.json ~/.config/kate/lspclient/` from inside the repository folder), and add the `[language-server.basedpyright.config.basedpyright]` block from `files/home/.config/helix/languages.toml` to `~/.config/helix/languages.toml`. For one project: put `{"typeCheckingMode": "standard"}` in its `pyrightconfig.json`. A library without type hints (pandas) also needs its stubs: `uv pip install pandas-stubs`. |
+| Kate, Helix or Neovim show a page of Python errors on working code ("Type of ... is unknown", "Type annotation is missing ...") | basedpyright's own default level, "recommended", is very strict. This setup sets "standard" in both editors, but an older install keeps its old settings files (the setup never overwrites yours). **Re-run `./setup.sh`** (quit Kate first): it adds what is missing to your existing Kate settings files and the basedpyright level to your Helix `languages.toml` (Neovim's `init.lua` is only ever created new, so it already has the level; if you wrote your own, add `settings = { basedpyright = { typeCheckingMode = "standard" } }` to your basedpyright server), leaves everything you set alone, makes a backup under `~/.local/share/workstation/settings-backups/` and records the undo. By hand: copy the files from the repository (`install -m 644 files/home/.config/kate/lspclient/settings.json ~/.config/kate/lspclient/` from inside the repository folder), and add the `[language-server.basedpyright.config.basedpyright]` block from `files/home/.config/helix/languages.toml` to `~/.config/helix/languages.toml`. For one project: put `{"typeCheckingMode": "standard"}` in its `pyrightconfig.json`. A library without type hints (pandas) also needs its stubs: `uv pip install pandas-stubs`. |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
+| Neovim starts but there is no completion, hover or error list | Inside Neovim, `:checkhealth vim.lsp` shows which servers are attached to the file. The usual cause is a language server that is not on `PATH` (`ws-doctor` names the missing ones) or a `~/.config/nvim` of your own that replaced `init.lua`. Completion that pops up by itself needs Neovim 0.11 or newer (the upstream release has it; Ubuntu 24.04's 0.9.5 does not: use `Ctrl-x Ctrl-o`). |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
 | Self-test: "No-cloud policy ... yaml-language-server (or vscode-json-languageserver) is installed" | That language server fetches JSON/YAML schemas from the internet and Kate would use it. This setup never installs it, so it was already on your machine; the message says where it comes from. Remove it with the tool that installed it ([B16](#b16-kate-editor-optional-install_kate-default-on)), or keep it knowingly. |

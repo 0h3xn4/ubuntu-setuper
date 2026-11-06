@@ -144,7 +144,7 @@ ph_explain_check() {
 ph_install() {
   local t0=$SECONDS rc=0 t pre=""
   # What was on the machine BEFORE the setup (a runner image may ship uv): such a tool is left alone, by design.
-  for t in uv hx helix starship lazygit rustup; do if command -v "$t" >/dev/null 2>&1; then pre+=" $t"; fi; done
+  for t in uv hx helix nvim starship lazygit rustup; do if command -v "$t" >/dev/null 2>&1; then pre+=" $t"; fi; done
   echo "tools already on the machine before the setup:${pre:- (none)}"
   setup > "$LOG/install.log" 2>&1 || rc=$?
   echo "setup.sh exit status $rc after $((SECONDS - t0))s"
@@ -155,6 +155,7 @@ ph_install() {
   # failed download is written to the "skipped or failed" list, which check_install_log below rejects.
   local bad=0 want="uv lazygit"
   if grep -q 'INSTALL_HELIX=0' <<<"${E2E_SWITCHES:-}"; then :; else want+=" hx"; fi
+  if grep -q 'INSTALL_NVIM=0' <<<"${E2E_SWITCHES:-}"; then :; else want+=" nvim"; fi
   for t in $want; do
     if [[ " $pre " == *" $t "* ]]; then echo "(already there before the setup, left alone) $t"; continue; fi
     if [[ -x $HOME/.local/bin/$t ]]; then echo "upstream: $t -> $("$HOME/.local/bin/$t" --version | head -n 1)"
@@ -261,12 +262,15 @@ ph_lock() {
   grep -q 'UV_VERSION:=' "$lock" || { echo "lock lacks the uv version"; bad=1; }
   grep -q 'LAZYGIT_VERSION:=v' "$lock" || { echo "lock lacks the lazygit version"; bad=1; }
   grep -q 'RUSTUP_VERSION:=' "$lock" || { echo "lock lacks the rustup version"; bad=1; }
+  if [[ "$(readlink "$HOME/.local/bin/nvim" 2>/dev/null || true)" == */opt/nvim-v* ]]; then
+    grep -q 'NVIM_VERSION:=v' "$lock" || { echo "lock lacks the Neovim version"; bad=1; }
+  fi
   if [[ "$(readlink "$HOME/.local/bin/node" 2>/dev/null || true)" == */opt/node-v* ]]; then
     grep -q 'NODE_LTS_VERSION:=v' "$lock" || { echo "lock lacks the Node.js version"; bad=1; }
   fi
   local checked; checked="$(WORKSTATION_LOCK="$lock" setup --check 2>&1 | strip || true)"   # captured: grep -q on a pipe can SIGPIPE under pipefail
   grep -q 'versions pinned' <<<"$checked" || { echo "--check did not load the lock"; bad=1; }
-  grep -E 'UV_VERSION|HELIX_VERSION|STARSHIP_VERSION|RUSTUP_VERSION|LAZYGIT_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
+  grep -E 'UV_VERSION|HELIX_VERSION|NVIM_VERSION|STARSHIP_VERSION|RUSTUP_VERSION|LAZYGIT_VERSION|NODE_LTS_VERSION|NERD_FONT_VERSION|OH_MY_BASH_COMMIT|PROBE_RS_VERSION|RUST_TOOLCHAIN' "$lock" | sed 's/^/  /'
   return $bad
 }
 
@@ -292,8 +296,8 @@ ph_leftovers() {
   # A runner image may already ship rustup: what existed before the install is not ours to remove.
   local -a skip=()
   if [[ -n ${E2E_PRE_RUSTUP:-} ]]; then skip=("$HOME/.rustup" "$HOME/.cargo/bin/rustup"); fi
-  for p in "$HOME"/.local/bin/{ws-init,ws-doctor,ws-devname,uv,uvx,hx,probe-rs,cargo-flash,cargo-embed,starship,lazygit} \
-           "$HOME/.local/share/workstation" "$HOME/.config/helix" "$HOME/.config/uv" "$HOME/.config/kate/lspclient/settings.json" "$HOME/.config/kate/formatting/settings.json" "$HOME/.local/bin/ws-pyformat" \
+  for p in "$HOME"/.local/bin/{ws-init,ws-doctor,ws-devname,uv,uvx,hx,nvim,probe-rs,cargo-flash,cargo-embed,starship,lazygit} \
+           "$HOME/.local/share/workstation" "$HOME/.config/helix" "$HOME/.config/nvim" "$HOME/.config/uv" "$HOME/.config/kate/lspclient/settings.json" "$HOME/.config/kate/formatting/settings.json" "$HOME/.local/bin/ws-pyformat" \
            "$HOME/.local/share/oh-my-bash" "$HOME/.local/share/fonts/JetBrainsMonoNerdFont" "$OUT/WORKSTATION-CHEATSHEET.md" \
            "$HOME/.inputrc" "$HOME/.cargo/bin/rustup" "$HOME/.rustup" "$HOME/.local/opt" "$HOME"/.local/bin/{node,npm,npx} /etc/sysctl.d/60-dev-inotify.conf \
            /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json; do

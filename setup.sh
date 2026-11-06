@@ -62,9 +62,11 @@
 #  NO-CLOUD POLICY (fixed, every profile)
 #    Downloading during installation is allowed. Afterwards, no installed
 #    tool contacts external services: no cloud-connected tools, update
-#    checks and telemetry are disabled, and uv/pip/cargo/podman work only
-#    from local caches that are filled during installation. Networked apps
-#    (browser, mail) only do what you direct them to do.
+#    checks and telemetry are disabled, and podman never pulls on its own.
+#    You are never blocked from the network: uv, pip, cargo and podman fetch
+#    what YOU ask them to (a strict lock that limits them to the local caches
+#    is opt-in, ENFORCE_OFFLINE_ENV=1). Networked apps (browser, mail) only
+#    do what you direct them to do.
 #
 #  SAFETY POLICY (fixed, every profile)
 #    Never removes packages (apt --no-remove), never upgrades installed ones
@@ -505,6 +507,18 @@ helix_version() {
   [[ -n $v ]] && echo "$v"
 }
 
+# Neovim: the release tarball (nvim-linux-x86_64.tar.gz / nvim-linux-arm64.tar.gz) of the newest stable release.
+# The tag comes from the redirect of the latest/download URL (no API call). NVIM_VERSION (the lock) pins one, with the "v".
+nvim_asset() {
+  case "$(host_arch)" in x86_64) echo nvim-linux-x86_64 ;; aarch64) echo nvim-linux-arm64 ;; *) return 1 ;; esac
+}
+nvim_url() { echo "https://github.com/neovim/neovim/releases/download/$1/$(nvim_asset).tar.gz"; }   # $1 = tag, e.g. v0.12.6
+nvim_version() {
+  if [[ -n ${NVIM_VERSION:-} ]]; then echo "$NVIM_VERSION"; return 0; fi
+  local a; a="$(nvim_asset)" || return 1
+  release_tag_of "https://github.com/neovim/neovim/releases/latest/download/$a.tar.gz"
+}
+
 # True if the binary $1 (a path) exists and reports version $2 as its second word ("uv 0.8.3", "helix 25.07.1 (...)").
 binary_is_version() {
   [[ -x $1 ]] || return 1
@@ -644,6 +658,7 @@ home_files() {
   if on "$INSTALL_CPP"; then echo .gdbinit; fi
   if on "$INSTALL_PYTHON"; then echo .config/uv/uv.toml; fi
   if on "$INSTALL_HELIX"; then echo .config/helix/config.toml; echo .config/helix/languages.toml; fi
+  if on "$INSTALL_NVIM"; then echo .config/nvim/init.lua; fi
   if on "$INSTALL_PODMAN" || on "$CACHE_CONTAINER_IMAGES"; then echo .config/containers/containers.conf; fi
   module_collect home_files
 }
@@ -1330,6 +1345,41 @@ helix_setup() {
   migrate_helix_basedpyright
 }
 
+# Neovim from its release tarball (the newest upstream release wins over Ubuntu's older package, your decision for
+# tools without an LTS line). The project's release page was not readable from the development sandbox, so a published
+# checksum file could not be confirmed: like Helix this is trust on first use, then pinned by the lock. The tarball
+# unpacks to bin/ lib/ share/ (Neovim finds its runtime relative to the real binary), so the binary is linked, not copied.
+nvim_install_upstream() {
+  local ver asset dest="$HOME/.local/opt" bin="$HOME/.local/bin" dir
+  asset="$(nvim_asset)" || { warn "No Neovim release for $(host_arch)"; return 1; }
+  ver="$(nvim_version || true)"
+  if [[ ! $ver =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then warn "Could not determine the latest Neovim release"; return 1; fi
+  if binary_is_version "$bin/nvim" "$ver"; then ok "Neovim $ver is the newest stable release"; return 0; fi
+  dir="$dest/nvim-$ver"
+  fetch_verified "$(nvim_url "$ver")" "$STATE_DIR/nvim.tar.gz" || return 1
+  mkdir -p "$dest" "$bin" || return 1
+  # Undo records come BEFORE the step that can fail, and only for what this run creates.
+  if [[ ! -e $dir ]]; then record_undo "rm -rf $(printf %q "$dir")"; fi
+  if [[ ! -e $bin/nvim && ! -L $bin/nvim ]]; then record_undo "rm -f ~/.local/bin/nvim"; fi
+  rm -rf "$dir.partial"; mkdir "$dir.partial" || return 1
+  tar -xzf "$STATE_DIR/nvim.tar.gz" -C "$dir.partial" --strip-components=1 || { rm -rf "$dir.partial"; return 1; }
+  [[ -x $dir.partial/bin/nvim ]] || { warn "The Neovim archive does not contain $asset/bin/nvim"; rm -rf "$dir.partial"; return 1; }
+  rm -rf "$dir"; mv "$dir.partial" "$dir" || return 1
+  ln -sf "$dir/bin/nvim" "$bin/nvim" || return 1
+  hash -r
+  ok "Installed Neovim $ver to $dir (the newest upstream release)"
+}
+
+nvim_setup() {
+  install_upstream_first Neovim neovim nvim_install_upstream "$NVIM_FROM_ARCHIVE" nvim || return 1
+  # An init.lua next to the user's init.vim would make Neovim stop with "Conflicting configs" (E5422): leave theirs alone.
+  if [[ -e $HOME/.config/nvim/init.vim ]]; then
+    warn "You have ~/.config/nvim/init.vim; not adding init.lua (Neovim refuses to load both). Your config is untouched."
+    return 0
+  fi
+  install_file .config/nvim/init.lua
+}
+
 # Install containers.conf (pull_policy = "never"). Guard against a podman that rejects it: if podman
 # worked before the file and fails after it, remove the file again. If podman does not work at all
 # here (a container without user namespaces), that says nothing about the file, so it stays.
@@ -1740,6 +1790,10 @@ check_mode() {
     if [[ -n ${HELIX_VERSION:-} ]]; then plan_tool Helix hx helix "$(helix_url "$HELIX_VERSION")" "$HELIX_FROM_ARCHIVE"
     else plan_tool Helix hx helix "https://github.com/helix-editor/helix/releases/latest (trust on first use: Helix publishes no checksum)" "$HELIX_FROM_ARCHIVE"; fi
   fi
+  if on "$INSTALL_NVIM"; then
+    if [[ -n ${NVIM_VERSION:-} ]]; then plan_tool Neovim nvim neovim "$(nvim_url "$NVIM_VERSION")" "$NVIM_FROM_ARCHIVE"
+    else plan_tool Neovim nvim neovim "https://github.com/neovim/neovim/releases/latest (trust on first use: no checksum file confirmed)" "$NVIM_FROM_ARCHIVE"; fi
+  fi
   if on "$INSTALL_STARSHIP" && ! on "$INSTALL_OH_MY_BASH"; then plan_tool starship starship starship "$(starship_base_url)/$(starship_asset) (checked against the published .sha256)" "$STARSHIP_FROM_ARCHIVE"; fi
   if on "$INSTALL_BASH_LSP" && ! on "$NODE_FROM_ARCHIVE"; then
     printf '    %-10s %s\n' "Node.js" "newest LTS (${NODE_LTS_VERSION:-resolved at install time}) from nodejs.org, checked against its published SHASUMS256.txt; the archive's nodejs/npm only as a fallback"
@@ -2041,6 +2095,34 @@ t_helix() {
   for lang in c cpp python rust; do "$hx" --health "$lang"; done
 }
 
+t_nvim() {
+  needs_on INSTALL_NVIM
+  local nv rc=0; nv="$(command -v nvim || true)"
+  [[ -n $nv ]] || { echo "Neovim not found"; exit 1; }
+  "$nv" --version | head -n 2
+  if [[ -e $HOME/.config/nvim/init.vim ]]; then echo "you have your own init.vim: nothing more to check"; exit 78; fi
+  [[ -f $HOME/.config/nvim/init.lua ]] || { echo "~/.config/nvim/init.lua is missing"; exit 1; }
+  if ! grep -q ws_nvim_config "$HOME/.config/nvim/init.lua"; then
+    echo "you have your own Neovim configuration: nothing more to check"; exit 78
+  fi
+  # The installed config loads without an error, and (with basedpyright installed) Neovim's own LSP client gets the
+  # quiet "standard" level: the one real mistake is reported, the missing type hints are not.
+  cp "$FILES/selftest/lsp/nvim_check.py" nvim_check.py; cp "$FILES/selftest/lsp/nvim_check.lua" nvim_check.lua
+  if have basedpyright-langserver; then
+    timeout 150 "$nv" --headless -n -i NONE nvim_check.py -c 'luafile nvim_check.lua' > nvim.txt 2>&1 || rc=$?
+  else
+    timeout 60 "$nv" --headless -n -i NONE -c 'lua assert(vim.g.ws_nvim_config)' -c 'qa!' > nvim.txt 2>&1 || rc=$?
+  fi
+  cat nvim.txt
+  local errs; errs="$(grep -E 'Error detected while processing|E5[0-9]{3}:' nvim.txt || true)"
+  [[ -z $errs ]] || { echo "Neovim reported errors in its configuration"; exit 1; }
+  case $rc in
+    0) ;;
+    3) echo "no language server answered"; exit 78 ;;
+    *) echo "Neovim check failed (exit $rc)"; exit 1 ;;
+  esac
+}
+
 t_precommit_offline() {
   needs_on INSTALL_PYTHON
   needs pre-commit git trailing-whitespace-fixer clang-format ruff shellcheck
@@ -2309,6 +2391,7 @@ self_test() {
   run_test "Rust: offline build from crate cache"     t_rust_offline
   run_test "Language servers present"                 t_language_servers
   run_test "Helix loads its configuration"            t_helix
+  run_test "Neovim loads its configuration, quiet LSP" t_nvim
   run_test "pre-commit runs fully offline"            t_precommit_offline
   run_test "Container images available offline"       t_containers
   run_test "Group memberships"                        t_groups
@@ -2438,6 +2521,8 @@ EOF
     local hx; hx="$(command -v hx || command -v helix || true)"
     # shellcheck disable=SC2016
     if [[ -n $hx ]]; then printf ': "${HELIX_VERSION:=%s}"\n' "$("$hx" --version | awk '{ print $2 }')"; fi
+    # shellcheck disable=SC2016
+    if have nvim; then printf ': "${NVIM_VERSION:=%s}"\n' "$(nvim --version | awk 'NR == 1 { print $2 }')"; fi
     # shellcheck disable=SC2016
     if have starship; then printf ': "${STARSHIP_VERSION:=v%s}"\n' "$(starship --version | awk 'NR == 1 { print $2 }')"; fi
     # shellcheck disable=SC2016
@@ -2682,6 +2767,8 @@ STEP_WHY["Bash language server"]="Editor support for shell scripts. It needs Nod
 STEP_TOUCHES["Bash language server"]="~/.local/opt/node-<version> and links in ~/.local/bin (node, npm, npx, corepack); ~/.local (npm global prefix); npm settings in ~/.npmrc; network: nodejs.org, npm registry. With NODE_FROM_ARCHIVE=1: apt packages nodejs, npm."
 
 STEP_WHY["Helix editor"]="The Helix terminal editor: the newest stable release from the project's tarball (the newest upstream release wins over Ubuntu's older package, which is only the fallback; HELIX_FROM_ARCHIVE=1 prefers it; never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
+STEP_WHY["Neovim editor"]="Neovim as a second terminal editor (Helix stays your default): the newest stable release from the project's tarball (the newest upstream release wins over Ubuntu's older package, which is only the fallback; NVIM_FROM_ARCHIVE=1 prefers it; never a snap), with a small plugin-free init.lua that uses the same local language servers as Helix and Kate. No plugin manager is installed, so Neovim never downloads anything by itself; JSON/YAML get no language server because those download schemas."
+STEP_TOUCHES["Neovim editor"]="apt package, or ~/.local/opt/nvim-<version> and ~/.local/bin/nvim; ~/.config/nvim/init.lua (new file only: an init.lua of yours is never overwritten, and with an init.vim of yours it is not added at all); network: the GitHub release (trust on first use, then pinned by the lock); the archive's package only as a fallback. \$EDITOR stays Helix."
 STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/* (if you already have a languages.toml, only the basedpyright level is appended, and only if you set none; backup in ~/.local/share/workstation/settings-backups); network: the GitHub release (Helix publishes no checksum: trust on first use, then pinned by the lock); the archive's package only as a fallback."
 
 STEP_WHY["Containers"]="Podman and Distrobox for isolated build environments (Docker only if you switched it on). With podman, a small config file makes it never pull images by itself."
@@ -2720,6 +2807,7 @@ run_steps() {
   if on "$INSTALL_OFFLINE_DOCS"; then step "Offline documentation"     offline_docs; fi
   if on "$INSTALL_BASH_LSP";     then step "Bash language server"      bash_lsp; fi
   if on "$INSTALL_HELIX";        then step "Helix editor"              helix_setup; fi
+  if on "$INSTALL_NVIM";         then step "Neovim editor"             nvim_setup; fi
   if on "$INSTALL_KATE";         then step "Kate editor"               kate_setup; fi
   if on "$INSTALL_NICE_TO_HAVE"; then step "Extra terminal tools"      nice_to_have; fi
   step "Containers"                    containers
