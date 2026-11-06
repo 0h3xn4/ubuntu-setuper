@@ -51,7 +51,7 @@ say "ws-doctor: profile ${PROFILE}, $(. /etc/os-release 2>/dev/null; echo "${PRE
 
 head1 "Tools"
 for t in git gcc g++ clang clangd cmake ninja gdb python3 uv ruff rustc cargo rust-analyzer hx podman; do tool "$t"; done
-for t in kate lazygit starship zoxide fzf ccache node npm; do tool "$t" optional; done
+for t in nvim kate lazygit starship zoxide fzf ccache node npm; do tool "$t" optional; done
 
 if [[ -x $HOME/.local/bin/ws-devname ]]; then
   head1 "Embedded tools (the embedded part is installed)"

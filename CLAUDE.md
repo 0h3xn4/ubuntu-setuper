@@ -8,7 +8,8 @@ conversation; this file carries that context over.
 ## The user
 - Spacecraft flight software engineer; languages: Python, C, C++, Rust,
   plus JSON/YAML/XML.
-- Terminal beginner who chose a terminal editor: Helix (not Neovim).
+- Terminal beginner who chose a terminal editor: Helix (not Neovim). Later, on request ("users would also like nvim"), Neovim was added as a SECOND editor
+  (INSTALL_NVIM, default on); Helix stays the default and $EDITOR.
 - Wants to understand and control the setup; explain changes, don't just make them.
 
 ## Hard requirements (never violate, fixed on EVERY profile, no switch)
@@ -99,7 +100,7 @@ conversation; this file carries that context over.
      recorded in MISSING_FILE so the E2E flags it). NOT extended to tools without an LTS line
      (uv, Helix, starship, rustup, lazygit used to prefer the archive when it had them: DECIDED by the user later,
      "upstream please" and "for consistency sake do it": the newest upstream release wins for these five as well, see below).
-   - DECIDED by the user: uv, Helix, starship, rustup and lazygit (no LTS line) also take the newest UPSTREAM stable release over an
+   - DECIDED by the user: uv, Helix, starship, rustup and lazygit (no LTS line; Neovim followed the same rule when it was added) also take the newest UPSTREAM stable release over an
      older archive package. install_upstream_first() (setup.sh) holds the rule: not installed -> release (uv and
      starship checked with the checksum the project publishes, Helix trust-on-first-use + lock pin) into ~/.local;
      a failed download -> the archive's package, written to MISSING_FILE ("<tool> newest release (used the
@@ -129,7 +130,9 @@ Neutral naming everywhere (project "workstation-setup", ws-help, ws-init,
 ws-devname, /dev/ws/, ~/.local/share/workstation); flight-software specifics
 belong only inside the embedded module.
 
-- **core** (setup.sh + workstation.conf + files/): always on. Includes Helix, Kate
+- **core** (setup.sh + workstation.conf + files/): always on. Includes Helix, Neovim (INSTALL_NVIM; upstream-first like Helix; trust on first use because
+  no checksum file was confirmed: the sandbox proxy hides release pages, so check the release's assets before changing that; ~/.config/nvim/init.lua is
+  PLUGIN-FREE on purpose: a plugin manager or Mason would download by itself, requirement 1; t_nvim runs the real nvim headless), Kate
   (INSTALL_KATE; deb; ~/.config/kate/lspclient/settings.json merged over Kate's defaults,
   verified against Kate's source: JSON merge, same schema), ws-init, ws-doctor (standalone
   health check), `--undo`, ccache enabled via CMAKE_*_COMPILER_LAUNCHER in 10-workstation.sh.

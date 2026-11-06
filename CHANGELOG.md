@@ -8,6 +8,27 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Added (Neovim as a second editor, on request: "users would also like nvim")
+- **Neovim** (`INSTALL_NVIM`, on by default) next to Helix, which stays the default (`$EDITOR` is unchanged). Same rule as Helix and the
+  other tools without an LTS line: the newest **upstream** stable release (`nvim-linux-x86_64.tar.gz` / `nvim-linux-arm64.tar.gz`, tag read from the
+  redirect of the `latest/download` URL) goes to `~/.local/opt/nvim-<version>`, linked from `~/.local/bin/nvim`; Ubuntu's `neovim` (0.9.5 on 24.04,
+  0.11.6 on 26.04) is only the fallback (recorded in the missing list, so the E2E fails on it); `NVIM_VERSION` (with the `v`; the lock pins it) and
+  `NVIM_FROM_ARCHIVE=1` work like the Helix ones. The download is **trust on first use**, then pinned by the lock: a checksum file next to the release
+  could not be confirmed from the development sandbox (the release page was not readable there). If the project does publish one, switching to
+  `fetch_published` is a small follow-up.
+- **`~/.config/nvim/init.lua`**, new file only (an `init.lua` of yours is never overwritten; with an `init.vim` of yours it is not added, because Neovim refuses to load both; the self-test then warns instead of failing). It is
+  **plugin-free**: no plugin manager, so Neovim never downloads anything by itself, and it switches off the spell-file downloader and the node/perl/
+  python3/ruby providers. It starts Neovim's built-in language-server client for the same local servers as Helix and Kate (clangd, basedpyright at
+  "standard", ruff, rust-analyzer with clippy, taplo, bash-language-server, cmake-language-server; none for JSON/YAML), formats Python/Rust/TOML on save
+  like Helix, and written to also work on the archive's 0.9.5 (the completion popup needs 0.11+).
+- Self-test **"Neovim loads its configuration, quiet LSP"** (`t_nvim`): starts the real `nvim --headless` on a small Python file
+  (`files/selftest/lsp/nvim_check.py`/`.lua`) and requires that basedpyright reports the one real mistake and none of the strict-mode diagnostics.
+  Checks in `check-all.sh`: the install function against fake releases (install, failed download, second run). `e2e.sh`: `nvim` must come from
+  upstream (`~/.local/bin`), the lock must pin `NVIM_VERSION`, nothing may be left behind. `ws-doctor` lists `nvim` (optional).
+- Docs: README B17, big picture, release table, troubleshooting row; `docs/script-reference.md`; a Neovim page in the cheat sheet (for someone who has
+  not used a modal editor: `Esc`, `:q!`, `:Tutor`). **Not yet run for real:** written and unit-tested in the sandbox, which cannot run downloaded
+  binaries; the first E2E from this commit is the real test (result below once it has run).
+
 ### Added
 - **Kate** (`INSTALL_KATE`, on by default): the KDE text editor as a Debian package, with its
   language-server client pointed at the local servers (README B16).

@@ -245,6 +245,7 @@ mk() { # mk NAME VERSION: an executable that prints "<first word> <version>"
 release_tag_of() { echo "$FAKE_TAG"; }
 curl() { printf 'abc  lazygit_9.9.9_linux_%s.tar.gz\n' "$([[ $A == aarch64 ]] && echo arm64 || echo x86_64)"; }
 helix_version() { echo "$FAKE_HX"; }
+nvim_version() { echo "$FAKE_TAG"; }
 fetch_published() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1; local t="$STATE_DIR/fake-$FETCHES"; mkdir -p "$t"
   case $1 in
     *uv-*) mkdir -p "$t/uv-$A-unknown-linux-gnu"; mk uv "${FAKE_TAG}" > "$t/uv-$A-unknown-linux-gnu/uv"; cp "$t/uv-$A-unknown-linux-gnu/uv" "$t/uv-$A-unknown-linux-gnu/uvx"; chmod +x "$t"/uv-*/uv*
@@ -253,7 +254,12 @@ fetch_published() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1;
     *lazygit_*) printf '#!/bin/sh\necho "commit=abc, build date=x, build source=y, version=9.9.9, os=linux, arch=amd64, git version 2.43"\n' > "$t/lazygit"; chmod +x "$t/lazygit"; tar -czf "$2" -C "$t" lazygit ;;
     *starship*) mk starship "${FAKE_TAG#v}" > "$t/starship"; chmod +x "$t/starship"; tar -czf "$2" -C "$t" starship ;;
   esac; }
-fetch_verified() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1; local t="$STATE_DIR/fake-$FETCHES/helix-$FAKE_HX-$A-linux"; mkdir -p "$t"
+fetch_verified() { FETCHES=$((FETCHES + 1)); [[ $FAKE_FAIL == 1 ]] && return 1
+  if [[ $1 == *neovim* ]]; then   # nvim-linux-<arch>/bin/nvim, as the real tarball is laid out
+    local n="nvim-linux-$([[ $A == aarch64 ]] && echo arm64 || echo x86_64)" t0="$STATE_DIR/fake-$FETCHES"; mkdir -p "$t0/$n/bin"
+    mk NVIM "$FAKE_TAG" > "$t0/$n/bin/nvim"; chmod +x "$t0/$n/bin/nvim"; tar -czf "$2" -C "$t0" "$n"; return 0
+  fi
+  local t="$STATE_DIR/fake-$FETCHES/helix-$FAKE_HX-$A-linux"; mkdir -p "$t"
   mk helix "$FAKE_HX" " (abc)" > "$t/hx"; chmod +x "$t/hx"; tar -cJf "$2" -C "$STATE_DIR/fake-$FETCHES" "helix-$FAKE_HX-$A-linux"; }
 init_undo_file
 rc=0; FAKE_FAIL=${FAKE_FAIL:-0}
@@ -270,6 +276,8 @@ DRV
   out="$(run_ stx starship_install_upstream .local/bin/starship v9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "starship download fails"
   out="$(run_ hx helix_install_upstream .local/bin/hx 9.9.9 0)";   want_ "$out" "RC=0 FETCHES=1 BIN=helix 99.9 (abc) UNDO=2" "helix install"
   out="$(run_ hxx helix_install_upstream .local/bin/hx 9.9.9 1)";  want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "helix download fails"
+  out="$(run_ nv nvim_install_upstream .local/bin/nvim v9.9.9 0)"; want_ "$out" "RC=0 FETCHES=1 BIN=NVIM v9.9.9 UNDO=2" "nvim install"
+  out="$(run_ nvx nvim_install_upstream .local/bin/nvim v9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "nvim download fails"
   out="$(run_ ru rustup_install_upstream .cargo/bin/rustup 9.9.9 0)";  want_ "$out" "RC=0 FETCHES=1 BIN=rustup 9.9.9 UNDO=1" "rustup install"
   out="$(run_ rux rustup_install_upstream .cargo/bin/rustup 9.9.9 1)"; want_ "$out" "RC=1 FETCHES=1 BIN=none UNDO=0" "rustup download fails"
   out="$(run_ lg lazygit_install_upstream .local/bin/lazygit 9.9.9 0)"; want_ "$out" "RC=0 FETCHES=1 BIN=commit=abc, build date=x, build source=y, version=9.9.9, os=linux, arch=amd64, git version 2.43 UNDO=1" "lazygit install"
@@ -286,6 +294,7 @@ DRV
 uv uv_install_upstream .local/bin/uv 9.9.9
 st starship_install_upstream .local/bin/starship v9.9.9
 hx helix_install_upstream .local/bin/hx 9.9.9
+nv nvim_install_upstream .local/bin/nvim v9.9.9
 ru rustup_install_upstream .cargo/bin/rustup 9.9.9
 lg lazygit_install_upstream .local/bin/lazygit 9.9.9
 LIST

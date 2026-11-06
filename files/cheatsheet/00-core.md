@@ -67,6 +67,29 @@ first, then acts: `w` then `d` deletes a word.
 
 Check language support: `hx --health c` (also `cpp`, `python`, `rust`).
 
+## Neovim (`nvim`), the second editor
+
+Installed next to Helix; `$EDITOR` stays Helix. No plugins, so nothing is downloaded. Same local language servers.
+It is a *modal* editor: **`Esc` first, then type a command.** If you are stuck: `Esc`, then `:q!` and Enter.
+`nvim --version` shows the release; `:Tutor` (inside nvim) is a 30-minute built-in tutorial; `:help` has everything.
+
+| Keys | Action |
+|---|---|
+| `i` / `Esc` | Insert text / back to normal mode |
+| `:w` `:q` `:wq` `:q!` | Save, quit, save and quit, quit without saving |
+| `u` / `Ctrl-r` | Undo / redo |
+| `dd` `yy` `p` | Delete (cut) line, copy line, paste |
+| `/text` then `n` | Search, next match |
+| `gd` / `gr` / `K` | Definition / references / documentation under the cursor |
+| `Ctrl-o` / `Ctrl-i` | Jump back / forward |
+| `Space f` | Format the file (Python, Rust and TOML are also formatted on save) |
+| `Space rn` / `Space ca` | Rename symbol / code action (quick fix) |
+| `Space e` | Show the error message under the cursor |
+| `]d` / `[d` | Next / previous error or warning |
+| `Ctrl-x Ctrl-o` | Completion (it also pops up by itself on Neovim 0.11 and newer) |
+
+The config is `~/.config/nvim/init.lua` (short and commented; yours to edit, the setup never overwrites it).
+
 ## Building C/C++ with CMake presets
 
 After `ws-init` in a project with a CMakeLists.txt:
