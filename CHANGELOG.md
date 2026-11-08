@@ -79,10 +79,11 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 - **E2E run #28 on the Neovim commit (head `4fafeb4`): all eight jobs (24.04 and 26.04, runner VM and container, `work` and `personal`) passed all 12 phases**; self-test 34/37
   (container `work`/`personal`) and 35/38 (VM), 0 failed, 0 warnings, only the SPICE/container-image skips; one more passed test than run #26 in every job = the new
   `Neovim loads its configuration, quiet LSP`. **Neovim v0.12.6 was installed from upstream in all eight jobs** (none fell back to Ubuntu's package) and the real
-  Neovim attached the real basedpyright at the "standard" level. One job (24.04 runner VM, `work`) had to be re-run alone: its first attempt stalled for 78 minutes
-  (until cancelled) in the install step on a download from the runner's Azure Ubuntu mirror (`libwebkit2gtk-4.1-0` shown as ignored after a stalled `Get`), and the re-run
-  passed but the install phase took 8363 s because that mirror delivered 76 MB at 33 kB/s. A mirror problem on the runner, not the setup; the install step has no
-  download timeout of its own, which is worth knowing if a job ever hangs again. The PR's own CI (static checks and the reduced real installs with the blocking
+  Neovim attached the real basedpyright at the "standard" level. One job (24.04 runner VM, `work`) had to be re-run alone: its first attempt made no progress for
+  78 minutes (cancelled by hand) in the install step, whose partial log ends in apt `Get` lines from the runner's Azure Ubuntu mirror, and the re-run passed but its
+  install phase took 8363 s because that mirror delivered 76 MB at 33 kB/s. A slow runner mirror, not the setup. The E2E jobs do have `timeout-minutes: 150` (the slow
+  re-run came close to it); apt was run without retries (`Acquire::Retries` defaults to 0) and the `curl` downloads have retries but no minimum-speed guard, so a mirror that
+  trickles instead of failing is never retried. The PR's own CI (static checks and the reduced real installs with the blocking
   self-test on 24.04 and the newest LTS) was green as well.
 - **E2E run #26 on the final code (head `79905b7`, the settings-migration fix): all eight jobs passed all 12 phases**; self-test 33/36 (container) and 34/37 (VM)
   on both releases, 0 failed, 0 warnings, only the SPICE and container-image skips. The PR's own CI (static checks, `--check`, reduced real installs with the

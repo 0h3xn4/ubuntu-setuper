@@ -361,8 +361,9 @@ artifacts: 12 PASS, 0 FAIL per summary.md); self-test 34/37 (container work/pers
 PASSED on first contact (real nvim headless, real basedpyright at 'standard'). Not covered: interactive Neovim use. Neovim is trust-on-first-use (no checksum file
 confirmed: the sandbox proxy hides release pages). LESSON: one job (vm 24.04 work) stalled 78 min with no log (GitHub's get_job_logs of a running job is 404; the
 partial artifact of the CANCELLED attempt still has install.log: its tail showed an apt Get of libwebkit2gtk stalled on azure.archive.ubuntu.com); after cancel_workflow_run
-wait until the run is 'completed' before rerun_failed_jobs (403 'already running' otherwise); the re-run passed but its install phase took 8363 s (mirror at 33 kB/s). The install
-step has no download timeout and the E2E jobs have no timeout-minutes: adding them (fail in ~75 min instead of hanging for hours) is a possible follow-up, not done.
+wait until the run is 'completed' before rerun_failed_jobs (403 'already running' otherwise); the re-run passed but its install phase took 8363 s (mirror at 33 kB/s). The E2E jobs
+DO have timeout-minutes: 150 (the slow re-run needed ~2h25m, close to the cap; the hung attempt was cancelled by hand at 78 min). What was missing: apt ran without retries
+(Acquire::Retries defaults to 0) and curl had retries but no minimum-speed guard, so a mirror that trickles bytes is never retried (the follow-up for that is separate).
 PREVIOUS E2E (GitHub run #26, workflow_dispatch on the branch, head 79905b7 = the settings-migration fix, merged as PR #17 into main 2967cf7): 8/8 GREEN, 12/12
 phases in every job (checked in the downloaded artifacts: 12 PASS, 0 FAIL per summary.md); self-test 33/36 (container work/personal) and 34/37 (VM), 0 failed, 0 warnings,
 only the SPICE/container-image skips, on 24.04 and 26.04. The PR's own CI (blocking self-test on 24.04 + newest LTS) was green: the blocking step HAS now been seen
