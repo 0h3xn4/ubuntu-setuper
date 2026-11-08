@@ -21,6 +21,11 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 - Check: `tools/check-all.sh` runs the real `fetch_verified`, `fetch_published` and `apt_install` against a fake `curl`/`sudo` and checks the flags, and lints `setup.sh`
   so a new download or `apt-get install` that skips `CURL_DL`/`APT_NET` fails (broken on purpose once to prove it fails). README manual helpers (A2), the README troubleshooting
   table and `docs/script-reference.md` describe it.
+- **Verified: E2E run #32 on this change (head `59773ec`): all eight jobs passed all 12 phases** (24.04 and 26.04, runner VM and container, `work` and `personal`); self-test 34/37
+  (container) and 35/38 (VM), 0 failed, 0 warnings, only the two usual skips (container images not cached in the container jobs, SPICE kernels off by default). Checked in the
+  downloaded artifacts: no apt or curl option errors in any install log, every checksum-verified download and the Neovim install still worked, install phases 9 to 12 minutes.
+  **Not shown by this run:** that the retries and the minimum-speed guard fire. No job hit a slow or failing mirror this time (no "Retrying", "Operation too slow" or `Err:` line in
+  any log), so what is verified is that the new options are accepted everywhere and break nothing, plus the fake-driven check; behaviour under a real stalled mirror is untested.
 
 ### Added (Neovim as a second editor, on request: "users would also like nvim")
 - **Neovim** (`INSTALL_NVIM`, on by default) next to Helix, which stays the default (`$EDITOR` is unchanged). Same rule as Helix and the

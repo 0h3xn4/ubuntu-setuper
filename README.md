@@ -243,7 +243,9 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   the installed `init.lua` and has the real `basedpyright-langserver` attach at the "standard" level. Not covered: interactive
   use (keymaps, the completion popup, the clipboard, format on save, the language servers other than basedpyright); the first
   session on a real machine is that test. One CI job once stalled on a download from the runner's Ubuntu mirror and had to be
-  re-run (details in `CHANGELOG.md`).
+  re-run (details in `CHANGELOG.md`). Downloads now retry on failure and abort a transfer that stays below 4 KB/s for a minute
+  (apt: 3 retries, 60 s timeouts); the newest full run passed with these options in all eight jobs, but none of them met a slow
+  mirror, so the retry path itself has only been tested against fakes.
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and
