@@ -336,6 +336,11 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
 - Optional downloads must never abort the step they sit in: `x="$(curl ... | awk ...)"` under pipefail dies on a
   curl error (exit 22 = HTTP error); append `|| true`, and write the OFF-switching config (tealdeer, ...) BEFORE
   anything that needs the network (found on the first 24.04 run, where lazygit comes from its release).
+- Network resilience (found by a stalled E2E job): every `curl` download uses `"${CURL_DL[@]}"` (retries + `--speed-limit 4096 --speed-time 60`, so a trickling transfer is
+  aborted and retried) and every `sudo ... apt-get install|update` uses `"${APT_NET[@]}"` (`Acquire::Retries=3`, 60 s timeouts); command-line options only, never edit APT
+  sources or package config. check-all `t_resilient_net` (fake curl/sudo + a lint over setup.sh) fails if a new download skips them. Small metadata calls that
+  use `--max-time 30` (tag redirects, the GitHub API fallbacks) are exempt. apt has no minimum-speed setting: slow-but-alive mirrors are waited for, the E2E job
+  `timeout-minutes: 150` is the backstop.
 - Downloads outside APT: prefer `fetch_published URL DEST SUMS_URL [NAME]` (checks the
   checksum the PROJECT publishes; refuses a mismatch; if the checksum file cannot be fetched it RETRIES then
   REFUSES, never trust-on-first-use, unless the lock pins the SHA-256; records "<url> <sha> published"
@@ -356,14 +361,17 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-LATEST E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+LATEST E2E (GitHub run #32, workflow_dispatch on the branch, head 59773ec = APT_NET/CURL_DL resilience change): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+artifacts); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings, only the usual 2 skips; no option errors in any install log; install phases 9-12 min. NO retry
+or 'Operation too slow' line appeared in any log: the retry/speed-guard path is verified only with fakes (t_resilient_net), not under a real stalled mirror.
+PREVIOUS E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
 artifacts: 12 PASS, 0 FAIL per summary.md); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings; Neovim v0.12.6 from upstream in all 8, t_nvim
 PASSED on first contact (real nvim headless, real basedpyright at 'standard'). Not covered: interactive Neovim use. Neovim is trust-on-first-use (no checksum file
 confirmed: the sandbox proxy hides release pages). LESSON: one job (vm 24.04 work) stalled 78 min with no log (GitHub's get_job_logs of a running job is 404; the
 partial artifact of the CANCELLED attempt still has install.log: its tail showed an apt Get of libwebkit2gtk stalled on azure.archive.ubuntu.com); after cancel_workflow_run
 wait until the run is 'completed' before rerun_failed_jobs (403 'already running' otherwise); the re-run passed but its install phase took 8363 s (mirror at 33 kB/s). The E2E jobs
 DO have timeout-minutes: 150 (the slow re-run needed ~2h25m, close to the cap; the hung attempt was cancelled by hand at 78 min). What was missing: apt ran without retries
-(Acquire::Retries defaults to 0) and curl had retries but no minimum-speed guard, so a mirror that trickles bytes is never retried (the follow-up for that is separate).
+(Acquire::Retries defaults to 0) and curl had retries but no minimum-speed guard, so a mirror that trickles bytes is never retried (fixed afterwards by CURL_DL/APT_NET, see Conventions).
 PREVIOUS E2E (GitHub run #26, workflow_dispatch on the branch, head 79905b7 = the settings-migration fix, merged as PR #17 into main 2967cf7): 8/8 GREEN, 12/12
 phases in every job (checked in the downloaded artifacts: 12 PASS, 0 FAIL per summary.md); self-test 33/36 (container work/personal) and 34/37 (VM), 0 failed, 0 warnings,
 only the SPICE/container-image skips, on 24.04 and 26.04. The PR's own CI (blocking self-test on 24.04 + newest LTS) was green: the blocking step HAS now been seen

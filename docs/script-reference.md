@@ -252,6 +252,14 @@ the full verification.
 
 ## Downloads and checksums
 
+**Network resilience.** Every download goes through two shared option sets in `setup.sh` (command-line options only, no APT source
+or package-owned configuration is touched): `APT_NET` (`Acquire::Retries=3`, 60 s timeouts on silent HTTP/HTTPS connections) for
+every `apt-get install` and `apt-get update`, and `CURL_DL` (`--retry 6 --retry-max-time 180 --connect-timeout 20 --speed-limit 4096
+--speed-time 60`) for every `curl` download, so a transfer that stays below 4 KB/s for 60 s counts as stalled and is retried instead
+of being waited for. apt has no minimum-speed option: a mirror that is slow but alive is still waited for, and the E2E jobs'
+`timeout-minutes: 150` is the backstop. `tools/check-all.sh` runs the real functions against a fake `curl`/`sudo` and lints `setup.sh`:
+a new download or `apt-get install` that skips the shared options fails the check.
+
 Where the project publishes a checksum, the download is compared with *that* checksum and a
 mismatch is refused (`fetch_published`): uv, rustup (`rustup-init`), starship, the Nerd Font
 (`SHA-256.txt`), probe-rs and lazygit (`checksums.txt`). For the rest (the Helix and Neovim tarballs) the

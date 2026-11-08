@@ -301,6 +301,40 @@ LIST
   return $bad
 }
 check "uv/Helix/starship install functions: ~/.local, undo recorded, skip when current, fail cleanly" t_upstream_install
+# A mirror that trickles instead of failing once held an E2E job for hours (apt retried nothing, curl never counted a slow
+# transfer as failed). Every download in setup.sh goes through the shared option sets CURL_DL and APT_NET: this runs the
+# real functions against fake curl/sudo and checks the flags, and a lint fails when a new download skips them.
+t_resilient_net() {
+  local d="$TMP/net" bad=0 log out; rm -rf "$d"; mkdir -p "$d"; log="$d/calls.log"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+warn() { :; }; ok() { :; }
+curl() { printf 'curl %s\n' "$*" >> "$NET_LOG"; return 1; }
+sudo() { printf 'sudo %s\n' "$*" >> "$NET_LOG"; }
+apt_candidates() { echo "pkga 1.0"; }
+pkg_applies() { return 0; }
+fetch_verified http://example.invalid/a "$STATE_DIR/a" || true
+fetch_published http://example.invalid/b "$STATE_DIR/b" http://example.invalid/b.sha || true
+apt_install pkga
+DRV
+  HOME="$d/home" NET_LOG="$log" bash -c 'mkdir -p "$HOME"; bash "$0"' "$d/driver.sh" >/dev/null 2>&1 || true
+  [[ -s $log ]] || { echo "the fake driver recorded no calls"; return 1; }
+  local c
+  while read -r c; do
+    [[ $c == *"--speed-limit 4096 --speed-time 60"* && $c == *"--retry 6"* ]] || { echo "curl without the minimum-speed guard/retries: $c"; bad=1; }
+  done < <(grep '^curl ' "$log")
+  [[ $(grep -c '^curl ' "$log") -ge 2 ]] || { echo "expected curl calls from fetch_verified and fetch_published"; bad=1; }
+  out="$(grep '^sudo ' "$log" || true)"
+  [[ $out == *"apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60 install"* ]] \
+    || { echo "apt_install without retries/timeouts: $out"; bad=1; }
+  # lint: no download or apt install may skip the shared options
+  out="$(grep -n 'curl -fsSL' setup.sh | grep -v 'CURL_DL\|--max-time' || true)"
+  [[ -z $out ]] || { echo "curl download without CURL_DL:"; echo "$out"; bad=1; }
+  out="$(grep -nE 'sudo .*apt-get .*(install|update)' setup.sh | grep -v 'APT_NET' || true)"
+  [[ -z $out ]] || { echo "apt-get without APT_NET:"; echo "$out"; bad=1; }
+  return $bad
+}
+check "downloads: apt retries/timeouts and a curl minimum-speed guard everywhere (fake curl/sudo + lint)" t_resilient_net
 # Earlier versions left the undo scripts, manifests, logs and the cheat sheet loose in ~: the records folder
 # (OUT_DIR, ~/workstation-setup) now holds them, and migrate_records moves the old ones (never overwriting).
 t_records_folder() {
