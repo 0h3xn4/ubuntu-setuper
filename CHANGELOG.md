@@ -8,6 +8,20 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Changed (downloads survive a slow or flaky mirror; request: "make it robust and resilient")
+- **apt retries and times out.** Every `apt-get install` and `apt-get update` in `setup.sh` now runs with `-o Acquire::Retries=3 -o Acquire::http::Timeout=60
+  -o Acquire::https::Timeout=60` (`APT_NET`). Before, apt used its defaults: no retry at all, so one failed fetch ended the whole batch (the script then retried
+  package by package, but each of those also had zero retries). Command-line options only: no APT source and no package-owned configuration is touched.
+- **curl treats a trickling transfer as failed.** The five copy-pasted `--retry 6 --retry-max-time 180 --connect-timeout 20` sets are one array, `CURL_DL`, with
+  `--speed-limit 4096 --speed-time 60` added: a download below 4 KB/s for 60 s is aborted ("operation too slow", a retried error) instead of being waited for.
+  Origin: E2E run #28, where one job made no progress for 78 minutes and its re-run needed 2h19m for the install because a runner mirror delivered at 33 kB/s.
+- **Limits, stated plainly.** apt has no minimum-speed setting, so a mirror that is slow but alive is still waited for (the E2E jobs' `timeout-minutes: 150`
+  stays as the backstop and was not changed); 33 kB/s is above the 4 KB/s guard on purpose, because a slow link that makes progress is not a failure.
+  A whole-batch retry after `apt-get update` was considered and left out: with retries on every fetch the existing one-package-at-a-time fallback already is the second attempt.
+- Check: `tools/check-all.sh` runs the real `fetch_verified`, `fetch_published` and `apt_install` against a fake `curl`/`sudo` and checks the flags, and lints `setup.sh`
+  so a new download or `apt-get install` that skips `CURL_DL`/`APT_NET` fails (broken on purpose once to prove it fails). README manual helpers (A2), the README troubleshooting
+  table and `docs/script-reference.md` describe it.
+
 ### Added (Neovim as a second editor, on request: "users would also like nvim")
 - **Neovim** (`INSTALL_NVIM`, on by default) next to Helix, which stays the default (`$EDITOR` is unchanged). Same rule as Helix and the
   other tools without an LTS line: the newest **upstream** stable release (`nvim-linux-x86_64.tar.gz` / `nvim-linux-arm64.tar.gz`, tag read from the

@@ -254,6 +254,16 @@ apt_candidates() {
 }
 
 # Install apt packages, skipping (and recording) any that don't exist.
+# Network resilience, for everything this script downloads (command-line options only: no APT source and no package-owned
+# configuration is touched). Found by an E2E job that sat for hours on a slow Ubuntu mirror: apt retries nothing by
+# default (Acquire::Retries is 0) and curl only retried on errors, never on a download that just trickled along.
+#   APT_NET   apt retries a failed fetch 3 times and gives up on a connection that is silent for 60 s.
+#   CURL_DL   curl retries (transient errors, timeouts) for up to 180 s in total, and counts a transfer that stays below
+#             4 KB/s for 60 s as stalled ("operation too slow", a retried error) instead of waiting for it forever.
+# apt has no minimum-speed setting: a mirror that is slow but alive is still waited for (the CI job timeout is the backstop).
+APT_NET=(-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60)
+CURL_DL=(--retry 6 --retry-max-time 180 --connect-timeout 20 --speed-limit 4096 --speed-time 60)
+
 # --no-remove: abort rather than uninstall anything to resolve a conflict.
 # --no-upgrade: do not upgrade packages that are already installed; this
 # script never upgrades the system (updates are Ubuntu's own business).
@@ -277,10 +287,10 @@ apt_install() {
     fi
   done
   (( ${#available[@]} )) || return 0
-  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade "${available[@]}"; then
+  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "${available[@]}"; then
     warn "Batch install failed; retrying one package at a time"
     for pkg in "${available[@]}"; do
-      sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade "$pkg" \
+      sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "$pkg" \
         || { warn "Skipped (conflict or error): $pkg"; echo "$pkg (not installed: conflict or error)" >> "$MISSING_FILE"; }
     done
   fi
@@ -386,7 +396,7 @@ add_to_groups() {
 fetch_verified() {
   local url="$1" dest="$2" tmp sum pinned
   tmp="$(mktemp)"
-  if ! curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$url" -o "$tmp"; then
+  if ! curl -fsSL "${CURL_DL[@]}" "$url" -o "$tmp"; then
     rm -f "$tmp"; warn "Download failed: $url"; return 1
   fi
   sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
@@ -418,7 +428,7 @@ fetch_verified() {
 fetch_published() {
   local url="$1" dest="$2" sumurl="$3" name="${4:-}" tmp sums expected actual
   tmp="$(mktemp)"
-  if ! curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$url" -o "$tmp"; then
+  if ! curl -fsSL "${CURL_DL[@]}" "$url" -o "$tmp"; then
     rm -f "$tmp"; warn "Download failed: $url"; return 1
   fi
   # The project publishes this checksum, so it MUST be reachable. A network hiccup is retried; if it still fails
@@ -426,7 +436,7 @@ fetch_published() {
   # tampered file accepted). Only a SHA-256 pinned in the lock file can stand in for it.
   local try=1 tries="${FETCH_SUMS_TRIES:-4}" delay="${FETCH_SUMS_DELAY:-3}"
   sums=""
-  while ! sums="$(curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$sumurl" 2>/dev/null)" && (( try < tries )); do
+  while ! sums="$(curl -fsSL "${CURL_DL[@]}" "$sumurl" 2>/dev/null)" && (( try < tries )); do
     sleep $(( try * delay )); try=$(( try + 1 ))
   done
   if [[ -z $sums ]]; then
@@ -570,7 +580,7 @@ node_arch() {
 # Pinned version (NODE_LTS_VERSION, e.g. v26.13.0), else the newest release the project's index marks "lts".
 node_version() {
   if [[ -n ${NODE_LTS_VERSION:-} ]]; then echo "$NODE_LTS_VERSION"; return 0; fi
-  curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 https://nodejs.org/dist/index.json 2>/dev/null \
+  curl -fsSL "${CURL_DL[@]}" https://nodejs.org/dist/index.json 2>/dev/null \
     | python3 -I -c 'import json, sys
 for r in json.load(sys.stdin):
     if r.get("lts"):
@@ -881,8 +891,8 @@ preflight() {
   trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true; rm -rf "$STATE_DIR"' EXIT
 
   log "Updating package lists"
-  sudo apt-get update || die "apt-get update failed. Check network / proxy settings."
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade curl ca-certificates gnupg distro-info
+  sudo apt-get "${APT_NET[@]}" update || die "apt-get update failed. Check network / proxy settings."
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade curl ca-certificates gnupg distro-info
 }
 
 system_tuning() {
@@ -960,7 +970,7 @@ lazygit_install_upstream() {
   local base arch=x86_64 asset ver bin="$HOME/.local/bin" fresh=0; base="$(lazygit_base_url)"
   if [[ $(host_arch) == aarch64 ]]; then arch=arm64; fi
   # Not fatal: a failed curl in this pipeline (pipefail) used to abort the whole calling step.
-  asset="$(curl -fsSL --retry 6 --retry-max-time 180 --connect-timeout 20 "$base/checksums.txt" 2>/dev/null \
+  asset="$(curl -fsSL "${CURL_DL[@]}" "$base/checksums.txt" 2>/dev/null \
            | awk -v a="_linux_$arch.tar.gz" 'index($2, a) { print $2; exit }' || true)"
   if [[ -z $asset ]]; then warn "Could not find a lazygit release for this CPU (or the download failed)"; return 1; fi
   ver="${asset#lazygit_}"; ver="${ver%%_*}"

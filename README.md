@@ -293,6 +293,9 @@ machine ends up in the same state.
      (packages that are already installed are not upgraded). This guide
      never runs `apt upgrade`: keeping the system up to date is Ubuntu's own
      business (Software Updater, unattended-upgrades), not part of this setup.
+   - Downloads are made resilient with command-line options only (`APT_NET`, `CURL_DL` in A2): apt retries a failed
+     fetch 3 times and drops a connection that is silent for 60 s; curl retries transient errors and counts a transfer
+     below 4 KB/s for 60 s as stalled. No APT source and no package configuration is touched for this.
    - Never edit a file that belongs to a package (it would cause conffile
      prompts that block unattended security updates). Add *new* files
      (drop-ins) instead, and never overwrite an existing one.
@@ -382,6 +385,12 @@ mkdir -p "$HOME/workstation-setup"
 [ -e "$UNDO" ] || { printf '#!/usr/bin/env bash\n# Undo commands, newest last. REVIEW before running; run lines in reverse order.\n' > "$UNDO"; chmod +x "$UNDO"; }
 record_undo() { printf '%s\n' "$*" >> "$UNDO"; }
 
+# Network resilience (command-line options only; no APT source or package config is touched). apt retries a failed fetch
+# 3 times and gives up on a connection that is silent for 60 s; curl retries transient errors and counts a transfer that
+# stays below 4 KB/s for 60 s as stalled (and retries it) instead of waiting for it for hours.
+APT_NET=(-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60)
+CURL_DL=(--retry 6 --retry-max-time 180 --connect-timeout 20 --speed-limit 4096 --speed-time 60)
+
 # apt_install PKG...  installs what exists in the archive, skips the rest. Never removes packages.
 apt_install() {
   local ok=() p
@@ -390,7 +399,7 @@ apt_install() {
     else echo "not in archive, skipping: $p"; fi
   done
   if [ "${#ok[@]}" -gt 0 ]; then
-    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-upgrade "${ok[@]}"
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "${ok[@]}"
   fi
 }
 
@@ -414,7 +423,7 @@ put_system() {
 
 # download URL FILE  downloads, prints the SHA-256 and records it. Look at the file, then run it.
 download() {
-  curl -fsSL --retry 3 --connect-timeout 20 "$1" -o "$2" || return 1
+  curl -fsSL "${CURL_DL[@]}" "$1" -o "$2" || return 1
   mkdir -p ~/.local/share/workstation
   sha256sum "$2" | tee -a ~/.local/share/workstation/download-hashes.txt
   echo "$1" >> ~/.local/share/workstation/download-hashes.txt
@@ -425,11 +434,11 @@ download() {
 #   A mismatch (or a missing checksum) deletes the download and fails.
 download_verified() {
   local url=$1 sums=$2 name=$3 out=$4 expected actual
-  curl -fsSL --retry 3 --connect-timeout 20 "$url" -o "$out" || return 1
+  curl -fsSL "${CURL_DL[@]}" "$url" -o "$out" || return 1
   if [ -n "$name" ]; then
-    expected=$(curl -fsSL "$sums" | awk -v n="$name" '{f=$2; sub(/^\*/,"",f); sub(/^\.\//,"",f); if (f==n) {print $1; exit}}')
+    expected=$(curl -fsSL "${CURL_DL[@]}" "$sums" | awk -v n="$name" '{f=$2; sub(/^\*/,"",f); sub(/^\.\//,"",f); if (f==n) {print $1; exit}}')
   else
-    expected=$(curl -fsSL "$sums" | awk 'NR==1 {print $1}')
+    expected=$(curl -fsSL "${CURL_DL[@]}" "$sums" | awk 'NR==1 {print $1}')
   fi
   actual=$(sha256sum "$out" | cut -d' ' -f1)
   if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
@@ -470,7 +479,7 @@ Notes:
 *Mirrors `preflight` (the `apt-get update` and prerequisites part).*
 
 ```bash
-sudo apt-get update
+sudo apt-get "${APT_NET[@]}" update
 apt_install curl ca-certificates gnupg distro-info
 ```
 
@@ -657,7 +666,7 @@ release: use `.../releases/download/<tag>` as `base`.
 command -v lazygit || {
   base=https://github.com/jesseduffield/lazygit/releases/latest/download
   arch=x86_64; [ "$(uname -m)" = aarch64 ] && arch=arm64
-  asset=$(curl -fsSL "$base/checksums.txt" | awk -v a="_linux_$arch.tar.gz" 'index($2,a) {print $2; exit}')
+  asset=$(curl -fsSL "${CURL_DL[@]}" "$base/checksums.txt" | awk -v a="_linux_$arch.tar.gz" 'index($2,a) {print $2; exit}')
   download_verified "$base/$asset" "$base/checksums.txt" "$asset" "/tmp/$asset"
   mkdir -p ~/.local/bin && tar -xzf "/tmp/$asset" -C ~/.local/bin lazygit
   record_undo "rm -f ~/.local/bin/lazygit"
@@ -836,7 +845,7 @@ unpacked in your home directory and checked against the `SHASUMS256.txt` the pro
 The project's index marks which release is the newest LTS (its "lts" field):
 
 ```bash
-v=$(curl -fsSL https://nodejs.org/dist/index.json | python3 -I -c 'import json, sys
+v=$(curl -fsSL "${CURL_DL[@]}" https://nodejs.org/dist/index.json | python3 -I -c 'import json, sys
 for r in json.load(sys.stdin):
     if r.get("lts"):
         print(r["version"]); break')
@@ -1899,6 +1908,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
+| The install is very slow, or prints "Operation too slow" / apt "Retrying" | Your network or Ubuntu mirror is slow. The script retries on its own: apt tries each fetch 3 times and drops a connection that is silent for 60 s; downloads from GitHub and others are aborted and retried when they stay below 4 KB/s for 60 s (up to 180 s in total, then that step is reported as failed). A mirror that is slow but alive is still waited for: apt has no minimum speed. Simply run `./setup.sh` again, it is safe to repeat and continues where it stopped. To use a closer mirror, choose it yourself in *Software & Updates*; this setup never changes APT sources. |
 | Neovim starts but there is no completion, hover or error list | Inside Neovim, `:checkhealth vim.lsp` shows which servers are attached to the file. The usual cause is a language server that is not on `PATH` (`ws-doctor` names the missing ones) or a `~/.config/nvim` of your own that replaced `init.lua`. Completion that pops up by itself needs Neovim 0.11 or newer (the upstream release has it; Ubuntu 24.04's 0.9.5 does not: use `Ctrl-x Ctrl-o`). |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
