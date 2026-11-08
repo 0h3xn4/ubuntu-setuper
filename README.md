@@ -213,8 +213,8 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   (the 24.04 archive has Node 18, which is end of life). **uv, Helix, lazygit and rustup come from their
   projects' releases too** (checked in every job: uv 0.13.7, Helix 25.07.1 and lazygit 0.66.2 landed in `~/.local`, rustup
   1.29.3 in `~/.cargo` in the container jobs (a runner VM ships its own rustup, which the setup leaves alone); none fell back
-  to Ubuntu's package). The latest full run (eight jobs, 12 phases each, on the final code) passed everywhere: self-test 33
-  and 36 passed in the container (`work`, `personal`) and 34 and 37 on the VM, 0 failed. It checks, against the real
+  to Ubuntu's package). The latest full run (eight jobs, 12 phases each, on the final code) passed everywhere: self-test 34
+  and 37 passed in the container (`work`, `personal`) and 35 and 38 on the VM, 0 failed. It checks, against the real
   programs, that a default install does **not** block `uv`/`cargo` in a new shell (the strict offline lock is opt-in), that
   Kate starts with its plugin set (every plugin exists in Kate 23.08 and 25.12 and is switched on), that `ws-pyformat` formats
   with the real ruff, and that the real `basedpyright-langserver`, started the way Kate does, is quiet on a small untyped
@@ -238,9 +238,12 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   green run's log: a RISC-V test that had been *skipped* because 26.04 moved RISC-V emulation
   into its own package. The E2E test now fails on such a skip. No desktop session was involved
   in any of this.
-- **Neovim (B17) is newer than the latest full run.** Its install function is tested against fake releases (the check-all
-  suite), but the real tarball, the real `init.lua` and the self-test that starts the real `basedpyright-langserver` inside
-  Neovim have only run in the CI E2E from the commit that added them on; see `CHANGELOG.md` for the result.
+- **Neovim (B17):** its install function is tested against fake releases (the check-all suite), and the full run above covers
+  the real thing: Neovim v0.12.6 from its release in all eight jobs, and a self-test that starts the real Neovim headless, loads
+  the installed `init.lua` and has the real `basedpyright-langserver` attach at the "standard" level. Not covered: interactive
+  use (keymaps, the completion popup, the clipboard, format on save, the language servers other than basedpyright); the first
+  session on a real machine is that test. One CI job once stalled on a download from the runner's Ubuntu mirror and had to be
+  re-run (details in `CHANGELOG.md`).
 - **Earlier, smaller real install on the newest Ubuntu LTS (CI, `ubuntu:latest`):** a reduced
   install of both profiles worked, as a normal user with `sudo`. Its self-test
   passed 20 checks (compilers, sanitizers, CMake, GoogleTest, clangd, ruff and

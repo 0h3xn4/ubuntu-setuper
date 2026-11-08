@@ -356,7 +356,14 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-LATEST E2E (GitHub run #26, workflow_dispatch on the branch, head 79905b7 = the settings-migration fix, merged as PR #17 into main 2967cf7): 8/8 GREEN, 12/12
+LATEST E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+artifacts: 12 PASS, 0 FAIL per summary.md); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings; Neovim v0.12.6 from upstream in all 8, t_nvim
+PASSED on first contact (real nvim headless, real basedpyright at 'standard'). Not covered: interactive Neovim use. Neovim is trust-on-first-use (no checksum file
+confirmed: the sandbox proxy hides release pages). LESSON: one job (vm 24.04 work) stalled 78 min with no log (GitHub's get_job_logs of a running job is 404; the
+partial artifact of the CANCELLED attempt still has install.log: its tail showed an apt Get of libwebkit2gtk stalled on azure.archive.ubuntu.com); after cancel_workflow_run
+wait until the run is 'completed' before rerun_failed_jobs (403 'already running' otherwise); the re-run passed but its install phase took 8363 s (mirror at 33 kB/s). The install
+step has no download timeout and the E2E jobs have no timeout-minutes: adding them (fail in ~75 min instead of hanging for hours) is a possible follow-up, not done.
+PREVIOUS E2E (GitHub run #26, workflow_dispatch on the branch, head 79905b7 = the settings-migration fix, merged as PR #17 into main 2967cf7): 8/8 GREEN, 12/12
 phases in every job (checked in the downloaded artifacts: 12 PASS, 0 FAIL per summary.md); self-test 33/36 (container work/personal) and 34/37 (VM), 0 failed, 0 warnings,
 only the SPICE/container-image skips, on 24.04 and 26.04. The PR's own CI (blocking self-test on 24.04 + newest LTS) was green: the blocking step HAS now been seen
 passing on pull requests (#16, #17). Real-machine check still pending: the user's first run after this (re-run `./setup.sh --profile work`, then `--self-test`).
