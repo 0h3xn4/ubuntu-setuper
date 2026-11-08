@@ -1,10 +1,34 @@
 # Changelog
 
 All notable changes to this repository. Newest first. The full life cycle of both profiles
-has been run end to end in CI on Ubuntu 26.04.1 LTS (a VM and a container); it has not yet
-been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks.
+has been run end to end in CI on Ubuntu 24.04 and 26.04 LTS (a VM and a container each); the
+self-test has also been run once on the author's real machine (profile `work`, `--full`), which found
+several problems CI could not see (aliases replaced by Oh My Bash, the offline lock blocking `uv`, Kate's plugins, the Format plugin, noisy basedpyright; see below). The desktop module's app settings have not been checked
+in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
+
+### Added (Neovim as a second editor, on request: "users would also like nvim")
+- **Neovim** (`INSTALL_NVIM`, on by default) next to Helix, which stays the default (`$EDITOR` is unchanged). Same rule as Helix and the
+  other tools without an LTS line: the newest **upstream** stable release (`nvim-linux-x86_64.tar.gz` / `nvim-linux-arm64.tar.gz`, tag read from the
+  redirect of the `latest/download` URL) goes to `~/.local/opt/nvim-<version>`, linked from `~/.local/bin/nvim`; Ubuntu's `neovim` (0.9.5 on 24.04,
+  0.11.6 on 26.04) is only the fallback (recorded in the missing list, so the E2E fails on it); `NVIM_VERSION` (with the `v`; the lock pins it) and
+  `NVIM_FROM_ARCHIVE=1` work like the Helix ones. The download is **trust on first use**, then pinned by the lock: a checksum file next to the release
+  could not be confirmed from the development sandbox (the release page was not readable there). If the project does publish one, switching to
+  `fetch_published` is a small follow-up.
+- **`~/.config/nvim/init.lua`**, new file only (an `init.lua` of yours is never overwritten; with an `init.vim` of yours it is not added, because Neovim refuses to load both; the self-test then warns instead of failing). It is
+  **plugin-free**: no plugin manager, so Neovim never downloads anything by itself, and it switches off the spell-file downloader and the node/perl/
+  python3/ruby providers. It starts Neovim's built-in language-server client for the same local servers as Helix and Kate (clangd, basedpyright at
+  "standard", ruff, rust-analyzer with clippy, taplo, bash-language-server, cmake-language-server; none for JSON/YAML), formats Python/Rust/TOML on save
+  like Helix, and written to also work on the archive's 0.9.5 (the completion popup needs 0.11+).
+- Self-test **"Neovim loads its configuration, quiet LSP"** (`t_nvim`): starts the real `nvim --headless` on a small Python file
+  (`files/selftest/lsp/nvim_check.py`/`.lua`) and requires that basedpyright reports the one real mistake and none of the strict-mode diagnostics.
+  Checks in `check-all.sh`: the install function against fake releases (install, failed download, second run). `e2e.sh`: `nvim` must come from
+  upstream (`~/.local/bin`), the lock must pin `NVIM_VERSION`, nothing may be left behind. `ws-doctor` lists `nvim` (optional).
+- Docs: README B17, big picture, release table, troubleshooting row; `docs/script-reference.md`; a Neovim page in the cheat sheet (for someone who has
+  not used a modal editor: `Esc`, `:q!`, `:Tutor`). Written and unit-tested in the sandbox, which cannot run downloaded
+  binaries; the first E2E from this commit was the real test and it passed on first contact (see Verified below). Interactive use (keymaps,
+  completion popup, clipboard, format on save, the language servers other than basedpyright) is not covered by the headless test.
 
 ### Added
 - **Kate** (`INSTALL_KATE`, on by default): the KDE text editor as a Debian package, with its
@@ -52,6 +76,18 @@ been run on a machine with a desktop session. See `CLAUDE.md` for the open tasks
 - The README troubleshooting has a row for the `yaml-language-server` self-test failure (an npm global that fetches schemas by itself).
 
 ### Verified (this batch)
+- **E2E run #28 on the Neovim commit (head `4fafeb4`): all eight jobs (24.04 and 26.04, runner VM and container, `work` and `personal`) passed all 12 phases**; self-test 34/37
+  (container `work`/`personal`) and 35/38 (VM), 0 failed, 0 warnings, only the SPICE/container-image skips; one more passed test than run #26 in every job = the new
+  `Neovim loads its configuration, quiet LSP`. **Neovim v0.12.6 was installed from upstream in all eight jobs** (none fell back to Ubuntu's package) and the real
+  Neovim attached the real basedpyright at the "standard" level. One job (24.04 runner VM, `work`) had to be re-run alone: its first attempt made no progress for
+  78 minutes (cancelled by hand) in the install step, whose partial log ends in apt `Get` lines from the runner's Azure Ubuntu mirror, and the re-run passed but its
+  install phase took 8363 s because that mirror delivered 76 MB at 33 kB/s. A slow runner mirror, not the setup. The E2E jobs do have `timeout-minutes: 150` (the slow
+  re-run came close to it); apt was run without retries (`Acquire::Retries` defaults to 0) and the `curl` downloads have retries but no minimum-speed guard, so a mirror that
+  trickles instead of failing is never retried. The PR's own CI (static checks and the reduced real installs with the blocking
+  self-test on 24.04 and the newest LTS) was green as well.
+- **E2E run #26 on the final code (head `79905b7`, the settings-migration fix): all eight jobs passed all 12 phases**; self-test 33/36 (container) and 34/37 (VM)
+  on both releases, 0 failed, 0 warnings, only the SPICE and container-image skips. The PR's own CI (static checks, `--check`, reduced real installs with the
+  blocking self-test on 24.04 and the newest LTS) was green too, the first time the blocking self-test step was seen passing on a pull request.
 - **E2E run #24 on the final code (head `1bfb316`): all eight jobs (24.04 and 26.04, runner VM and container, `work` and `personal`) passed all 12 phases**; self-test 33/36
   (container) and 34/37 (VM) passed, 0 failed. It covered rustup/lazygit/uv/Helix/probe-rs from upstream, the opt-in offline lock (new shell not blocked), the records
   folder, Kate's plugin set and Format settings (`ws-pyformat` with the real ruff), and the real `basedpyright-langserver` started like Kate does (quiet on an untyped file).

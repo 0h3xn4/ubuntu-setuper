@@ -8,7 +8,8 @@ conversation; this file carries that context over.
 ## The user
 - Spacecraft flight software engineer; languages: Python, C, C++, Rust,
   plus JSON/YAML/XML.
-- Terminal beginner who chose a terminal editor: Helix (not Neovim).
+- Terminal beginner who chose a terminal editor: Helix (not Neovim). Later, on request ("users would also like nvim"), Neovim was added as a SECOND editor
+  (INSTALL_NVIM, default on); Helix stays the default and $EDITOR.
 - Wants to understand and control the setup; explain changes, don't just make them.
 
 ## Hard requirements (never violate, fixed on EVERY profile, no switch)
@@ -99,7 +100,7 @@ conversation; this file carries that context over.
      recorded in MISSING_FILE so the E2E flags it). NOT extended to tools without an LTS line
      (uv, Helix, starship, rustup, lazygit used to prefer the archive when it had them: DECIDED by the user later,
      "upstream please" and "for consistency sake do it": the newest upstream release wins for these five as well, see below).
-   - DECIDED by the user: uv, Helix, starship, rustup and lazygit (no LTS line) also take the newest UPSTREAM stable release over an
+   - DECIDED by the user: uv, Helix, starship, rustup and lazygit (no LTS line; Neovim followed the same rule when it was added) also take the newest UPSTREAM stable release over an
      older archive package. install_upstream_first() (setup.sh) holds the rule: not installed -> release (uv and
      starship checked with the checksum the project publishes, Helix trust-on-first-use + lock pin) into ~/.local;
      a failed download -> the archive's package, written to MISSING_FILE ("<tool> newest release (used the
@@ -129,7 +130,9 @@ Neutral naming everywhere (project "workstation-setup", ws-help, ws-init,
 ws-devname, /dev/ws/, ~/.local/share/workstation); flight-software specifics
 belong only inside the embedded module.
 
-- **core** (setup.sh + workstation.conf + files/): always on. Includes Helix, Kate
+- **core** (setup.sh + workstation.conf + files/): always on. Includes Helix, Neovim (INSTALL_NVIM; upstream-first like Helix; trust on first use because
+  no checksum file was confirmed: the sandbox proxy hides release pages, so check the release's assets before changing that; ~/.config/nvim/init.lua is
+  PLUGIN-FREE on purpose: a plugin manager or Mason would download by itself, requirement 1; t_nvim runs the real nvim headless), Kate
   (INSTALL_KATE; deb; ~/.config/kate/lspclient/settings.json merged over Kate's defaults,
   verified against Kate's source: JSON merge, same schema), ws-init, ws-doctor (standalone
   health check), `--undo`, ccache enabled via CMAKE_*_COMPILER_LAUNCHER in 10-workstation.sh.
@@ -260,7 +263,7 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
 - `tools/check-all.sh` (all) or `--quick` (static; the pre-commit hook via
   `tools/install-hooks.sh`). CI (.github/workflows/ci.yml) runs it, then per profile
   `--check` against the real archive of `ubuntu:latest` and a reduced real install. It ran
-  green (PR #5, #6, #8). Its self-test step is BLOCKING since the user agreed (it used to end in "|| true"):
+  green (PR #5, #6, #8, #15, #16, #17). Its self-test step is BLOCKING since the user agreed (it used to end in "|| true"):
   it is the only CI step that proves the installed tools work, a lenient step lets a broken run look green, and the
   QEMU test that made it flaky passes in every recent run. It fails only when a test FAILS (warnings 78 and skips 77
   do not). If a test is wrong, fix or skip THAT test with a stated reason; never make the step lenient again.
@@ -353,20 +356,31 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-FINAL E2E OF THIS BATCH (GitHub run #24, workflow_dispatch on the branch, head 1bfb316): 8/8 GREEN, 12/12 phases in every job; self-test 33/36
+LATEST E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+artifacts: 12 PASS, 0 FAIL per summary.md); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings; Neovim v0.12.6 from upstream in all 8, t_nvim
+PASSED on first contact (real nvim headless, real basedpyright at 'standard'). Not covered: interactive Neovim use. Neovim is trust-on-first-use (no checksum file
+confirmed: the sandbox proxy hides release pages). LESSON: one job (vm 24.04 work) stalled 78 min with no log (GitHub's get_job_logs of a running job is 404; the
+partial artifact of the CANCELLED attempt still has install.log: its tail showed an apt Get of libwebkit2gtk stalled on azure.archive.ubuntu.com); after cancel_workflow_run
+wait until the run is 'completed' before rerun_failed_jobs (403 'already running' otherwise); the re-run passed but its install phase took 8363 s (mirror at 33 kB/s). The E2E jobs
+DO have timeout-minutes: 150 (the slow re-run needed ~2h25m, close to the cap; the hung attempt was cancelled by hand at 78 min). What was missing: apt ran without retries
+(Acquire::Retries defaults to 0) and curl had retries but no minimum-speed guard, so a mirror that trickles bytes is never retried (the follow-up for that is separate).
+PREVIOUS E2E (GitHub run #26, workflow_dispatch on the branch, head 79905b7 = the settings-migration fix, merged as PR #17 into main 2967cf7): 8/8 GREEN, 12/12
+phases in every job (checked in the downloaded artifacts: 12 PASS, 0 FAIL per summary.md); self-test 33/36 (container work/personal) and 34/37 (VM), 0 failed, 0 warnings,
+only the SPICE/container-image skips, on 24.04 and 26.04. The PR's own CI (blocking self-test on 24.04 + newest LTS) was green: the blocking step HAS now been seen
+passing on pull requests (#16, #17). Real-machine check still pending: the user's first run after this (re-run `./setup.sh --profile work`, then `--self-test`).
+PREVIOUS E2E OF THE BATCH BEFORE (GitHub run #24, workflow_dispatch on the branch, head 1bfb316): 8/8 GREEN, 12/12 phases in every job; self-test 33/36
 (container work/personal) and 34/37 (VM), 0 failed, only SPICE/container-image skips. Verified in it: rustup 1.29.3 (rustup-init, container jobs; the VM image's own
 rustup is left alone), lazygit 0.66.2, uv 0.13.7, Helix 25.07.1, probe-rs 0.32.0 all from upstream with no archive fallback; the default install does not
 block uv/cargo in a new shell (strict lock opt-in); Kate plugin set + t_kate PASS on Kate 23.08 (24.04) and 25.12 (26.04); ws-pyformat run with the real ruff;
 t_basedpyright_default PASSED against the REAL basedpyright-langserver in both Kate modes (written without being able to run the server: it worked on first
 contact). History of this batch: run #21 (bc04a24) 8/8; run #23 (6c7dcec) failed 5/8 ONLY on GitHub HTTP 504 for the probe-rs release (curl 22, 4 quick tries,
 same minute in 5 jobs) -> download retries raised to --retry 6 --retry-max-time 180 (1bfb316), the E2E correctly failed on the failed step instead of hiding it.
-LESSON: read WHY a job failed (summary.md install block, install.log) before calling it flaky; here the log said 504 outright. The CI self-test (blocking) still has
-not been seen on a PULL REQUEST yet.
+LESSON: read WHY a job failed (summary.md install block, install.log) before calling it flaky; here the log said 504 outright.
 E2E WITH UPSTREAM-FIRST uv/Helix/starship (GitHub run #18, workflow_dispatch on the branch, head a4f6899): 8/8 GREEN, all 12
 phases everywhere (phase 12 = starship installed from its real release in a scratch HOME; --full turns Oh My Bash on, so the main
 install never installs starship). uv 0.13.7 and Helix 25.07.1 were installed from upstream in all eight jobs, none used the
 archive fallback; self-test 33/36 (VM work/personal), 32/35 (container), 0 failed, only SPICE/container-image skips; ~13-16 min per
-job. The CI self-test is blocking in ci.yml but only runs on a PULL REQUEST: it has not been seen green yet (check it on the PR before merging).
+job. (The CI self-test is blocking in ci.yml and only runs on a PULL REQUEST: check it on the PR before merging; it has passed on #16 and #17.)
 E2E ON 24.04 + 26.04 (GitHub runs #15 and #16, workflow_dispatch on the branch, matrix ubuntu 24.04/latest x vm/container x work/personal =
 8 jobs; headers say "Ubuntu 24.04.5 LTS" / "Ubuntu 26.04.1 LTS"). Run #15 (head 05ea021): 7/8 green; the failure (container 24.04
 personal) was a transient GitHub error during two downloads: it aborted the Base CLI tools step via a pipefail curl in
@@ -449,8 +463,10 @@ run of each app) and anything needing a desktop session.
 
 ## Open tasks (in order)
 1. (DONE by the E2E workflow: names checked on 26.04, only lazygit/zellij/difftastic are absent and handled.)
-2. (DONE in CI for both profiles on a runner VM and a container.) Still worth doing in the user's own
-   VM with a desktop session (snapshot first): `./setup.sh --profile work --full`, then `--self-test`; same
+2. (DONE in CI for both profiles on a runner VM and a container, and once on the user's real machine, profile work
+   --full: that run found the alias, offline-lock, Kate and basedpyright problems fixed since.) Still worth doing:
+   the user re-runs `./setup.sh --profile work` after PR #17 and sends the new `--self-test` output; for the desktop
+   module a VM with a desktop session (snapshot first): `./setup.sh --profile work --full`, then `--self-test`; same
    for `personal`. Check the icons in `ll` once the terminal uses the Nerd Font.
 3. Assumptions to verify on the real latest LTS (written without being able to test):
    - containers.conf `[engine] pull_policy = "never"` is accepted by podman

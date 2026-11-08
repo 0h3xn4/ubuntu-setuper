@@ -5,7 +5,7 @@ route, which does the same things by hand, is the [README](../README.md).
 
 Sets up a workstation on Ubuntu 24.04 LTS or 26.04 LTS (no upgrade to the newest
 is required) for software development, for work and personal use: C/C++/Rust/Python toolchains, the
-Helix editor with language servers, git tooling, static analysis, offline
+Helix and Neovim editors with language servers, git tooling, static analysis, offline
 documentation and a comfortable bash. Optional modules add embedded tooling
 (ARM and RISC-V cross compilers, QEMU, debug probe, serial and CAN tools) or
 everyday desktop apps (office, passwords, media, graphics, backups). No
@@ -32,7 +32,7 @@ runs (`--check`, `--self-test`, `--manifest`, `--lock`, `--upgrade`) need no
 
 | | What it is |
 |---|---|
-| **core** | Always installed, on every profile: bash setup, Helix + language servers, git tooling, Python/C/C++/Rust, offline docs, privacy hardening (opt-in, runs after all package installs), offline caches, and the check / self-test / manifest / lock / undo machinery |
+| **core** | Always installed, on every profile: bash setup, Helix and Neovim + language servers, git tooling, Python/C/C++/Rust, offline docs, privacy hardening (opt-in, runs after all package installs), offline caches, and the check / self-test / manifest / lock / undo machinery |
 | **embedded** | Cross compilers (ARM, RISC-V), QEMU, OpenOCD and probes, serial/CAN tools, Wireshark, verification tools (CBMC, AFL++, ...), optional SPICE kernels, embedded Rust targets and cargo tools, `ws-devname`, cross-build starter files |
 | **desktop** | LibreOffice, KeePassXC, VLC, GIMP, Inkscape, Déjà Dup, Firefox/Thunderbird policy files, spell-check languages. Each app has its background network features switched off |
 
@@ -190,12 +190,13 @@ after checking it against the `SHASUMS256.txt` the project publishes. No APT rep
 `NODE_LTS_VERSION` pins a release (the lock does it), `NODE_FROM_ARCHIVE=1` uses Ubuntu's own
 `nodejs`/`npm`, which is also the fallback if the download fails. System components (Python, gcc,
 glibc, systemd) always stay the archive version.
-**uv, Helix, starship, rustup and lazygit** (no LTS line) follow the same rule, also your decision: the newest *upstream*
+**uv, Helix, Neovim, starship, rustup and lazygit** (no LTS line) follow the same rule, also your decision: the newest *upstream*
 release wins over an older archive package. Each is unpacked into your home directory (`~/.local/bin`; Helix in
-`~/.local/opt/helix-<version>`, linked from `~/.local/bin/hx`), uv and starship after checking the checksum
-their project publishes, Helix on trust-on-first-use because it publishes none. `UV_VERSION`, `HELIX_VERSION`,
+`~/.local/opt/helix-<version>`, linked from `~/.local/bin/hx`; Neovim in `~/.local/opt/nvim-<version>`, linked from
+`~/.local/bin/nvim`), uv and starship after checking the checksum their project publishes, Helix and Neovim on
+trust-on-first-use (for Neovim a checksum file could not be confirmed). `UV_VERSION`, `HELIX_VERSION`, `NVIM_VERSION` (with the `v`),
 `STARSHIP_VERSION`, `RUSTUP_VERSION` and `LAZYGIT_VERSION` pin a release (the lock does it); `UV_FROM_ARCHIVE=1`,
-`HELIX_FROM_ARCHIVE=1`, `STARSHIP_FROM_ARCHIVE=1`, `RUSTUP_FROM_ARCHIVE=1` and `LAZYGIT_FROM_ARCHIVE=1` prefer Ubuntu's package; `ALLOW_CURL_INSTALLERS=0` forbids the downloads (Ubuntu's package
+`HELIX_FROM_ARCHIVE=1`, `NVIM_FROM_ARCHIVE=1`, `STARSHIP_FROM_ARCHIVE=1`, `RUSTUP_FROM_ARCHIVE=1` and `LAZYGIT_FROM_ARCHIVE=1` prefer Ubuntu's package; `ALLOW_CURL_INSTALLERS=0` forbids the downloads (Ubuntu's package
 is used). Ubuntu's package is also the fallback if a download fails, and then the summary lists it as "newest
 release (used the archive's)". A tool you already have is left alone; `--upgrade` installs the newest release in
 `~/.local/bin` (rustup: `~/.cargo/bin`, updated in place), in front of any package from Ubuntu (never removed). rustup is
@@ -205,7 +206,7 @@ release (used the archive's)". A tool you already have is left alone; `--upgrade
 probe-rs, the Nerd Font, Node.js), the download is compared with *that* and a mismatch is refused. If the
 published checksum itself cannot be fetched (after retries), the download is **refused**, never trusted blindly;
 only a SHA-256 pinned in the lock file can stand in for it. Other
-downloads outside APT (the Helix tarball, SPICE kernels) are verified against SHA-256 values in the
+downloads outside APT (the Helix and Neovim tarballs, SPICE kernels) are verified against SHA-256 values in the
 lock file; without a lock their checksum is recorded on first download (trust on first use) and pinned
 by `--lock`. Compare them with the publisher's values if your process requires it. Package managers
 (APT, cargo, uv/pip, npm) verify their own downloads. See "Downloads and checksums" below.
@@ -230,7 +231,7 @@ desktop module only places policy files for Firefox and Thunderbird.
 |---|---|
 | `tools/check-all.sh [--quick]` | Every check of this repository: `shellcheck`/`bash -n`, JSON/TOML/YAML parsing, README sync, the README's code blocks, `--explain`/`--check` for every profile; without `--quick` also functional tests in a throw-away `HOME` (`ws-init`, `ws-doctor`, `--undo`, manifest diff, the checksum-verified download helper incl. a tamper test, the LibreOffice helper) |
 | `tools/check-readme-sync.sh` | Fails if the README misses a package, tool, home file, step, switch, option or privacy service the script knows about |
-| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine (12 phases; the eleventh is a zsh user: real zsh, `--reset-shell`, `--undo`; the twelfth installs starship from its real release): explain/check, full install, self-test (a skipped RISC-V QEMU test counts as a failure), `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock (must pin the Rust toolchain, uv and, when installed, Node.js), uv and Helix must come from upstream (`~/.local/bin`, not Ubuntu), `--undo`, leftovers (incl. `~/.local/opt` and the node/npm/npx links). Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
+| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine (12 phases; the eleventh is a zsh user: real zsh, `--reset-shell`, `--undo`; the twelfth installs starship from its real release): explain/check, full install, self-test (a skipped RISC-V QEMU test counts as a failure), `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock (must pin the Rust toolchain, uv and, when installed, Node.js), uv, Helix, Neovim and lazygit must come from upstream (`~/.local/bin`, not Ubuntu; rustup too in the container jobs), the default install must not block `uv`/`cargo`, no record file may be loose in `~`, `--undo`, leftovers (incl. `~/.local/opt` and the node/npm/npx links). Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
 | `tools/manifest-diff.sh A B` | Compare two manifests (two machines, or manual vs scripted setup), ignoring host, user, CPU, kernel, hashes and dates |
 | `tools/install-hooks.sh` | Enable the git pre-commit hook (`check-all.sh --quick`) in this clone |
 
@@ -253,7 +254,7 @@ the full verification.
 
 Where the project publishes a checksum, the download is compared with *that* checksum and a
 mismatch is refused (`fetch_published`): uv, rustup (`rustup-init`), starship, the Nerd Font
-(`SHA-256.txt`), probe-rs and lazygit (`checksums.txt`). For the rest (the Helix tarball) the
+(`SHA-256.txt`), probe-rs and lazygit (`checksums.txt`). For the rest (the Helix and Neovim tarballs) the
 SHA-256 is recorded on first use and pinned by `--lock` (`fetch_verified`). The release tag of a
 `latest/download` URL is read from its redirect, so no GitHub API call is needed. `PROBE_RS_PREBUILT=0`
 compiles probe-rs with cargo instead; `lazygit` is taken from its release (the newest upstream release wins over the archive's).
