@@ -1615,7 +1615,11 @@ git_defaults() {
   if have delta; then
     for kv in "${GIT_DEFAULTS_DELTA[@]}"; do git_set "${kv%%=*}" "${kv#*=}"; done
   fi
-  if have git-lfs; then git lfs install --skip-repo >/dev/null; fi
+  if have git-lfs; then
+    # Its global filter was never recorded for --undo (found by --reset-defaults in the E2E): record it when this run adds it.
+    if [[ -z "$(git config --global --get filter.lfs.process 2>/dev/null || true)" ]]; then record_undo "git lfs uninstall --skip-repo"; fi
+    git lfs install --skip-repo >/dev/null
+  fi
   ok "Git defaults set (existing settings were kept)"
 }
 

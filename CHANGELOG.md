@@ -35,6 +35,11 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   machines: the full install must leave Ubuntu's services exactly as they were, then `--reset-defaults` and `--undo` run against the real
   `systemctl`, `sudo` and git. README: A6 (now "left alone"), B13 (font only), a new "Reset to Ubuntu's defaults" section with the manual
   commands, a troubleshooting row; also two links that pointed at renamed sections.
+- **Found by the reset in the first E2E run (#38), and fixed:** two settings the normal `--undo` left behind. Wireshark's non-root capture: its undo
+  line was a plain `dpkg-reconfigure wireshark-common`, which only asks a person, so replayed by `--undo --yes` capture stayed allowed; it now sets
+  the answer back to "no" itself. The global Git LFS filter that `git lfs install --skip-repo` adds (with `SET_GIT_DEFAULTS`) had no undo line at all; it
+  has one now, when the run added it. The E2E's leftovers phase now checks both. The same run's phase 13 failed in the three container jobs on a test
+  bug: a container has no `systemctl` before the install, so the "before" state was empty; it now checks there that no unit is disabled or masked.
 - **Not verified:** a real desktop session (the GNOME part); the E2E result is recorded below once it ran.
 
 ### Changed (defaults: an install keeps Ubuntu's defaults, and `--undo` returns to Ubuntu's own default; the user's decisions)

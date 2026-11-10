@@ -315,6 +315,11 @@ ph_leftovers() {
   done
   compgen -G "$HOME/.bashrc.d/*.sh" >/dev/null && found+=("$(compgen -G "$HOME/.bashrc.d/*.sh" | paste -sd' ')")
   grep -q 'workstation-setup: load' "$HOME/.bashrc" 2>/dev/null && found+=("loader block in ~/.bashrc")
+  # settings outside files: both were left behind by --undo until --reset-defaults found them
+  if [[ -z $E2E_PRE_LFS && -n "$(git config --global --get filter.lfs.process 2>/dev/null || true)" ]]; then found+=("the global Git LFS filter in ~/.gitconfig"); fi
+  if [[ -z $E2E_PRE_WS ]] && dpkg -s wireshark-common >/dev/null 2>&1 && [[ "$(debconf-show wireshark-common 2>/dev/null | awk -F': ' '/install-setuid/ { print $2 }')" == true ]]; then
+    found+=("wireshark-common: non-root capture still on (debconf install-setuid)")
+  fi
   if (( ${#found[@]} )); then printf 'LEFT BEHIND: %s\n' "${found[@]}"; bad=1; else echo "nothing left behind (APT packages are not removed by design)"; fi
   bash -ic 'ws-doctor --quiet' 2>&1 | strip | tail -n 2 | sed 's/^/  after undo: /'
   return $bad
@@ -324,7 +329,20 @@ if [[ -e $HOME/.rustup || -e $HOME/.cargo/bin/rustup ]]; then E2E_PRE_RUSTUP=1; 
 # The state of Ubuntu's own services before anything runs: the setup must never change it (decided by the user).
 UBUNTU_UNITS=(apport-autoreport.path apport-autoreport.timer whoopsie.path kerneloops.service motd-news.timer fwupd-refresh.timer)
 declare -A E2E_PRE_UNITS=()
-for u in "${UBUNTU_UNITS[@]}"; do E2E_PRE_UNITS[$u]="$(systemctl is-enabled "$u" 2>/dev/null || true)"; done
+# A container image has no systemctl before the install (systemd comes in with the packages): then the states before are
+# unknown, and the check below can only require that no unit is disabled or masked (the setup never does either).
+# What the image already had is not the setup's to remove (checked in the leftovers phase).
+E2E_PRE_LFS=""; E2E_PRE_WS=""
+if [[ -n "$(git config --global --get filter.lfs.process 2>/dev/null || true)" ]]; then E2E_PRE_LFS=1; fi
+if [[ "$(debconf-show wireshark-common 2>/dev/null | awk -F': ' '/install-setuid/ { print $2 }' || true)" == true ]]; then E2E_PRE_WS=1; fi
+E2E_PRE_SYSTEMCTL=0; if command -v systemctl >/dev/null 2>&1; then E2E_PRE_SYSTEMCTL=1; fi
+unit_state() { local s; s="$(systemctl is-enabled "$1" 2>/dev/null || true)"; [[ $s == not-found ]] && s=""; echo "$s"; }
+for u in "${UBUNTU_UNITS[@]}"; do E2E_PRE_UNITS[$u]="$( (( E2E_PRE_SYSTEMCTL )) && unit_state "$u")"; done
+# Is unit U still as it was before the install? (Without a systemctl before: not disabled and not masked.)
+unit_as_before() {
+  local now; now="$(unit_state "$1")"
+  if (( E2E_PRE_SYSTEMCTL )); then [[ $now == "${E2E_PRE_UNITS[$1]}" ]]; else [[ $now != disabled && $now != masked ]]; fi
+}
 
 # Last, so it cannot disturb the phases above: someone who comes from zsh. Installs zsh (an APT
 # package: it stays, like every package this test installs), pretends to have Oh My Zsh, makes zsh
@@ -386,9 +404,10 @@ ph_starship() {
 # the machine is left as it was.
 ph_reset_defaults() {
   local bad=0 u now f=/etc/sysctl.d/60-dev-inotify.conf sim_unit=0 out
+  if (( ! E2E_PRE_SYSTEMCTL )); then echo "(no systemctl before the install, a container: checking that no unit is disabled or masked)"; fi
   for u in "${UBUNTU_UNITS[@]}"; do
-    now="$(systemctl is-enabled "$u" 2>/dev/null || true)"
-    if [[ $now != "${E2E_PRE_UNITS[$u]}" ]]; then echo "$u was '${E2E_PRE_UNITS[$u]}' before the install and is '$now' now: the setup must not touch Ubuntu's services"; bad=1
+    now="$(unit_state "$u")"
+    if ! unit_as_before "$u"; then echo "$u was '${E2E_PRE_UNITS[$u]}' before the install and is '$now' now: the setup must not touch Ubuntu's services"; bad=1
     else echo "unchanged by the setup: $u (${now:-not installed})"; fi
   done
   u=motd-news.timer
@@ -427,8 +446,7 @@ ph_reset_defaults() {
   sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' "$HOME/.bashrc"
   sudo rm -f "$f"
   for u in "${UBUNTU_UNITS[@]}"; do
-    now="$(systemctl is-enabled "$u" 2>/dev/null || true)"
-    if [[ $now != "${E2E_PRE_UNITS[$u]}" ]]; then echo "after the test $u is '$now', it was '${E2E_PRE_UNITS[$u]}'"; bad=1; fi
+    if ! unit_as_before "$u"; then echo "after the test $u is '$(unit_state "$u")', it was '${E2E_PRE_UNITS[$u]}'"; bad=1; fi
   done
   (( bad == 0 )) && echo "reset-defaults: Ubuntu's services untouched by the install; reset and undo worked against the real systemctl, sudo and git"
   return $bad

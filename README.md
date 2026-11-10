@@ -1085,7 +1085,10 @@ if command -v delta >/dev/null; then
   git_set delta.navigate true
   git_set delta.line-numbers true
 fi
-command -v git-lfs >/dev/null && git lfs install --skip-repo
+if command -v git-lfs >/dev/null; then
+  git config --global --get filter.lfs.process >/dev/null || record_undo "git lfs uninstall --skip-repo"
+  git lfs install --skip-repo
+fi
 ```
 
 (Your identity, if not set yet: `git config --global user.name "Your Name"`
@@ -1426,7 +1429,7 @@ apt_install wireshark
 ```bash
 echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
 sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common
-record_undo "sudo dpkg-reconfigure wireshark-common   # answer 'No' to disallow non-root capture"
+record_undo "echo 'wireshark-common wireshark-common/install-setuid boolean false' | sudo debconf-set-selections && sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common"
 sudo usermod -aG wireshark "$USER" && record_undo "sudo gpasswd -d $USER wireshark"
 ```
 
