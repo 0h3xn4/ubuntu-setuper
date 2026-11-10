@@ -8,6 +8,16 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Fixed (`--undo` no longer leaves an unreadable terminal halfway; report: a screenshot of a terminal full of empty boxes after running the undo)
+- The undo removed the JetBrains Mono Nerd Font in the **middle** of its run. A terminal that uses that font draws every character as an empty box the
+  moment the files are gone (also the text already on screen), so the rest of the undo, and its summary, could not be read. Now the font removal runs
+  **last**, the plan shown before the question says so in plain words, and a last notice is printed right before it. Nothing else changes order (still
+  newest first). Check: `t_undo_font` (a fake undo file: order C, A, then the font; warning only when a font is removed; broken on purpose once to prove it fails).
+  README: the Undo section and a troubleshooting row (close the window and open a new one; pick another font if the profile names the removed one).
+- **Not caused by the setup:** a later report that Konsole had replaced Terminator as the terminal. The setup installs only `konsole-kpart` (Kate's
+  embedded terminal panel: no program, no menu entry, no `x-terminal-emulator` registration); checked against the real 24.04 and 26.04 archives, where
+  `konsole-kpart` does not depend on the Konsole app (it is the other way round) and Kate only *suggests* `konsole-kpart`.
+
 ### Fixed (a busy apt lock no longer stops the setup; report: a screenshot of `Could not get lock /var/lib/apt/lists/lock ... held by process (packagekitd)`)
 - **The script waits for Ubuntu's own updater instead of failing.** `packagekitd` (behind Software Updater and GNOME Software) holds the apt lock for a while after login and after
   package installs, and apt fails at once. The script's first step was `apt-get update || die "...Check network / proxy settings."`: it died on that, with a message that pointed the wrong way.

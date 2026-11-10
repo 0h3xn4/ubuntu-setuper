@@ -145,6 +145,29 @@ t_undo() {
   [[ ! -e $h/s/a && ! -e $h/s/b ]] && compgen -G "$h/workstation-undo-1.sh.done-*" >/dev/null
 }
 check "--undo: dry run changes nothing, --yes replays and renames the file" t_undo
+# Found on the user's machine: --undo removed the Nerd Font in the MIDDLE of the run, and the terminal that used it drew every character
+# (even the text already on screen) as an empty box. Now the font removal runs LAST and a warning is shown before anything is changed.
+t_undo_font() {
+  local h="$TMP/h-undofont" bad=0 out; rm -rf "$h"; mkdir -p "$h/fonts/JetBrainsMonoNerdFont"; : > "$h/log"
+  # recorded oldest first (A, font, C); newest-first replay would be C, font, A
+  printf '#!/usr/bin/env bash\nset -x\necho A >> %s/log\nrm -rf %s/fonts/JetBrainsMonoNerdFont && echo FONT >> %s/log\necho C >> %s/log\n' "$h" "$h" "$h" "$h" > "$h/workstation-undo-1.sh"
+  out="$(HOME="$h" ./setup.sh --undo --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+  [[ $out == *"EMPTY BOXES"* ]] || { echo "no warning about the font before anything runs"; bad=1; }
+  [[ $out == *" 3. rm -rf "*JetBrainsMonoNerdFont* ]] || { echo "the font removal must be listed LAST (3.): $out"; bad=1; }
+  [[ -d $h/fonts/JetBrainsMonoNerdFont && ! -s $h/log ]] || { echo "a dry run must change nothing"; bad=1; }
+  HOME="$h" ./setup.sh --undo --yes >/dev/null 2>&1 || { echo "the undo failed"; bad=1; }
+  [[ "$(tr '\n' ' ' < "$h/log")" == "C A FONT " ]] || { echo "run order must be C, A, FONT (font last), got: $(tr '\n' ' ' < "$h/log")"; bad=1; }
+  [[ ! -e $h/fonts/JetBrainsMonoNerdFont ]] || { echo "the font directory was not removed"; bad=1; }
+  # without a font line: no warning, plain newest-first order
+  rm -rf "$h"; mkdir -p "$h"; : > "$h/log"
+  printf '#!/usr/bin/env bash\necho A >> %s/log\necho B >> %s/log\n' "$h" "$h" > "$h/workstation-undo-1.sh"
+  out="$(HOME="$h" ./setup.sh --undo --dry-run 2>&1)"
+  [[ $out != *"EMPTY BOXES"* ]] || { echo "the font warning must only appear when a font is removed"; bad=1; }
+  HOME="$h" ./setup.sh --undo --yes >/dev/null 2>&1 || bad=1
+  [[ "$(tr '\n' ' ' < "$h/log")" == "B A " ]] || { echo "plain order must stay newest first: $(tr '\n' ' ' < "$h/log")"; bad=1; }
+  return $bad
+}
+check "--undo: the font removal runs last, with a warning first (a terminal using it shows empty boxes)" t_undo_font
 
 # --reset-shell, with a fake getent (login shell = zsh), a fake sudo (just logs), a fake id (not root)
 # and a fake /etc/skel: zsh files are moved (not deleted), bash files come back, and --undo restores all.

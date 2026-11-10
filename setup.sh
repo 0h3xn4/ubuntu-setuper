@@ -3024,12 +3024,28 @@ undo_mode() {
   done < "$file"
   (( ${#cmds[@]} )) || { ok "$file records no changes: nothing to undo"; return 0; }
 
+  # Newest first. The command that removes the Nerd Font runs LAST: a terminal that is using that font draws every
+  # character as an empty box the moment the file is gone, even the text already on screen (found on the user's
+  # machine), so everything else, and the summary, is printed while the terminal can still be read.
+  local -a plan=() font_plan=()
+  for (( i = ${#cmds[@]} - 1; i >= 0; i-- )); do
+    if [[ ${cmds[i]} == *fonts/JetBrainsMonoNerdFont* ]]; then font_plan+=("${cmds[i]}"); else plan+=("${cmds[i]}"); fi
+  done
+  plan+=("${font_plan[@]}")
+
   section "Undo: $file"
-  echo "These ${#cmds[@]} commands will run, newest first. Installed APT packages are NOT removed"
+  echo "These ${#plan[@]} commands will run, newest first. Installed APT packages are NOT removed"
   echo "(see 'Undo' in the README for apt history)."
   echo
-  for (( i = ${#cmds[@]} - 1; i >= 0; i-- )); do n=$((n + 1)); printf '  %2d. %s\n' "$n" "${cmds[i]}"; done
+  for (( i = 0; i < ${#plan[@]}; i++ )); do printf '  %2d. %s\n' "$((i + 1))" "${plan[i]}"; done
   echo
+  if (( ${#font_plan[@]} )); then
+    warn "The last command removes the JetBrains Mono Nerd Font. A terminal that is using it will then show EMPTY BOXES"
+    warn "instead of letters (even the text already on screen). Nothing is broken: close that terminal window and open a"
+    warn "new one. If the boxes remain, pick another font in its preferences (Terminator: right-click > Preferences >"
+    warn "Profiles > Font; GNOME Terminal: Preferences > your profile > Text)."
+    echo
+  fi
   if (( DRY_RUN )); then ok "Dry run: nothing was changed"; return 0; fi
   if (( ! ASSUME_YES )); then
     [[ -t 0 && -t 1 ]] || die "Not a terminal: add --yes to run without asking"
@@ -3038,11 +3054,14 @@ undo_mode() {
   fi
   if printf '%s\n' "${cmds[@]}" | grep -q 'sudo '; then sudo -v || die "sudo is needed for some of these commands"; fi
   n=0
-  for (( i = ${#cmds[@]} - 1; i >= 0; i-- )); do
+  for (( i = 0; i < ${#plan[@]}; i++ )); do
     n=$((n + 1))
-    printf '%s[%d/%d]%s %s\n' "$c_blue" "$n" "${#cmds[@]}" "$c_off" "${cmds[i]}"
+    if (( ${#font_plan[@]} && i == ${#plan[@]} - ${#font_plan[@]} )); then
+      echo; warn "Removing the Nerd Font now: if this window turns into empty boxes, close it and open a new one."
+    fi
+    printf '%s[%d/%d]%s %s\n' "$c_blue" "$n" "${#plan[@]}" "$c_off" "${plan[i]}"
     # tools we installed live in ~/.local/bin and ~/.cargo/bin, which a plain shell may not have on PATH
-    if ! PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" bash -c "${cmds[i]}"; then failed=$((failed + 1)); failures+=("${cmds[i]}"); warn "That command failed; continuing"; fi
+    if ! PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" bash -c "${plan[i]}"; then failed=$((failed + 1)); failures+=("${plan[i]}"); warn "That command failed; continuing"; fi
   done
   if (( failed )); then
     warn "$failed command(s) failed; the undo file is kept: $file"

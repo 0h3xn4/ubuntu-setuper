@@ -341,6 +341,12 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
   sources or package config. check-all `t_resilient_net` (fake curl/sudo + a lint over setup.sh) fails if a new download skips them. Small metadata calls that
   use `--max-time 30` (tag redirects, the GitHub API fallbacks) are exempt. apt has no minimum-speed setting: slow-but-alive mirrors are waited for, the E2E job
   `timeout-minutes: 150` is the backstop.
+- --undo order: the Nerd Font removal (`rm -rf .../fonts/JetBrainsMonoNerdFont && fc-cache -f`) runs LAST, with a warning in the plan: a terminal using that font turns into empty
+  boxes once the files are gone (found on the user's machine). Keep any future "remove something the running terminal/desktop uses" undo line at the end too. Test: t_undo_font.
+- Default terminal: the setup installs only konsole-kpart (no program, no alternative; 24.04 AND 26.04 checked: konsole-kpart does not depend on konsole). The user reported
+  "Konsole replaced Terminator": not the setup's doing as far as the archive shows; the user's apt history decides (zgrep ' konsole:amd64' /var/log/apt/history.log*).
+  DECIDED by the user: if the setup ever changes a default (terminal, editor, file associations, ...), it must restore the real Ubuntu default on undo, "and this applies to
+  everything else in the setup script as well".
 - apt lock: never call `sudo apt-get install|update` directly in setup.sh; use `apt_run ARGS` (APT_NET options + waits for a busy lock, APT_LOCK_WAIT 300 s, 5 s steps, names the holder).
   Reason: packagekitd (Ubuntu's updater) holds the lock after login/after installs and apt fails at once; `-o DPkg::Lock::Timeout` does NOT cover the lists lock of `apt-get update` (tested, apt 2.8.3).
   Test t_apt_lock + a lint in t_resilient_net. Never delete lock files; the manual uses the `apt_wait` helper. Found on the user's machine (screenshot, packagekitd PID 2826, gone a minute later).
