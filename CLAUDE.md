@@ -345,6 +345,11 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
   `timeout-minutes: 150` is the backstop.
 - --undo order: the Nerd Font removal (`rm -rf .../fonts/JetBrainsMonoNerdFont && fc-cache -f`) runs LAST, with a warning in the plan: a terminal using that font turns into empty
   boxes once the files are gone (found on the user's machine). Keep any future "remove something the running terminal/desktop uses" undo line at the end too. Test: t_undo_font.
+- Defaults (DECIDED by the user: "ubuntus own default", and "yes" to the audit): gset records `gsettings reset` (Ubuntu's default, NOT the old value). Backups of the
+  user's own files still restore (deleting user data is not a "default"). KEEP_DEFAULT_APPS=1: defaults_snapshot (gio mime for every type in mimeinfo.cache, before
+  the first install) + step "Keep default apps" (sets back types whose app changed, in ~/.config/mimeapps.list; undo = one python command removing exactly those).
+  Audit (24.04 archive, full install): no x-terminal-emulator/editor/x-www-browser registrations (lynx -> www-browser only); 178 claimed types decided by Ubuntu's
+  gnome-mimeapps.list, 95 not (VLC, Inkscape, ktelnetservice5, GIMP, Wireshark, ...). Test t_default_apps. Real desktop NOT verified; 26.04 file types not audited.
 - Default terminal: the setup installs only konsole-kpart (no program, no alternative; 24.04 AND 26.04 checked: konsole-kpart does not depend on konsole). The user reported
   "Konsole replaced Terminator": not the setup's doing as far as the archive shows; the user's apt history decides (zgrep ' konsole:amd64' /var/log/apt/history.log*).
   DECIDED by the user: if the setup ever changes a default (terminal, editor, file associations, ...), it must restore the real Ubuntu default on undo, "and this applies to

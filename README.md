@@ -28,7 +28,7 @@ lists them all.
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
 - [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*, A7 coming from zsh *(only if you use zsh)*
-- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate, B17 Neovim
+- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate, B17 Neovim, B18 default apps
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
 - [Part E. Verify](#part-e-verify)
@@ -510,6 +510,16 @@ Notes:
 ```bash
 apt_wait sudo apt-get "${APT_NET[@]}" update
 apt_install curl ca-certificates gnupg distro-info
+```
+
+**Before you install anything else, note which app opens which file type** (on a desktop; see B18 for why). It changes nothing:
+
+```bash
+mkdir -p ~/workstation-setup
+awk -F= '/^\[MIME Cache\]/{s=1;next} /^\[/{s=0} s && NF>=2 {print $1}' /usr/share/applications/mimeinfo.cache | sort -u |
+  while read -r t; do d=$(LC_ALL=C gio mime "$t" 2>/dev/null | sed -n 's/^Default application for .*: \(.*\.desktop\)$/\1/p'); [ -n "$d" ] && echo "$t $d"; done \
+  > ~/workstation-setup/default-apps.before
+wc -l ~/workstation-setup/default-apps.before
 ```
 
 Undo: nothing (these are tiny and usually present already).
@@ -1389,6 +1399,29 @@ reports the one real mistake and none of the strict-mode noise.
 Undo: `rm -rf ~/.local/opt/nvim-VERSION ~/.local/bin/nvim ~/.config/nvim/init.lua` (the script records exactly this
 for what it created); the package via APT history.
 
+## B18. Keep default apps *(KEEP_DEFAULT_APPS, default on)*
+
+*Mirrors `step "Keep default apps"`, function `defaults_keep` (and `defaults_snapshot` before the first install).*
+
+Installing an app can make it the one that **opens a file type** that Ubuntu's own list (`/usr/share/applications/gnome-mimeapps.list`)
+does not decide. For the full install on Ubuntu 24.04 this was audited against the real archive: no package registers itself as the
+terminal, editor or browser, and 178 of the file types the new apps claim are already decided by Ubuntu's list (so Kate does **not**
+take over text and code files: GNOME Text Editor stays). For 95 types Ubuntu has no default, and there a new app can win: VLC for some
+audio and video formats, Inkscape for Visio and Corel files, a KDE helper (pulled in by Kate) for `ssh://` and `telnet://` links.
+You decided that the setup must not change a default behind your back, so after all installs every file type whose app changed
+is set back to the app from the note you took in A3 (as your own default, in `~/.config/mimeapps.list`):
+
+```bash
+while read -r t before; do
+  now=$(LC_ALL=C gio mime "$t" 2>/dev/null | sed -n 's/^Default application for .*: \(.*\.desktop\)$/\1/p')
+  if [ -n "$now" ] && [ "$now" != "$before" ]; then echo "set back: $t -> $before (not $now)"; gio mime "$t" "$before" >/dev/null; fi
+done < ~/workstation-setup/default-apps.before
+```
+
+Undo: remove the lines it added from the `[Default Applications]` section of `~/.config/mimeapps.list` (the script's `--undo` removes
+exactly those and nothing else; it deletes the file only if the setup created it). Without a desktop (no `gio`, no `mimeinfo.cache`)
+there is nothing to do.
+
 ---
 
 # Part C. Optional parts
@@ -1911,6 +1944,9 @@ Each section above ended with its undo. In general:
   asks before it runs anything: `./setup.sh --undo` (the newest file in that folder;
   or `./setup.sh --undo FILE`)
   (add `--dry-run` to only list).
+- **Desktop settings go back to Ubuntu's own default**, not to the value you had before (your decision): the undo runs
+  `gsettings reset` for every GNOME setting the setup changed. Your own files that the setup only added to (Kate, Helix,
+  app settings) are put back from their backups instead: "default" there would mean deleting your own settings.
 - **The Nerd Font** (B14) is removed **last**, and the list says so before anything runs: a terminal that is using it shows
   **empty boxes instead of letters** the moment the font files are gone, even the text already on screen. Nothing is broken:
   close that terminal window and open a new one; if the boxes remain, pick another font in the terminal's preferences

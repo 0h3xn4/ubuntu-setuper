@@ -250,6 +250,17 @@ Health check: `ws-doctor` (installed in `~/.local/bin`, read-only, offline, no r
 reports missing tools, editor and shell setup, and the no-cloud settings in seconds; `--self-test` is
 the full verification.
 
+## Default apps: `KEEP_DEFAULT_APPS`
+
+An apt install can make a new app the default for a file type that Ubuntu's own list (`/usr/share/applications/gnome-mimeapps.list`) does not
+decide. Audited for the full install on 24.04 (real archive: 98 chosen packages, ~850 with dependencies): no package registers the terminal,
+editor or graphical browser (only `lynx` as the text-mode `www-browser`, which Ubuntu does not set); 178 claimed file types are decided by
+Ubuntu's list; 95 are not (VLC for some audio/video types, Inkscape for Visio/Corel, `ktelnetservice5` from KDE's `kio` for `ssh://`/`telnet://`).
+With `KEEP_DEFAULT_APPS=1` (default) `defaults_snapshot` records `gio mime` for every type in `mimeinfo.cache` before the first install, and
+the step "Keep default apps" sets back each type whose app changed, as a user default in `~/.config/mimeapps.list`; `--undo` removes exactly
+those entries (one python command in the undo file) and the file if the setup created it. Nothing happens without a desktop. Test: `t_default_apps`
+(fake `gio`). `gset` (GNOME settings) records `gsettings reset` for `--undo`: Ubuntu's own default, the user's decision.
+
 ## A busy apt lock: `APT_LOCK_WAIT`
 
 Ubuntu's own updater (`packagekitd`) holds the apt lock for a while after login and after package installs, and apt then fails at once

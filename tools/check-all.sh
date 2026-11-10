@@ -476,6 +476,68 @@ DRV
   return $bad
 }
 check "apt lock: a busy lock (Ubuntu's updater) is waited for and named, other errors fail at once" t_apt_lock
+# The user decided: an install must not change which app opens a file type, and --undo goes back to Ubuntu's own default.
+# A fake gio and a fake mimeinfo.cache: VLC takes over audio/aac from Rhythmbox, GIMP adds a new type (no default before),
+# text/plain keeps its app. Only audio/aac may be set back; the undo removes exactly that and keeps the user's own entry.
+t_default_apps() {
+  local d="$TMP/defapps" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+log() { :; }; ok() { echo "OK: $*"; }; warn() { echo "WARN: $*"; }
+STATE_DIR="$HOME/state"; UNDO_FILE="$HOME/undo.sh"; : > "$UNDO_FILE"; KEEP_DEFAULT_APPS=1
+export MIMEINFO_CACHE="$HOME/mimeinfo.cache"
+printf '[MIME Cache]\naudio/aac=org.gnome.Rhythmbox3.desktop;vlc.desktop;\ntext/plain=org.gnome.TextEditor.desktop;\nimage/x-xcf=gimp.desktop;\n' > "$MIMEINFO_CACHE"
+gio() {   # gio mime TYPE [APP]: the system answer comes from $PHASE, a user default from ~/.config/mimeapps.list
+  [[ $1 == mime ]] || return 1
+  local f="$HOME/.config/mimeapps.list" v
+  if [[ -n ${3:-} ]]; then
+    mkdir -p "$HOME/.config"
+    python3 -I - "$f" "$2" "$3" <<'PY'
+import os, sys
+p, t, a = sys.argv[1:]
+lines = open(p).read().splitlines() if os.path.exists(p) else []
+def put(sec, val):
+    global lines
+    if sec not in lines: lines += ["", sec] if lines else [sec]
+    i = lines.index(sec) + 1
+    lines.insert(i, t + "=" + val)
+put("[Default Applications]", a + ";"); put("[Added Associations]", a + ";")
+open(p, "w").write("\n".join(lines) + "\n")
+PY
+    return 0
+  fi
+  v="$(awk -F= -v t="$2" '/^\[Default Applications\]/{s=1;next} /^\[/{s=0} s && $1==t {sub(/;.*/,"",$2); print $2; exit}' "$f" 2>/dev/null)"
+  if [[ -z $v ]]; then v="$(awk -v t="$2" '$1==t {print $2}' "$HOME/$PHASE")"; fi
+  if [[ -n $v ]]; then echo "Default application for “$2”: $v"; fi
+}
+printf 'audio/aac org.gnome.Rhythmbox3.desktop\ntext/plain org.gnome.TextEditor.desktop\n' > "$HOME/before"
+printf 'audio/aac vlc.desktop\ntext/plain org.gnome.TextEditor.desktop\nimage/x-xcf gimp.desktop\n' > "$HOME/after"
+if [[ ${T_USERFILE:-} == 1 ]]; then mkdir -p "$HOME/.config"; printf '[Default Applications]\ntext/html=firefox_firefox.desktop;\n' > "$HOME/.config/mimeapps.list"; fi
+PHASE=before; defaults_snapshot
+PHASE=after;  defaults_keep
+echo "AAC=$(gio_default audio/aac) XCF=$(gio_default image/x-xcf) TXT=$(gio_default text/plain)"
+echo "UNDO_LINES=$(grep -c . "$UNDO_FILE")"
+bash -c "$(cat "$UNDO_FILE")"
+echo "AFTER_UNDO_AAC=$(gio_default audio/aac) FILE=$([[ -e $HOME/.config/mimeapps.list ]] && echo exists || echo gone)"
+if [[ -e $HOME/.config/mimeapps.list ]]; then echo "LEFT:"; cat "$HOME/.config/mimeapps.list"; fi
+DRV
+  out="$(HOME="$d/h1" bash -c 'mkdir -p "$HOME"; bash "$0"' "$d/driver.sh" 2>&1)"
+  [[ $out == *"AAC=org.gnome.Rhythmbox3.desktop XCF=gimp.desktop TXT=org.gnome.TextEditor.desktop"* ]] \
+    || { echo "only the taken-over type may be set back (new type and unchanged type left alone): $out"; bad=1; }
+  [[ $out == *"audio/aac: org.gnome.Rhythmbox3 (not vlc)"* ]] || { echo "the run must say which default it kept: $out"; bad=1; }
+  [[ $out == *"UNDO_LINES=1"* && $out == *"AFTER_UNDO_AAC=vlc.desktop FILE=gone"* ]] \
+    || { echo "undo must remove exactly the entry it set, and the file it created: $out"; bad=1; }
+  out="$(HOME="$d/h2" T_USERFILE=1 bash -c 'mkdir -p "$HOME"; bash "$0"' "$d/driver.sh" 2>&1)"
+  [[ $out == *"FILE=exists"* && $out == *"text/html=firefox_firefox.desktop;"* && $out != *"audio/aac="* ]] \
+    || { echo "undo must keep the user's own entries and remove only its own: $out"; bad=1; }
+  out="$(HOME="$d/h3" bash -c 'mkdir -p "$HOME"; source <(head -n -1 ./setup.sh); log() { :; }; ok() { echo "OK: $*"; }; KEEP_DEFAULT_APPS=1; STATE_DIR=$HOME/s; MIMEINFO_CACHE=$HOME/none defaults_snapshot; defaults_keep' 2>&1)"
+  [[ $out == *"No file-type defaults to compare"* ]] || { echo "without a desktop nothing may happen: $out"; bad=1; }
+  # the GNOME settings undo goes to Ubuntu's own default (the user's decision), not back to the old value
+  # shellcheck disable=SC2016  # the literal text in setup.sh, not an expansion
+  grep -q 'record_undo "gsettings reset $schema $key"' setup.sh || { echo "gset must record 'gsettings reset' for --undo"; bad=1; }
+  return $bad
+}
+check "default apps: a file type a new package took over is set back, --undo removes exactly that; gsettings undo = reset" t_default_apps
 # Earlier versions left the undo scripts, manifests, logs and the cheat sheet loose in ~: the records folder
 # (OUT_DIR, ~/workstation-setup) now holds them, and migrate_records moves the old ones (never overwriting).
 t_records_folder() {

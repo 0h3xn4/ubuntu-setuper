@@ -431,7 +431,8 @@ gset() {
   old="$(gsettings get "$schema" "$key" 2>/dev/null)" || { warn "Unknown setting: $schema $key"; return 0; }
   if [[ "$old" == "$value" || "$old" == "'$value'" ]]; then ok "Unchanged: $schema $key"; return 0; fi
   gsettings set "$schema" "$key" "$value"
-  record_undo "gsettings set $schema $key $(printf %q "$old")"
+  # --undo returns to UBUNTU'S OWN DEFAULT (gsettings reset), not to the value found before (DECIDED by the user)
+  record_undo "gsettings reset $schema $key"
   ok "Set $schema $key = $value"
 }
 
@@ -2849,6 +2850,8 @@ STEP_WHY["Bash language server"]="Editor support for shell scripts. It needs Nod
 STEP_TOUCHES["Bash language server"]="~/.local/opt/node-<version> and links in ~/.local/bin (node, npm, npx, corepack); ~/.local (npm global prefix); npm settings in ~/.npmrc; network: nodejs.org, npm registry. With NODE_FROM_ARCHIVE=1: apt packages nodejs, npm."
 
 STEP_WHY["Helix editor"]="The Helix terminal editor: the newest stable release from the project's tarball (the newest upstream release wins over Ubuntu's older package, which is only the fallback; HELIX_FROM_ARCHIVE=1 prefers it; never a snap), with a configuration that disables the JSON/YAML language servers because they download schemas."
+STEP_WHY["Keep default apps"]="Installing an app can make it the one that opens a file type Ubuntu's own list does not decide (VLC for some audio formats, Inkscape for Visio files, a KDE helper for ssh:// links). Before the first install the setup recorded which app opened each file type; here it sets back every type whose app changed, so Ubuntu's defaults stay as they were. Nothing happens without a desktop."
+STEP_TOUCHES["Keep default apps"]="~/.config/mimeapps.list (only entries for types whose app changed; --undo removes exactly those). KEEP_DEFAULT_APPS=0 switches this off."
 STEP_WHY["Neovim editor"]="Neovim as a second terminal editor (Helix stays your default): the newest stable release from the project's tarball (the newest upstream release wins over Ubuntu's older package, which is only the fallback; NVIM_FROM_ARCHIVE=1 prefers it; never a snap), with a small plugin-free init.lua that uses the same local language servers as Helix and Kate. No plugin manager is installed, so Neovim never downloads anything by itself; JSON/YAML get no language server because those download schemas."
 STEP_TOUCHES["Neovim editor"]="apt package, or ~/.local/opt/nvim-<version> and ~/.local/bin/nvim; ~/.config/nvim/init.lua (new file only: an init.lua of yours is never overwritten, and with an init.vim of yours it is not added at all); network: the GitHub release (trust on first use, then pinned by the lock); the archive's package only as a fallback. \$EDITOR stays Helix."
 STEP_TOUCHES["Helix editor"]="apt package, or ~/.local/opt and ~/.local/bin/hx; ~/.config/helix/* (if you already have a languages.toml, only the basedpyright level is appended, and only if you set none; backup in ~/.local/share/workstation/settings-backups); network: the GitHub release (Helix publishes no checksum: trust on first use, then pinned by the lock); the archive's package only as a fallback."
@@ -2878,7 +2881,77 @@ STEP_WHY["Offline cache: container images"]="Pulls the container images now and 
 STEP_TOUCHES["Offline cache: container images"]="podman image storage in your home directory; ~/.config/containers/containers.conf; network: image registry, now."
 
 # The ordered list of install steps. Used by the real run and by --explain.
+# Default apps (KEEP_DEFAULT_APPS, on by default). An apt install can make a new app the one that opens a file type that Ubuntu's
+# own list (/usr/share/applications/gnome-mimeapps.list) does not decide: audited for the full install on 24.04, 95 such types,
+# e.g. VLC for some audio formats, Inkscape for Visio files, a KDE helper (pulled in by Kate) for ssh:// and telnet:// links. The
+# user decided that the setup must not change a default behind their back. Before the first install the setup records, with GNOME's
+# own `gio mime` (the lookup the desktop itself uses), which app opens every file type that already has one; after the installs it
+# sets back each type whose app changed (a user-level default in ~/.config/mimeapps.list). --undo removes exactly those entries
+# again. Without a desktop (no gio or no mimeinfo.cache, e.g. a container) there is nothing to compare and nothing is done.
+DEFAULTS_BEFORE=""
+mime_types_known() {
+  awk -F= '/^\[MIME Cache\]/ { s = 1; next } /^\[/ { s = 0 } s && NF >= 2 { print $1 }' \
+    "${MIMEINFO_CACHE:-/usr/share/applications/mimeinfo.cache}" 2>/dev/null | sort -u
+}
+gio_default() { LC_ALL=C gio mime "$1" 2>/dev/null | sed -n 's/^Default application for .*: \(.*\.desktop\)$/\1/p' | head -n1 || true; }
+defaults_snapshot() {
+  on "$KEEP_DEFAULT_APPS" || return 0
+  if ! have gio || [[ ! -r ${MIMEINFO_CACHE:-/usr/share/applications/mimeinfo.cache} ]]; then return 0; fi
+  local t d
+  DEFAULTS_BEFORE="$STATE_DIR/default-apps.before"
+  mkdir -p "$STATE_DIR"; : > "$DEFAULTS_BEFORE"
+  while read -r t; do
+    d="$(gio_default "$t")"
+    if [[ -n $d ]]; then printf '%s %s\n' "$t" "$d" >> "$DEFAULTS_BEFORE"; fi
+  done < <(mime_types_known)
+  log "Recorded which app opens $(wc -l < "$DEFAULTS_BEFORE") file types; checked again after the installs (KEEP_DEFAULT_APPS)."
+}
+# The undo of defaults_keep, as one python program: remove exactly the entries set here (Default Applications, and the same app at
+# the front of Added Associations), keep everything else in the file; delete the file only if this run created it and it is empty.
+UNPIN_PY='import os, sys
+p, existed = sys.argv[1], sys.argv[2] == "1"
+pins = dict(a.split("=", 1) for a in sys.argv[3:])
+if not os.path.exists(p): sys.exit(0)
+out, sec = [], None
+for line in open(p, encoding="utf-8"):
+    s = line.strip()
+    if s.startswith("["):
+        sec = s
+    elif "=" in s and sec in ("[Default Applications]", "[Added Associations]"):
+        k, v = s.split("=", 1)
+        if k in pins:
+            apps = [a for a in v.split(";") if a]
+            if sec == "[Default Applications]" and apps[:1] == [pins[k]]: continue
+            if sec == "[Added Associations]" and apps[:1] == [pins[k]]:
+                apps = apps[1:]
+                if not apps: continue
+                line = k + "=" + ";".join(apps) + ";\n"
+    out.append(line)
+if not existed and all(not l.strip() or l.strip().startswith("[") for l in out): os.remove(p)
+else: open(p, "w", encoding="utf-8").write("".join(out))'
+defaults_keep() {
+  if [[ -z $DEFAULTS_BEFORE || ! -s $DEFAULTS_BEFORE ]]; then
+    ok "No file-type defaults to compare (no desktop here, or KEEP_DEFAULT_APPS=0)"; return 0
+  fi
+  local t before now list="$HOME/.config/mimeapps.list" existed=0 shown=()
+  local -a pins=()
+  while read -r t before; do
+    now="$(gio_default "$t")"
+    if [[ -n $now && $now != "$before" ]]; then pins+=("$t=$before"); shown+=("$t: ${before%.desktop} (not ${now%.desktop})"); fi
+  done < "$DEFAULTS_BEFORE"
+  if (( ! ${#pins[@]} )); then ok "No default app changed"; return 0; fi
+  if [[ -e $list ]]; then existed=1; fi
+  # recorded BEFORE the change, as one command with everything it needs
+  record_undo "python3 -I -c $(printf %q "$UNPIN_PY") $(printf %q "$list") $existed $(printf '%q ' "${pins[@]}")"
+  local pin
+  for pin in "${pins[@]}"; do LC_ALL=C gio mime "${pin%%=*}" "${pin#*=}" >/dev/null 2>&1 || warn "Could not set back the default for ${pin%%=*}"; done
+  ok "Kept your default app for ${#pins[@]} file type(s) a new package would have taken over:"
+  printf '     %s\n' "${shown[@]:0:12}"
+  if (( ${#shown[@]} > 12 )); then echo "     ... and $(( ${#shown[@]} - 12 )) more"; fi
+}
+
 run_steps() {
+  defaults_snapshot
   if on "$TUNE_INOTIFY"; then step "System tuning"   system_tuning; fi
   step "Base CLI tools"                base_cli
   if on "$INSTALL_NERD_FONT";    then step "JetBrains Mono Nerd Font"  nerd_font; fi
@@ -2905,6 +2978,7 @@ run_steps() {
             "$DISABLE_APT_NEWS" "$DISABLE_NM_CONNECTIVITY_CHECK"; then
     step "Privacy hardening"           privacy_hardening
   fi
+  if on "$KEEP_DEFAULT_APPS";      then step "Keep default apps"                defaults_keep; fi
   if on "$CACHE_PYTHON";           then step "Offline cache: Python wheels"     cache_python; fi
   if on "$CACHE_RUST";             then step "Offline cache: Rust crates"       cache_rust; fi
   if on "$CACHE_CONTAINER_IMAGES"; then step "Offline cache: container images" cache_images; fi

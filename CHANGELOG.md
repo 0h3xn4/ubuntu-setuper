@@ -8,6 +8,22 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Changed (defaults: an install keeps Ubuntu's defaults, and `--undo` returns to Ubuntu's own default; the user's decisions)
+- **Audit** (real 24.04 archive data, full install of both profiles: 98 chosen packages, about 850 with dependencies): no package registers the terminal,
+  editor, graphical browser or window manager (only `lynx` as the text-mode `www-browser`, which Ubuntu does not set). So the report "Konsole replaced
+  Terminator" was not the setup (the setup installs only `konsole-kpart`). Of the file types the new apps claim, 178 are decided by Ubuntu's own list
+  (`gnome-mimeapps.list`: Kate does NOT take over text or code files), 95 are not (VLC for some audio/video formats, Inkscape for Visio/Corel, a KDE helper
+  from `kio` for `ssh://`/`telnet://` links). Whether one actually wins depends on GNOME's fallback order, which needs a desktop session to see.
+- **Guard (`KEEP_DEFAULT_APPS`, on by default):** before the first install the setup records `gio mime` (GNOME's own lookup) for every file type that has an
+  app; after the installs it sets back each type whose app changed, as a user default in `~/.config/mimeapps.list`, and says which. `--undo` removes exactly
+  those entries (and the file, if the setup created it). Nothing happens without a desktop. README B18 is the manual version (a note in A3 before installing).
+- **`--undo` returns GNOME settings to Ubuntu's own default** (`gsettings reset`), no longer to the value found before (decided by the user: "ubuntus own default").
+  Your own files that the setup only added to (Kate, Helix, app settings) still come back from their backups: "default" there would mean deleting your settings.
+- Test: `t_default_apps` (fake `gio` and `mimeinfo.cache`: only the taken-over type is set back, a new type and an unchanged one are left alone, the undo keeps
+  the user's own entries and removes the file it created, nothing happens without a desktop, `gset` records `gsettings reset`).
+- **Not verified:** a real desktop session (the guard ran only against a fake `gio`); 26.04's packages were not audited for file types (only the terminal
+  question, via the archive index).
+
 ### Fixed (`--undo` no longer leaves an unreadable terminal halfway; report: a screenshot of a terminal full of empty boxes after running the undo)
 - The undo removed the JetBrains Mono Nerd Font in the **middle** of its run. A terminal that uses that font draws every character as an empty box the
   moment the files are gone (also the text already on screen), so the rest of the undo, and its summary, could not be read. Now the font removal runs
