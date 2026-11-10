@@ -197,6 +197,74 @@ t_reset_shell() {
   [[ -e $h/.zshrc && -e $h/.oh-my-zsh/x && ! -e $h/.bashrc && -e $h/.bash_aliases ]] || return 1
   grep -q 'usermod -s /usr/bin/zsh tester' "$d/sudo.log"
 }
+# --reset-defaults: system settings back to Ubuntu's own default, installing nothing, then --undo puts them back.
+# Fakes stand in for systemctl, pro, debconf, gsettings, the groups and /etc (RESET_ETC_DIR); git is real (scratch HOME).
+t_reset_defaults() {
+  local d="$TMP/rd" h out bad=0; rm -rf "$d"; h="$d/home"
+  mkdir -p "$h" "$d/bin" "$d/units" "$d/gs" "$d/etc/NetworkManager/conf.d" "$d/etc/sysctl.d" "$d/etc/firefox/policies"
+  echo disabled > "$d/units/motd-news.timer"; echo masked > "$d/units/fwupd-refresh.timer"; echo enabled > "$d/units/kerneloops.service"
+  echo False > "$d/aptnews"; echo true > "$d/ws"; echo "tester adm sudo plugdev dialout wireshark" > "$d/groups"
+  echo "'JetBrainsMono Nerd Font Mono 11'" > "$d/gs/org.gnome.desktop.interface.monospace-font-name"
+  printf '[connectivity]\nenabled=false\n' > "$d/etc/NetworkManager/conf.d/99-no-connectivity-check.conf"
+  printf 'fs.inotify.max_user_watches = 1\n' > "$d/etc/sysctl.d/60-dev-inotify.conf"      # changed by the admin: not ours
+  cp modules/desktop/files/system/firefox-policies.json "$d/etc/firefox/policies/policies.json"
+  printf '# mine\n\n# >>> workstation-setup: load ~/.bashrc.d/*.sh >>>\nx\n# <<< workstation-setup <<<\n# also mine\n' > "$h/.bashrc"
+  HOME="$h" git config --global init.defaultBranch main; HOME="$h" git config --global fetch.prune true
+  HOME="$h" git config --global pull.rebase false                                        # the user's own value: stays
+  # shellcheck disable=SC2016  # the fake commands must keep their $1 / $* literally
+  {
+    printf '#!/bin/sh\n[ "$1" = -v ] && exit 0\necho "$*" >> %s/sudo.log\nexec "$@"\n' "$d" > "$d/bin/sudo"
+    printf '#!/bin/sh\nf=%s/units/$2\ncase "$1" in is-enabled) [ -f "$f" ] && cat "$f" || exit 1;; enable) echo enabled > "$f";; disable) echo disabled > "$f";; esac\nexit 0\n' "$d" > "$d/bin/systemctl"
+    printf '#!/bin/sh\ncase "$2" in show) echo "apt_news $(cat %s/aptnews)";; set) case "$3" in *=true) echo True;; *) echo False;; esac > %s/aptnews;; esac\n' "$d" "$d" > "$d/bin/pro"
+    printf '#!/bin/sh\nexit 0\n' > "$d/bin/dpkg"; printf '#!/bin/sh\nexit 0\n' > "$d/bin/dpkg-reconfigure"
+    printf '#!/bin/sh\necho "* wireshark-common/install-setuid: $(cat %s/ws)"\n' "$d" > "$d/bin/debconf-show"
+    printf '#!/bin/sh\nread -r l; echo "${l##* }" > %s/ws\n' "$d" > "$d/bin/debconf-set-selections"
+    printf '#!/bin/sh\ng=$(cat %s/groups); echo "$g" | tr " " "\\n" | grep -vx "$3" | tr "\\n" " " > %s/groups\n' "$d" "$d" > "$d/bin/gpasswd"
+    printf '#!/bin/sh\necho "$(cat %s/groups) ${2#-aG }" > %s/groups\n' "$d" "$d" > "$d/bin/usermod"
+    printf '#!/bin/sh\ncase "$1" in -u) echo 1000;; -un) echo tester;; -nG) cat %s/groups;; *) /usr/bin/id "$@";; esac\n' "$d" > "$d/bin/id"
+    cat > "$d/bin/gsettings" <<GS
+#!/bin/sh
+f="$d/gs/\$2.\$3"
+case "\$2 \$3" in "org.gnome.desktop.interface monospace-font-name") def="'Ubuntu Sans Mono 13'";; "org.gnome.system.location enabled") def=true;; *) def="";; esac
+case "\$1" in
+  list-keys) case "\$2" in org.gnome.desktop.interface) echo monospace-font-name;; org.gnome.system.location) echo enabled;; *) exit 1;; esac;;
+  get) if [ "\${GSETTINGS_BACKEND:-}" = memory ] || [ ! -f "\$f" ]; then echo "\$def"; else cat "\$f"; fi;;
+  set) echo "\$4" > "\$f";;
+  reset) rm -f "\$f";;
+esac
+GS
+  }
+  chmod +x "$d"/bin/*
+  local -a e=(HOME="$h" USER=tester PATH="$d/bin:$PATH" RESET_ETC_DIR="$d/etc" WS_OUT_DIR="$d/out" DBUS_SESSION_BUS_ADDRESS=fake)
+  out="$(env "${e[@]}" ./setup.sh --reset-defaults --dry-run 2>&1)" || { echo "dry run failed: $out"; return 1; }
+  for x in 'motd-news.timer on again' 'APT news on again' '99-no-connectivity-check.conf' 'firefox/policies/policies.json' \
+           'capture needs root' "leave group 'dialout'" "leave group 'wireshark'" 'monospace-font-name' 'init.defaultBranch' \
+           'fetch.prune' "setup's block from" 'fwupd-refresh.timer is MASKED' '60-dev-inotify.conf exists but is not' 'Dry run'; do
+    [[ $out == *"$x"* ]] || { echo "dry run misses: $x"; bad=1; }
+  done
+  for x in kerneloops "leave group 'plugdev'" pull.rebase 'location enabled'; do
+    [[ $out != *"$x"* ]] || { echo "dry run lists what is already Ubuntu's default (or the user's own): $x"; bad=1; }
+  done
+  [[ $(cat "$d/units/motd-news.timer") == disabled && -e $d/etc/firefox/policies/policies.json ]] || { echo "dry run changed something"; bad=1; }
+  env "${e[@]}" ./setup.sh --reset-defaults --yes >/dev/null 2>&1 || { echo "reset failed"; return 1; }
+  [[ $(cat "$d/units/motd-news.timer") == enabled && $(cat "$d/units/fwupd-refresh.timer") == masked ]] || { echo "units wrong"; bad=1; }
+  [[ $(cat "$d/aptnews") == True && $(cat "$d/ws") == false ]] || { echo "APT news / wireshark not reset"; bad=1; }
+  [[ ! -e $d/etc/NetworkManager/conf.d/99-no-connectivity-check.conf && -d $d/etc/NetworkManager/conf.d ]] || { echo "NM file not removed, or its package folder removed"; bad=1; }
+  [[ ! -e $d/etc/firefox/policies && -e $d/etc/sysctl.d/60-dev-inotify.conf ]] || { echo "/etc files wrong"; bad=1; }
+  [[ " $(cat "$d/groups") " != *" dialout "* && " $(cat "$d/groups") " == *" plugdev "* ]] || { echo "groups wrong: $(cat "$d/groups")"; bad=1; }
+  [[ ! -e $d/gs/org.gnome.desktop.interface.monospace-font-name ]] || { echo "GNOME font not reset"; bad=1; }
+  [[ -z $(HOME="$h" git config --global --get init.defaultBranch) && $(HOME="$h" git config --global --get pull.rebase) == false ]] || { echo "git wrong"; bad=1; }
+  [[ $(cat "$h/.bashrc") == $'# mine\n\n# also mine' ]] || { echo "bashrc wrong: $(cat "$h/.bashrc")"; bad=1; }
+  out="$(env "${e[@]}" ./setup.sh --reset-defaults --dry-run 2>&1)"
+  [[ $out == *'Nothing to do'* ]] || { echo "a second run still finds something: $out"; bad=1; }
+  env "${e[@]}" ./setup.sh --undo --yes >/dev/null 2>&1 || { echo "undo failed"; return 1; }
+  [[ $(cat "$d/units/motd-news.timer") == disabled && $(cat "$d/aptnews") == False && $(cat "$d/ws") == true ]] || { echo "undo: units/apt/ws not back"; bad=1; }
+  cmp -s "$d/etc/firefox/policies/policies.json" modules/desktop/files/system/firefox-policies.json || { echo "undo: firefox policy not back"; bad=1; }
+  [[ -f $d/etc/NetworkManager/conf.d/99-no-connectivity-check.conf ]] || { echo "undo: NM file not back"; bad=1; }
+  [[ " $(cat "$d/groups") " == *" dialout "* && $(cat "$d/gs/org.gnome.desktop.interface.monospace-font-name") == "'JetBrainsMono Nerd Font Mono 11'" ]] || { echo "undo: groups/GNOME not back"; bad=1; }
+  if [[ $(HOME="$h" git config --global --get init.defaultBranch) != main ]] || ! grep -q '# >>> workstation-setup' "$h/.bashrc"; then echo "undo: git/bashrc not back"; bad=1; fi
+  return $bad
+}
 # The release logic: which Ubuntu releases are supported (24.04 and 26.04 are; nobody has to upgrade), and which
 # packages exist only on newer ones. A fake os-release stands in for /etc/os-release.
 t_os_check() {
@@ -723,6 +791,7 @@ check "settings of an older install: missing defaults are added, yours stay, bac
 check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell
+check "--reset-defaults: system settings back to Ubuntu's default (only what differs), nothing installed, --undo restores" t_reset_defaults
 
 t_manifest_diff() {
   printf '## Key tools\ngcc 13\n## APT packages\ngit\t1\tamd64\n' > "$TMP/ma"

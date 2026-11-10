@@ -21,6 +21,9 @@
 #                      (files moved to a backup folder, login shell back to bash), then --undo (zsh again)
 #   12 starship        the real starship install from its release (--full turns Oh My Bash on, which owns
 #                      the prompt, so the main install never exercises it): scratch HOME, checks the undo line
+#   13 reset-defaults  the full install left Ubuntu's own services exactly as they were; then what an older
+#                      version left behind (a disabled motd-news.timer, the inotify file, a git default, the
+#                      ~/.bashrc block) is put back by ./setup.sh --reset-defaults, and --undo restores it
 #
 # DANGER: this installs software, changes services, groups, /etc and your shell
 # files, then undoes what it can. Run it only in a throw-away VM or container.
@@ -64,7 +67,8 @@ done
 if (( PLAN )); then
   echo "Plan for profile '$PROFILE' (nothing is run):"
   printf '  %2d. %s\n' 1 "explain+check" 2 "install (--full)" 3 "self-test" 4 "doctor (fresh interactive shell)" \
-    5 "shell checks" 6 "idempotent re-install" 7 "manifest" 8 "lock" 9 "undo (--undo --yes, all undo files)" 10 "leftovers" 11 "reset-shell (zsh user, then undo)" 12 "starship (real release, scratch HOME)"
+    5 "shell checks" 6 "idempotent re-install" 7 "manifest" 8 "lock" 9 "undo (--undo --yes, all undo files)" 10 "leftovers" 11 "reset-shell (zsh user, then undo)" 12 "starship (real release, scratch HOME)" \
+    13 "reset-defaults (Ubuntu's services untouched; reset, then undo)"
   exit 0
 fi
 
@@ -317,6 +321,10 @@ ph_leftovers() {
 }
 
 if [[ -e $HOME/.rustup || -e $HOME/.cargo/bin/rustup ]]; then E2E_PRE_RUSTUP=1; fi
+# The state of Ubuntu's own services before anything runs: the setup must never change it (decided by the user).
+UBUNTU_UNITS=(apport-autoreport.path apport-autoreport.timer whoopsie.path kerneloops.service motd-news.timer fwupd-refresh.timer)
+declare -A E2E_PRE_UNITS=()
+for u in "${UBUNTU_UNITS[@]}"; do E2E_PRE_UNITS[$u]="$(systemctl is-enabled "$u" 2>/dev/null || true)"; done
 
 # Last, so it cannot disturb the phases above: someone who comes from zsh. Installs zsh (an APT
 # package: it stays, like every package this test installs), pretends to have Oh My Zsh, makes zsh
@@ -372,7 +380,61 @@ ph_starship() {
   return $bad
 }
 
-echo; echo "Running 12 phases (this takes a while: it is a full install)"
+# Ubuntu's own services must be exactly as they were before the full install (the setup never touches them).
+# Then the state an OLDER version of the setup could leave behind is made by hand, and ./setup.sh --reset-defaults
+# must put it back to Ubuntu's default, against the real systemctl, sudo and git; --undo must restore it; finally
+# the machine is left as it was.
+ph_reset_defaults() {
+  local bad=0 u now f=/etc/sysctl.d/60-dev-inotify.conf sim_unit=0 out
+  for u in "${UBUNTU_UNITS[@]}"; do
+    now="$(systemctl is-enabled "$u" 2>/dev/null || true)"
+    if [[ $now != "${E2E_PRE_UNITS[$u]}" ]]; then echo "$u was '${E2E_PRE_UNITS[$u]}' before the install and is '$now' now: the setup must not touch Ubuntu's services"; bad=1
+    else echo "unchanged by the setup: $u (${now:-not installed})"; fi
+  done
+  u=motd-news.timer
+  if [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" == enabled ]]; then sudo systemctl disable "$u" >/dev/null 2>&1 && sim_unit=1
+  else echo "($u is not enabled here: the unit part is not exercised)"; fi
+  if git config --global --get init.defaultBranch >/dev/null; then echo "init.defaultBranch is set before the test (undo should have removed it)"; bad=1; fi
+  git config --global init.defaultBranch main
+  printf '\n# >>> workstation-setup: load ~/.bashrc.d/*.sh >>>\n# <<< workstation-setup <<<\n' >> "$HOME/.bashrc"
+  if [[ -e $f ]]; then echo "$f exists before the test (undo should have removed it)"; bad=1; fi
+  printf 'fs.inotify.max_user_watches = 524288\nfs.inotify.max_user_instances = 1024\n' | sudo tee "$f" >/dev/null
+
+  ./setup.sh --reset-defaults --dry-run </dev/null > "$LOG/reset-defaults-dry.log" 2>&1 || { echo "--reset-defaults --dry-run failed"; strip < "$LOG/reset-defaults-dry.log" | tail -n 15; bad=1; }
+  out="$(strip < "$LOG/reset-defaults-dry.log")"
+  for x in 60-dev-inotify.conf init.defaultBranch "setup's block from ~/.bashrc" 'Dry run'; do
+    [[ $out == *"$x"* ]] || { echo "the dry run does not list: $x"; bad=1; }
+  done
+  if (( sim_unit )) && [[ $out != *"$u on again"* ]]; then echo "the dry run does not list $u"; bad=1; fi
+  [[ -e $f ]] || { echo "the dry run removed $f"; bad=1; }
+  printf '%s\n' "$out" | sed -n '/These settings differ/,/^$/p' | head -n 20
+
+  ./setup.sh --reset-defaults --yes </dev/null > "$LOG/reset-defaults.log" 2>&1 || { echo "--reset-defaults failed"; strip < "$LOG/reset-defaults.log" | tail -n 15; bad=1; }
+  [[ ! -e $f ]] || { echo "$f is still there after the reset"; bad=1; }
+  [[ -z "$(git config --global --get init.defaultBranch || true)" ]] || { echo "init.defaultBranch is still set after the reset"; bad=1; }
+  if grep -q '# >>> workstation-setup' "$HOME/.bashrc"; then echo "the ~/.bashrc block is still there after the reset"; bad=1; fi
+  if (( sim_unit )) && [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" != enabled ]]; then echo "$u is not enabled after the reset"; bad=1; fi
+
+  ./setup.sh --undo --yes </dev/null > "$LOG/reset-defaults-undo.log" 2>&1 || { echo "--undo of the reset failed"; strip < "$LOG/reset-defaults-undo.log" | tail -n 15; bad=1; }
+  [[ -e $f ]] || { echo "undo did not bring $f back"; bad=1; }
+  [[ "$(git config --global --get init.defaultBranch || true)" == main ]] || { echo "undo did not bring init.defaultBranch back"; bad=1; }
+  grep -q '# >>> workstation-setup' "$HOME/.bashrc" || { echo "undo did not bring the ~/.bashrc block back"; bad=1; }
+  if (( sim_unit )) && [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" != disabled ]]; then echo "undo did not disable $u again"; bad=1; fi
+
+  # leave the machine as it was
+  if (( sim_unit )); then sudo systemctl enable "$u" >/dev/null 2>&1 || true; fi
+  git config --global --unset init.defaultBranch || true
+  sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' "$HOME/.bashrc"
+  sudo rm -f "$f"
+  for u in "${UBUNTU_UNITS[@]}"; do
+    now="$(systemctl is-enabled "$u" 2>/dev/null || true)"
+    if [[ $now != "${E2E_PRE_UNITS[$u]}" ]]; then echo "after the test $u is '$now', it was '${E2E_PRE_UNITS[$u]}'"; bad=1; fi
+  done
+  (( bad == 0 )) && echo "reset-defaults: Ubuntu's services untouched by the install; reset and undo worked against the real systemctl, sudo and git"
+  return $bad
+}
+
+echo; echo "Running 13 phases (this takes a while: it is a full install)"
 run_phase "explain+check" ph_explain_check
 run_phase install        ph_install
 run_phase self-test      ph_selftest
@@ -385,6 +447,7 @@ run_phase undo           ph_undo
 run_phase leftovers      ph_leftovers
 run_phase reset-shell    ph_reset_shell
 run_phase starship       ph_starship
+run_phase reset-defaults ph_reset_defaults
 
 # ------------------------------------------------------------------ summary
 {

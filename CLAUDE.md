@@ -36,12 +36,20 @@ conversation; this file carries that context over.
    beyond the optional policy files. Safe Browsing (polls Google) is switched off by the Firefox
    policy file from before this answer: it is a security trade-off, mention it and ask before
    changing it either way.
+   DECIDED by the user later: "the script should not stop any ubuntu default telemetry", scope (asked) "All of Ubuntu's
+   own services": the setup NEVER switches off Ubuntu's own services or GNOME's privacy settings. Removed: the switches
+   DISABLE_REPORTING_SERVICES, DISABLE_MOTD_NEWS, DISABLE_FWUPD_REFRESH, DISABLE_APT_NEWS, DISABLE_NM_CONNECTIVITY_CHECK,
+   SET_GNOME_PRIVACY, the step "Privacy hardening" (privacy_hardening, disable_units, enabled_privacy_units). The no-cloud
+   requirement is about the tools the SETUP installs. removed_switches_note warns if one of the old switches is still set.
+   NOT changed (ask before touching): the desktop module's DESKTOP_BROWSER_POLICIES (opt-in; switches off Firefox/
+   Thunderbird telemetry; the user chose it as opt-in earlier) and its Déjà Dup backend gset (DESKTOP_DEJADUP default on;
+   a GNOME setting of an app Ubuntu preinstalls): both were flagged to the user as possibly falling under the rule.
 2. **Don't break Ubuntu.** apt install always with --no-remove --no-upgrade;
    NEVER run `apt upgrade`/`full-upgrade` (the user rejected a system upgrade
    step: updating the system is Ubuntu's business, not this setup's); never edit
    package-owned config files (conffile prompts block unattended security
    updates); only NEW drop-in files in /etc (never overwrite an existing
-   one: install_system_file); disable (never mask) services; no changes to
+   one: install_system_file); never disable or mask a service (Ubuntu's own stay as shipped); no changes to
    kernel, boot, coreutils, architecture variants, APT sources.
    SYSTEM CHANGES ARE OPT-IN (the user decided): by default the setup only
    runs apt installs and writes NEW files under the home directory. Every
@@ -178,6 +186,27 @@ belong only inside the embedded module.
   Google); say so when asked.
 - GNOME Online Accounts: leave unconfigured; the self-test WARNS (status 78,
   not a failure) if an account exists.
+
+### Reset to Ubuntu's defaults (`--reset-defaults`)
+DECIDED by the user: "a complete reset to ubuntu default only, meaning not setting up but rather just resetting"; scope (asked)
+"System settings" (NOT tools, fonts, editors, home files). reset_defaults_mode (setup.sh) installs nothing, lists ONLY what differs
+from Ubuntu's default, asks (--dry-run, --yes), records undo lines (so `--undo` takes the reset back), keeps removed files and
+~/.bashrc in ~/workstation-setup/reset-backup-<ts>/. Covers what ANY version could change: UNITS_UBUNTU (the units Ubuntu's packages
+enable, read from the postinst 'deb-systemd-helper enable' lines of apport, whoopsie, kerneloops (24.04 only, gone in 26.04),
+base-files, fwupd in BOTH archives: apport-autoreport.path/.timer, whoopsie.path, kerneloops.service, motd-news.timer,
+fwupd-refresh.timer; NOT whoopsie.service (no [Install]) and NOT apport.service (not shipped)) enabled again when 'disabled' (a 'masked'
+one is only reported); APT news (`pro config show apt_news` prints "apt_news False", no root needed; read in ubuntu-pro-client's
+source); /etc files removed ONLY when they hold exactly the setup's content (etc_is_ours: NM connectivity, 60-dev-inotify, the Firefox/
+Thunderbird policies; rmdir only the policies folders, conf.d/sysctl.d belong to packages); wireshark-common install-setuid back to false;
+groups dialout/wireshark/docker left (plugdev stays: Ubuntu's default for the first user; GROUPS_FILE is a temp file, so the setup does
+not know which groups it added); RESET_GSETTINGS reset when `gsettings get` differs from `GSETTINGS_BACKEND=memory gsettings get` (the
+schema default incl. Ubuntu's overrides; reading needs no session, writing does); GIT_DEFAULTS/GIT_DEFAULTS_DELTA (shared with
+git_defaults) unset only where the value is still the setup's, Git LFS filter; the ~/.bashrc loader block. Not touched: login shell
+(--reset-shell), mimeapps.list pins, ws-devname udev rules. An explicit one-off mode like --undo/--reset-shell (documented exception to
+"every system change has an opt-in switch"); --full never runs it. Tests: check-all t_reset_defaults (fakes for systemctl, pro, debconf,
+gsettings, groups; RESET_ETC_DIR for /etc; real git; mutation-checked 4 ways) and e2e.sh phase 13 (real systemctl/sudo/git; also asserts
+the full install left UNITS_UBUNTU exactly as before it). The user's machine: their earlier --full run disabled these services; its undo
+file predates "gsettings reset", so --reset-defaults is the right tool there.
 
 ### zsh / Oh My Zsh users (`--reset-shell`)
 The setup is BASH-ONLY (decided by the user: "the user would rather want to get rid of zsh ... some kind of factory
@@ -319,7 +348,7 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
 - apt_install skips missing packages and records them (never fatal).
 - write_config / install_file (core or module home files) /
   install_system_file / install_templates / record_undo / fetch_verified
-  (SHA-256 TOFU, then pinned via lock) / add_to_groups / disable_units / gset.
+  (SHA-256 TOFU, then pinned via lock) / add_to_groups / gset.
 - Use `if ...; then ...; fi`, not `cmd && cmd`, in functions run under set -e.
 - Never pipe into `grep -q` under pipefail (SIGPIPE makes the pipeline fail): capture into a variable
   first. This bit three times (ws-init test, check-all, the E2E lock phase).
@@ -328,7 +357,7 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
   (lib/directories.sh, lib/grep.sh, ls init function) while loading and silently replaces earlier ones (found on the
   user's real machine; the E2E now asserts the aliases, ws-doctor checks them). install_file never overwrites an
   existing file, so an old 10-workstation.sh keeps its aliases and the new 16 file adds the right ones.
-- Order matters for services: anything that disables a unit (privacy_hardening) runs AFTER all package
+- Order matters for services: should anything ever switch a unit (none does now), it must run AFTER all package
   installs, because a dependency can switch its timer back on. Every `record_undo` must be recorded
   BEFORE the thing that can fail, and only for what THIS run created (check "did it exist?" first).
 - Containers: no running systemd (`systemctl disable`, never `--now`), no podman (`podman info` fails
