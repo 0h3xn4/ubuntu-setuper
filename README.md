@@ -28,7 +28,7 @@ lists them all.
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
 - [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*, A7 coming from zsh *(only if you use zsh)*
-- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate, B17 Neovim
+- [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate, B17 Neovim, B18 default apps
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
 - [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
 - [Part E. Verify](#part-e-verify)
@@ -167,6 +167,17 @@ run `./setup.sh --check` first.
   off by default.) Parts of Ubuntu itself (apt, snapd, time sync) are outside
   this guide; see [Still network-connected](#still-network-connected-os-level).
 
+### While it runs: priority, memory and what a re-run costs
+
+A full run compiles Rust tools (every core, about 1 GB of RAM per compile job), downloads wheels and crates, pulls a container
+image and finishes with a self-test that builds with sanitizers and runs QEMU. So that the computer stays usable, the script
+(`LOW_PRIORITY`, **on** by default) gives itself nice 10 and best-effort I/O class 7 (apt, cargo and cmake inherit both, also
+through `sudo`) and caps parallel builds at half your cores **and** at one job per 1.5 GB of free RAM (`CARGO_BUILD_JOBS`,
+`CMAKE_BUILD_PARALLEL_LEVEL`; values you set yourself win; `LOW_PRIORITY=0` switches it off). It changes nothing outside that one run.
+Desktop kernels also schedule each terminal as one group, which is why the RAM cap matters more than the priority.
+A **re-run is cheap**: tools you already have are left alone (cargo tools included), so nothing is recompiled just because a newer
+release exists; only `./setup.sh --upgrade` moves them forward.
+
 ### What it never does
 
 Remove a package. Upgrade the system or any package you already have. Edit a
@@ -208,7 +219,11 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   design). The newest full run (eight jobs on the final code, after the last merge) passed all
   12 phases everywhere. Earlier runs found real bugs: a transient GitHub download error exposed two
   (an optional `lazygit` download aborting its step, and a silent fallback to unverified downloads),
-  both fixed. The install step takes 10 to 19 minutes (once 51 on a slow runner).
+  both fixed. The install step takes 10 to 19 minutes (once 51 on a slow runner). Since the setup builds with at most
+  two parallel jobs by default (to keep your computer usable), the newest run's container installs took 13 to 15 minutes
+  instead of 9 to 12; one VM install took 71 minutes because the runner's Ubuntu mirror delivered at 33 to 750 kB/s. In that
+  run the second install compiled nothing again, the undo removed the Nerd Font last, and the new "Keep default apps" step
+  had nothing to set back on a fresh runner (its real effect needs a desktop session, which CI does not have).
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
   (the 24.04 archive has Node 18, which is end of life). **uv, Helix, lazygit and rustup come from their
   projects' releases too** (checked in every job: uv 0.13.7, Helix 25.07.1 and lazygit 0.66.2 landed in `~/.local`, rustup
@@ -297,7 +312,7 @@ machine ends up in the same state.
      business (Software Updater, unattended-upgrades), not part of this setup.
    - Downloads are made resilient with command-line options only (`APT_NET`, `CURL_DL` in A2): apt retries a failed
      fetch 3 times and drops a connection that is silent for 60 s; curl retries transient errors and counts a transfer
-     below 4 KB/s for 60 s as stalled. No APT source and no package configuration is touched for this.
+     below 4 KB/s for 60 s as stalled. A busy apt lock (Ubuntu's own updater) is waited for, for up to 5 minutes (`apt_wait` in A2). No APT source and no package configuration is touched for this.
    - Never edit a file that belongs to a package (it would cause conffile
      prompts that block unattended security updates). Add *new* files
      (drop-ins) instead, and never overwrite an existing one.
@@ -334,6 +349,9 @@ machine ends up in the same state.
 - **Sections marked [opt-in]** change the system or your login files. Skip
   them unless you want that change; the heading names the switch the script
   uses for the same thing (all are listed in [the big picture](#the-big-picture)).
+- **Keep the computer usable.** The long steps (the cargo tools in B5, the self-test builds) use every core and a lot of RAM.
+  The script lowers its own priority and limits parallel builds for you; by hand, start the shell you work in with
+  `nice -n 10 ionice -c2 -n7 bash` and run `export CARGO_BUILD_JOBS=2 CMAKE_BUILD_PARALLEL_LEVEL=2` first (use 1 on 8 GB of RAM or less).
 - Some tools may be absent from your Ubuntu release's archive. The
   `apt_install` helper in A2 skips and tells you about missing packages,
   like the script does.
@@ -393,6 +411,19 @@ record_undo() { printf '%s\n' "$*" >> "$UNDO"; }
 APT_NET=(-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60)
 CURL_DL=(--retry 6 --retry-max-time 180 --connect-timeout 20 --speed-limit 4096 --speed-time 60)
 
+# apt_wait CMD...  runs an apt command, and retries it for up to 5 minutes while Ubuntu's own updater (packagekitd, behind
+# Software Updater) holds the apt lock ("Could not get lock ... held by process N (packagekitd)"). Never touch the lock files.
+apt_wait() {
+  local i
+  for i in $(seq 1 60); do
+    if "$@" 2>/tmp/apt-wait.err; then cat /tmp/apt-wait.err >&2; return 0; fi
+    if grep -q 'Could not get lock\|Unable to acquire the dpkg frontend lock' /tmp/apt-wait.err; then
+      echo "the package system is busy (Ubuntu's updater?), waiting 5 s ($i of 60)"; sleep 5
+    else cat /tmp/apt-wait.err >&2; return 1; fi
+  done
+  cat /tmp/apt-wait.err >&2; return 1
+}
+
 # apt_install PKG...  installs what exists in the archive, skips the rest. Never removes packages.
 apt_install() {
   local ok=() p
@@ -401,7 +432,7 @@ apt_install() {
     else echo "not in archive, skipping: $p"; fi
   done
   if [ "${#ok[@]}" -gt 0 ]; then
-    sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "${ok[@]}"
+    apt_wait sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "${ok[@]}"
   fi
 }
 
@@ -481,8 +512,18 @@ Notes:
 *Mirrors `preflight` (the `apt-get update` and prerequisites part).*
 
 ```bash
-sudo apt-get "${APT_NET[@]}" update
+apt_wait sudo apt-get "${APT_NET[@]}" update
 apt_install curl ca-certificates gnupg distro-info
+```
+
+**Before you install anything else, note which app opens which file type** (on a desktop; see B18 for why). It changes nothing:
+
+```bash
+mkdir -p ~/workstation-setup
+awk -F= '/^\[MIME Cache\]/{s=1;next} /^\[/{s=0} s && NF>=2 {print $1}' /usr/share/applications/mimeinfo.cache | sort -u |
+  while read -r t; do d=$(LC_ALL=C gio mime "$t" 2>/dev/null | sed -n 's/^Default application for .*: \(.*\.desktop\)$/\1/p'); [ -n "$d" ] && echo "$t $d"; done \
+  > ~/workstation-setup/default-apps.before
+wc -l ~/workstation-setup/default-apps.before
 ```
 
 Undo: nothing (these are tiny and usually present already).
@@ -807,12 +848,17 @@ take several minutes. They need a few development libraries:
 
 ```bash
 apt_install libssl-dev pkg-config
+export CARGO_BUILD_JOBS=2          # compiles use every core and about 1 GB of RAM each: keep the laptop usable
 for c in taplo-cli cargo-nextest; do
-  cargo install --list | grep -q "^$c v" || record_undo "cargo uninstall $c"
+  if cargo install --list | grep -q "^$c v"; then echo "already installed, left alone: $c"; continue; fi
+  record_undo "cargo uninstall $c"
+  cargo install --locked "$c"
 done
-cargo install --locked taplo-cli cargo-nextest
 ```
 
+A tool you already have is **left alone**, like every other tool in this guide: a re-run does not spend ten minutes
+recompiling it just because a newer release came out meanwhile. To move one forward on purpose, run
+`cargo install --locked <tool>` yourself (the script does this for all of them with `--upgrade`).
 `--locked` makes cargo use the exact dependency versions the tool's authors
 tested. Pin a tool with `cargo install --locked taplo-cli@X.Y.Z`.
 
@@ -1357,6 +1403,29 @@ reports the one real mistake and none of the strict-mode noise.
 Undo: `rm -rf ~/.local/opt/nvim-VERSION ~/.local/bin/nvim ~/.config/nvim/init.lua` (the script records exactly this
 for what it created); the package via APT history.
 
+## B18. Keep default apps *(KEEP_DEFAULT_APPS, default on)*
+
+*Mirrors `step "Keep default apps"`, function `defaults_keep` (and `defaults_snapshot` before the first install).*
+
+Installing an app can make it the one that **opens a file type** that Ubuntu's own list (`/usr/share/applications/gnome-mimeapps.list`)
+does not decide. For the full install on Ubuntu 24.04 this was audited against the real archive: no package registers itself as the
+terminal, editor or browser, and 178 of the file types the new apps claim are already decided by Ubuntu's list (so Kate does **not**
+take over text and code files: GNOME Text Editor stays). For 95 types Ubuntu has no default, and there a new app can win: VLC for some
+audio and video formats, Inkscape for Visio and Corel files, a KDE helper (pulled in by Kate) for `ssh://` and `telnet://` links.
+You decided that the setup must not change a default behind your back, so after all installs every file type whose app changed
+is set back to the app from the note you took in A3 (as your own default, in `~/.config/mimeapps.list`):
+
+```bash
+while read -r t before; do
+  now=$(LC_ALL=C gio mime "$t" 2>/dev/null | sed -n 's/^Default application for .*: \(.*\.desktop\)$/\1/p')
+  if [ -n "$now" ] && [ "$now" != "$before" ]; then echo "set back: $t -> $before (not $now)"; gio mime "$t" "$before" >/dev/null; fi
+done < ~/workstation-setup/default-apps.before
+```
+
+Undo: remove the lines it added from the `[Default Applications]` section of `~/.config/mimeapps.list` (the script's `--undo` removes
+exactly those and nothing else; it deletes the file only if the setup created it). Without a desktop (no `gio`, no `mimeinfo.cache`)
+there is nothing to do.
+
 ---
 
 # Part C. Optional parts
@@ -1879,6 +1948,13 @@ Each section above ended with its undo. In general:
   asks before it runs anything: `./setup.sh --undo` (the newest file in that folder;
   or `./setup.sh --undo FILE`)
   (add `--dry-run` to only list).
+- **Desktop settings go back to Ubuntu's own default**, not to the value you had before (your decision): the undo runs
+  `gsettings reset` for every GNOME setting the setup changed. Your own files that the setup only added to (Kate, Helix,
+  app settings) are put back from their backups instead: "default" there would mean deleting your own settings.
+- **The Nerd Font** (B14) is removed **last**, and the list says so before anything runs: a terminal that is using it shows
+  **empty boxes instead of letters** the moment the font files are gone, even the text already on screen. Nothing is broken:
+  close that terminal window and open a new one; if the boxes remain, pick another font in the terminal's preferences
+  (Terminator: right-click > Preferences > Profiles > Font; GNOME Terminal: Preferences > your profile > Text).
 - **Packages from APT**: use APT's history on newer APT (`apt history-list`,
   then `sudo apt history-undo <ID>`); with older APT, read
   `/var/log/apt/history.log` for what was installed.
@@ -1904,13 +1980,16 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | New terminal has no aliases, no prompt, `cargo` is not found | The shell loader is not active (it is opt-in). Add `for f in "$HOME"/.bashrc.d/*.sh; do [ -r "$f" ] && . "$f"; done; unset f` to `~/.bashrc` ([B10](#b10-shell-bash)). |
 | `uv`, `pip` or `cargo` refuse to download ("network disabled") | You have the strict offline lock ([D4](#d4-the-strict-offline-lock-optional-enforce_offline_env-off-by-default)): an older install of this setup had it on by default. Remove it: `rm ~/.bashrc.d/20-offline.sh` and open a new terminal. Or override for one command: `UV_OFFLINE=0 uv add pkg` or `CARGO_NET_OFFLINE=false cargo update`. |
 | `ls`/`ll` show no icons at all, or `ll` is a plain `ls -lh` (and you use Oh My Bash) | Oh My Bash defines its own `ls`/`ll`/`la`/`grep` aliases while it loads. They must come *after* it: `~/.bashrc.d/16-aliases.sh` does that. If it is missing (an older install), copy it: `install -m 644 files/home/.bashrc.d/16-aliases.sh ~/.bashrc.d/`, then open a new terminal. Check with `type ls ll` (they should say `eza`). |
-| Terminal text looks **spaced out** (a gap after every letter), in Terminator or another terminal | The terminal's font is not a true monospace font for that program, or its profile uses a different font than your main terminal. In **Terminator**: right-click > *Preferences* > *Profiles* > *General* > untick *Use the system fixed width font* and pick *JetBrainsMono Nerd Font Mono* (the exact name; not the plain *Nerd Font*, not a *Propo* variant), size 11. Check what is configured with `grep -n font ~/.config/terminator/config`, and what the system calls "monospace" with `fc-match monospace`. If only one window is affected it is that window's profile; if all are, it is the profile you edited. Close the terminal and open a new one after changing it. |
+| Terminal text looks **spaced out** (a gap after every letter), in Terminator or another terminal | The terminal's font is not a true monospace font for that program, or its profile uses a different font than your main terminal. In **Terminator**: right-click > *Preferences* > *Profiles* > *General* > **tick** *Use the system fixed width font* (Ubuntu's default). The terminal then follows the one system setting, which `SET_GNOME_FONT` (part of `--full`) sets to *JetBrainsMono Nerd Font Mono 11* and `--undo` puts back. Do **not** pick the Nerd Font by name in the profile: the setup never edits terminal profiles, so after an undo (which removes the font) the profile keeps asking for a font that is gone, and the letters look spaced out or turn into boxes. Check what is configured with `grep -n font ~/.config/terminator/config`, and what the system calls "monospace" with `fc-match monospace`. If only one window is affected it is that window's profile; if all are, it is the profile you edited. Close the terminal and open a new one after changing it. |
 | Self-test: "No-cloud policy ... yaml-language-server is installed ... an npm global package" | An npm-installed `yaml-language-server` (this setup never installs it) is on the machine, and Kate would use it: it fetches YAML schemas from the internet by itself. Remove it with the command the message prints (`sudo npm uninstall -g yaml-language-server` for a package in `/usr/local`), then re-run `./setup.sh --self-test`. The check cannot be satisfied any other way: a server that fetches by itself is exactly what the no-cloud rule forbids. |
 | Kate, Helix or Neovim show a page of Python errors on working code ("Type of ... is unknown", "Type annotation is missing ...") | basedpyright's own default level, "recommended", is very strict. This setup sets "standard" in both editors, but an older install keeps its old settings files (the setup never overwrites yours). **Re-run `./setup.sh`** (quit Kate first): it adds what is missing to your existing Kate settings files and the basedpyright level to your Helix `languages.toml` (Neovim's `init.lua` is only ever created new, so it already has the level; if you wrote your own, add `settings = { basedpyright = { typeCheckingMode = "standard" } }` to your basedpyright server), leaves everything you set alone, makes a backup under `~/.local/share/workstation/settings-backups/` and records the undo. By hand: copy the files from the repository (`install -m 644 files/home/.config/kate/lspclient/settings.json ~/.config/kate/lspclient/` from inside the repository folder), and add the `[language-server.basedpyright.config.basedpyright]` block from `files/home/.config/helix/languages.toml` to `~/.config/helix/languages.toml`. For one project: put `{"typeCheckingMode": "standard"}` in its `pyrightconfig.json`. A library without type hints (pandas) also needs its stubs: `uv pip install pandas-stubs`. |
 | `ls`/`ll` or the prompt show boxes or question marks instead of icons | The terminal font is not the Nerd Font. Pick *JetBrainsMono Nerd Font Mono* in the terminal's profile ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)), or use `starship preset plain-text-symbols -o ~/.config/starship.toml` for the prompt and `export WS_ICONS=0` to switch the `ls`/`ll` icons off ([B14](#b14-jetbrains-mono-nerd-font-optional-install_nerd_font-default-on)). |
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | The install is very slow, or prints "Operation too slow" / apt "Retrying" | Your network or Ubuntu mirror is slow. The script retries on its own: apt tries each fetch 3 times and drops a connection that is silent for 60 s; downloads from GitHub and others are aborted and retried when they stay below 4 KB/s for 60 s (up to 180 s in total, then that step is reported as failed). A mirror that is slow but alive is still waited for: apt has no minimum speed. Simply run `./setup.sh` again, it is safe to repeat and continues where it stopped. To use a closer mirror, choose it yourself in *Software & Updates*; this setup never changes APT sources. |
+| After `./setup.sh --undo` the terminal shows only empty boxes, even the prompt, or the letters look spaced out | The undo removed the JetBrains Mono Nerd Font while this terminal was using it. Close the window and open a new terminal. If it still looks wrong, its profile names the removed font: go back to the system font (Terminator: right-click > Preferences > Profiles > General > tick *Use the system fixed width font*; GNOME Terminal: Preferences > your profile > Text > untick *Custom font*), and check that the system font is Ubuntu's default again: `gsettings reset org.gnome.desktop.interface monospace-font-name`. To get the font back, run `./setup.sh` again (it reinstalls only what is missing). The undo now removes the font last, warns before it starts, and names a terminal profile that uses the font by name. |
+| `E: Could not get lock /var/lib/apt/lists/lock. It is held by process N (packagekitd)` | Ubuntu's own updater (`packagekitd`, behind Software Updater and GNOME Software) is using apt for a moment, usually right after login or after package installs. It is not a fault and not caused by this setup. The script waits for it (up to `APT_LOCK_WAIT`, 300 s by default, and tells you who holds the lock) instead of failing. If you ran `apt` by hand: check `ps -o pid,etime,cmd -p N`, wait a minute and repeat. **Never delete the lock files.** Only if the same process is still there after ten minutes, stop it with `sudo systemctl stop packagekit` (it restarts when needed). |
+| The computer is slow or laggy while the script runs (or right after) | During a run the compiles are the cause: by default the script already runs at low priority and caps parallel builds by cores and free RAM (`LOW_PRIORITY=1`). If you still see swapping, lower it further: `CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./setup.sh`. If it is slow **after** the run, find what is busy: `ps -eo pid,ni,pcpu,pmem,etime,comm --sort=-pcpu | head -12`; typical culprits are the desktop's file indexer working through the new files in your home folder, or a language server scanning a very large folder. Send the output and the cause can be named. |
 | Neovim starts but there is no completion, hover or error list | Inside Neovim, `:checkhealth vim.lsp` shows which servers are attached to the file. The usual cause is a language server that is not on `PATH` (`ws-doctor` names the missing ones) or a `~/.config/nvim` of your own that replaced `init.lua`. Completion that pops up by itself needs Neovim 0.11 or newer (the upstream release has it; Ubuntu 24.04's 0.9.5 does not: use `Ctrl-x Ctrl-o`). |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |

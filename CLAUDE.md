@@ -218,7 +218,9 @@ Kate modes on a small untyped file and requires no errors/warnings; the control 
 upstream default changed). check-all t_lsp_default_level tests that client against a mock server (we never run downloaded binaries in the
 sandbox). The user's `uv python install` stays blocked (python-downloads = "never"): asked, answer "no, if not strictly need".
 Terminal: the user "occasionally" uses Terminator; a spaced-out-letters screenshot (apt output) came from a terminal whose font is not a true
-monospace; README troubleshooting has the Terminator steps (profile font = JetBrainsMono Nerd Font Mono). Not reproducible from here.
+monospace; README troubleshooting has the Terminator steps: TICK 'Use the system fixed width font' (the system font is what SET_GNOME_FONT sets and --undo restores). The earlier advice to name
+'JetBrainsMono Nerd Font Mono' in the profile was a TRAP: after --undo removed the font the user's Terminator showed spaced-out letters (the setup never edits terminal profiles, so
+the undo cannot put that back). --undo now names a Terminator/GNOME Terminal profile that uses the font by name, with the way back. Never advise naming a setup-installed font in an app's own settings.
 
 ### Older installs keep older settings files (found on the user's real machine: the quiet-basedpyright self-test FAILED)
 install_file never overwrites, so a NEW default in a shipped settings file never reaches an existing install. migrate_user_json (setup.sh) adds the MISSING keys
@@ -341,6 +343,25 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
   sources or package config. check-all `t_resilient_net` (fake curl/sudo + a lint over setup.sh) fails if a new download skips them. Small metadata calls that
   use `--max-time 30` (tag redirects, the GitHub API fallbacks) are exempt. apt has no minimum-speed setting: slow-but-alive mirrors are waited for, the E2E job
   `timeout-minutes: 150` is the backstop.
+- --undo order: the Nerd Font removal (`rm -rf .../fonts/JetBrainsMonoNerdFont && fc-cache -f`) runs LAST, with a warning in the plan: a terminal using that font turns into empty
+  boxes once the files are gone (found on the user's machine). Keep any future "remove something the running terminal/desktop uses" undo line at the end too. Test: t_undo_font.
+- Defaults (DECIDED by the user: "ubuntus own default", and "yes" to the audit): gset records `gsettings reset` (Ubuntu's default, NOT the old value). Backups of the
+  user's own files still restore (deleting user data is not a "default"). KEEP_DEFAULT_APPS=1: defaults_snapshot (gio mime for every type in mimeinfo.cache, before
+  the first install) + step "Keep default apps" (sets back types whose app changed, in ~/.config/mimeapps.list; undo = one python command removing exactly those).
+  Audit (24.04 archive, full install): no x-terminal-emulator/editor/x-www-browser registrations (lynx -> www-browser only); 178 claimed types decided by Ubuntu's
+  gnome-mimeapps.list, 95 not (VLC, Inkscape, ktelnetservice5, GIMP, Wireshark, ...). Test t_default_apps. Real desktop NOT verified; 26.04 file types not audited.
+- Default terminal: the setup installs only konsole-kpart (no program, no alternative; 24.04 AND 26.04 checked: konsole-kpart does not depend on konsole). The user reported
+  "Konsole replaced Terminator": not the setup's doing as far as the archive shows; the user's apt history decides (zgrep ' konsole:amd64' /var/log/apt/history.log*).
+  DECIDED by the user: if the setup ever changes a default (terminal, editor, file associations, ...), it must restore the real Ubuntu default on undo, "and this applies to
+  everything else in the setup script as well".
+- apt lock: never call `sudo apt-get install|update` directly in setup.sh; use `apt_run ARGS` (APT_NET options + waits for a busy lock, APT_LOCK_WAIT 300 s, 5 s steps, names the holder).
+  Reason: packagekitd (Ubuntu's updater) holds the lock after login/after installs and apt fails at once; `-o DPkg::Lock::Timeout` does NOT cover the lists lock of `apt-get update` (tested, apt 2.8.3).
+  Test t_apt_lock + a lint in t_resilient_net. Never delete lock files; the manual uses the `apt_wait` helper. Found on the user's machine (screenshot, packagekitd PID 2826, gone a minute later).
+- Machine load (the user's laptop got slow and laggy during a run): the install, `--upgrade` and `--self-test` call `be_gentle` (LOW_PRIORITY=1 default): renice 10 (never lowering a
+  chosen niceness; util-linux `renice -n` is ABSOLUTE), ionice best-effort 7, and CARGO_BUILD_JOBS / CMAKE_BUILD_PARALLEL_LEVEL = min(cores/2, free RAM / 1.5 GB, >= 1) unless the user set them.
+  Memory is the likelier cause than CPU (autogroup already isolates a terminal's CPU from the desktop). Do NOT write /proc/self/autogroup (it would leave the user's terminal niced) and do not
+  re-exec under setsid (loses the controlling tty: no Ctrl-C). Cargo tools already installed are left alone unless --upgrade or a differing lock pin (cargo_tools_install). Checks: t_gentle, t_cargo_tools.
+  Never measured on the user's laptop; ask for `ps -eo pid,ni,pcpu,pmem,etime,comm --sort=-pcpu | head -12` before claiming a cause.
 - Downloads outside APT: prefer `fetch_published URL DEST SUMS_URL [NAME]` (checks the
   checksum the PROJECT publishes; refuses a mismatch; if the checksum file cannot be fetched it RETRIES then
   REFUSES, never trust-on-first-use, unless the lock pins the SHA-256; records "<url> <sha> published"
@@ -361,10 +382,19 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-LATEST E2E (GitHub run #32, workflow_dispatch on the branch, head 59773ec = APT_NET/CURL_DL resilience change): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+LATEST E2E (GitHub run #36, workflow_dispatch on the branch, head 94d00bc = gentle + apt lock wait + undo font last + default-app guard): 8/8 GREEN, 12/12 phases in
+every job (checked in the downloaded artifacts); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings, only the usual skips. Every job: 'at most 2
+parallel build jobs', cargo tools compiled once and 'left alone' on the second run, 0 apt lock waits, 0 option errors, 'Removing the Nerd Font now' in the undo log.
+Keep default apps: 'No file-type defaults to compare' on every first install (a runner has no gio/mimeinfo.cache before the install), 'No default app changed' on the
+second run of the personal jobs: the step's real set-back path is covered ONLY by t_default_apps (fake gio), never in CI. Install times: containers 773-907 s (run #32:
+535-717 s; most likely the 2-job cap), VMs 696-1013 s, except vm 24.04 work 4252 s = ~58 min of apt downloads from azure.archive.ubuntu.com at 33-750 kB/s (slow but
+alive mirror, two apt retries; LOW_PRIORITY does not slow the network). container 24.04 personal attempt 1 failed in the WORKFLOW's prerequisite apt step (before setup.sh):
+security.ubuntu.com listed perl 5.38.2-3.2ubuntu0.7 but returned 404 for the files (index ahead of pool); rerun_failed_jobs passed. LESSON: a job that fails in seconds
+in a workflow step before 'Full lifecycle' is infrastructure, read the log, then rerun.
+PREVIOUS E2E (GitHub run #32, workflow_dispatch on the branch, head 59773ec = APT_NET/CURL_DL resilience change): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
 artifacts); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings, only the usual 2 skips; no option errors in any install log; install phases 9-12 min. NO retry
 or 'Operation too slow' line appeared in any log: the retry/speed-guard path is verified only with fakes (t_resilient_net), not under a real stalled mirror.
-PREVIOUS E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+EARLIER E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
 artifacts: 12 PASS, 0 FAIL per summary.md); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings; Neovim v0.12.6 from upstream in all 8, t_nvim
 PASSED on first contact (real nvim headless, real basedpyright at 'standard'). Not covered: interactive Neovim use. Neovim is trust-on-first-use (no checksum file
 confirmed: the sandbox proxy hides release pages). LESSON: one job (vm 24.04 work) stalled 78 min with no log (GitHub's get_job_logs of a running job is 404; the

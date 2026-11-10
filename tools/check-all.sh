@@ -145,6 +145,34 @@ t_undo() {
   [[ ! -e $h/s/a && ! -e $h/s/b ]] && compgen -G "$h/workstation-undo-1.sh.done-*" >/dev/null
 }
 check "--undo: dry run changes nothing, --yes replays and renames the file" t_undo
+# Found on the user's machine: --undo removed the Nerd Font in the MIDDLE of the run, and the terminal that used it drew every character
+# (even the text already on screen) as an empty box. Now the font removal runs LAST and a warning is shown before anything is changed.
+t_undo_font() {
+  local h="$TMP/h-undofont" bad=0 out; rm -rf "$h"; mkdir -p "$h/fonts/JetBrainsMonoNerdFont"; : > "$h/log"
+  # recorded oldest first (A, font, C); newest-first replay would be C, font, A
+  printf '#!/usr/bin/env bash\nset -x\necho A >> %s/log\nrm -rf %s/fonts/JetBrainsMonoNerdFont && echo FONT >> %s/log\necho C >> %s/log\n' "$h" "$h" "$h" "$h" > "$h/workstation-undo-1.sh"
+  out="$(HOME="$h" ./setup.sh --undo --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+  [[ $out == *"EMPTY BOXES"* ]] || { echo "no warning about the font before anything runs"; bad=1; }
+  [[ $out != *"Terminator profile names this font"* ]] || { echo "no Terminator config here, so no Terminator note"; bad=1; }
+  mkdir -p "$h/.config/terminator"; printf '[profiles]\n  [[default]]\n    font = JetBrainsMono Nerd Font Mono 11\n    use_system_font = False\n' > "$h/.config/terminator/config"
+  out="$(HOME="$h" ./setup.sh --undo --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+  [[ $out == *"Terminator profile names this font itself (font = JetBrainsMono Nerd Font Mono 11)"* && $out == *"Use the system fixed width font"* ]] \
+    || { echo "a Terminator profile that names the font must be pointed out, with the way back: $out"; bad=1; }
+  [[ $out == *" 3. rm -rf "*JetBrainsMonoNerdFont* ]] || { echo "the font removal must be listed LAST (3.): $out"; bad=1; }
+  [[ -d $h/fonts/JetBrainsMonoNerdFont && ! -s $h/log ]] || { echo "a dry run must change nothing"; bad=1; }
+  HOME="$h" ./setup.sh --undo --yes >/dev/null 2>&1 || { echo "the undo failed"; bad=1; }
+  [[ "$(tr '\n' ' ' < "$h/log")" == "C A FONT " ]] || { echo "run order must be C, A, FONT (font last), got: $(tr '\n' ' ' < "$h/log")"; bad=1; }
+  [[ ! -e $h/fonts/JetBrainsMonoNerdFont ]] || { echo "the font directory was not removed"; bad=1; }
+  # without a font line: no warning, plain newest-first order
+  rm -rf "$h"; mkdir -p "$h"; : > "$h/log"
+  printf '#!/usr/bin/env bash\necho A >> %s/log\necho B >> %s/log\n' "$h" "$h" > "$h/workstation-undo-1.sh"
+  out="$(HOME="$h" ./setup.sh --undo --dry-run 2>&1)"
+  [[ $out != *"EMPTY BOXES"* ]] || { echo "the font warning must only appear when a font is removed"; bad=1; }
+  HOME="$h" ./setup.sh --undo --yes >/dev/null 2>&1 || bad=1
+  [[ "$(tr '\n' ' ' < "$h/log")" == "B A " ]] || { echo "plain order must stay newest first: $(tr '\n' ' ' < "$h/log")"; bad=1; }
+  return $bad
+}
+check "--undo: the font removal runs last, with a warning first (a terminal using it shows empty boxes)" t_undo_font
 
 # --reset-shell, with a fake getent (login shell = zsh), a fake sudo (just logs), a fake id (not root)
 # and a fake /etc/skel: zsh files are moved (not deleted), bash files come back, and --undo restores all.
@@ -330,11 +358,186 @@ DRV
   # lint: no download or apt install may skip the shared options
   out="$(grep -n 'curl -fsSL' setup.sh | grep -v 'CURL_DL\|--max-time' || true)"
   [[ -z $out ]] || { echo "curl download without CURL_DL:"; echo "$out"; bad=1; }
-  out="$(grep -nE 'sudo .*apt-get .*(install|update)' setup.sh | grep -v 'APT_NET' || true)"
-  [[ -z $out ]] || { echo "apt-get without APT_NET:"; echo "$out"; bad=1; }
+  out="$(grep -nE 'sudo .*apt-get .*(install|update)' setup.sh || true)"
+  [[ -z $out ]] || { echo "direct sudo apt-get install/update (use apt_run: retries, timeouts, waits for a busy lock):"; echo "$out"; bad=1; }
+  out="$(grep -n 'apt-get ' setup.sh | grep -E 'sudo' | grep -v 'APT_NET' || true)"
+  [[ -z $out ]] || { echo "sudo apt-get without APT_NET:"; echo "$out"; bad=1; }
   return $bad
 }
 check "downloads: apt retries/timeouts and a curl minimum-speed guard everywhere (fake curl/sudo + lint)" t_resilient_net
+# A laptop became slow and laggy during a run: the script never lowered its own priority and cargo compiles on every core.
+# be_gentle lowers priority (really: renice on this process, inherited by children) and caps build jobs by cores AND free RAM.
+t_gentle() {
+  local d="$TMP/gentle" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+log() { :; }
+[[ -n ${FAKE_NPROC:-} ]] && nproc() { echo "$FAKE_NPROC"; }
+if [[ ${T_MODE:-} == jobs ]]; then gentle_jobs; exit 0; fi
+base="$(ps -o ni= -p $$ | tr -d ' ')"
+be_gentle
+echo "BASE=$base NI=$(ps -o ni= -p $$ | tr -d ' ') CHILD=$(bash -c 'ps -o ni= -p $$' | tr -d ' ') CARGO=${CARGO_BUILD_JOBS:-none} CMAKE=${CMAKE_BUILD_PARALLEL_LEVEL:-none}"
+DRV
+  run_() { env "$@" bash "$d/driver.sh" 2>&1 | tail -n1; }
+  out="$(run_ LOW_PRIORITY=1 FAKE_NPROC=4)"
+  [[ $out == *"NI=10 CHILD=10 CARGO="[0-9]*" CMAKE="[0-9]* ]] || { echo "low priority not applied or not inherited: $out"; bad=1; }
+  out="$(run_ LOW_PRIORITY=0)"
+  [[ $out =~ BASE=(-?[0-9]+)\ NI=(-?[0-9]+)\ .*CARGO=none\ CMAKE=none && ${BASH_REMATCH[1]} == "${BASH_REMATCH[2]}" ]] \
+    || { echo "LOW_PRIORITY=0 must change nothing: $out"; bad=1; }
+  out="$(run_ LOW_PRIORITY=1 CARGO_BUILD_JOBS=7 CMAKE_BUILD_PARALLEL_LEVEL=3)"
+  [[ $out == *"CARGO=7 CMAKE=3"* ]] || { echo "settings the user made must win: $out"; bad=1; }
+  out="$(nice -n 15 env LOW_PRIORITY=1 bash "$d/driver.sh" 2>&1 | tail -n1)"
+  [[ $out == *"NI=15 "* ]] || { echo "a lower priority the user chose must not be raised: $out"; bad=1; }
+  # jobs = min(half the cores, free RAM / 1.5 GB), at least 1
+  local mem jobs
+  for mem in "16:64000000:8" "16:4000000:2" "16:500000:1" "1:64000000:1" "3:64000000:2"; do
+    IFS=: read -r cpus kb want <<<"$mem"
+    printf 'MemTotal: 99999999 kB\nMemAvailable: %s kB\n' "$kb" > "$d/meminfo"
+    jobs="$(env T_MODE=jobs FAKE_NPROC="$cpus" MEMINFO="$d/meminfo" bash "$d/driver.sh" 2>&1 | tail -n1)"
+    [[ $jobs == "$want" ]] || { echo "gentle_jobs: $cpus cores, $kb kB free: expected $want, got '$jobs'"; bad=1; }
+  done
+  return $bad
+}
+check "low priority: renice inherited by children, build jobs capped by cores and free RAM, user settings win" t_gentle
+# cargo install runs only for what is missing (or a pin from the lock that differs); --upgrade moves everything.
+t_cargo_tools() {
+  local d="$TMP/cargotools" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+log() { :; }; ok() { :; }
+declare -A CARGO_PINS=()
+[[ -n ${PIN_TAPLO:-} ]] && CARGO_PINS[taplo-cli]="$PIN_TAPLO"
+cargo_tool_list() { printf '%s\n' taplo-cli cargo-nextest; }
+record_undo() { echo "undo: $*" >> "$OUTLOG"; }
+cargo() { if [[ $1 == install && ${2:-} == --list ]]; then printf '%b' "$FAKE_LIST"; else echo "cargo $*" >> "$OUTLOG"; fi; }
+: > "$OUTLOG"; UPGRADE="${T_UPGRADE:-0}"   # (sourcing setup.sh resets UPGRADE to 0)
+cargo_tools_install
+cat "$OUTLOG"
+DRV
+  local both='taplo-cli v0.9.3:\n    taplo\ncargo-nextest v0.9.100:\n    cargo-nextest\n'
+  run_() { env OUTLOG="$d/out.log" "$@" bash "$d/driver.sh" 2>&1; }
+  out="$(run_ FAKE_LIST="$both")"
+  [[ -z $out ]] || { echo "both installed: nothing may be compiled, got: $out"; bad=1; }
+  out="$(run_ FAKE_LIST='taplo-cli v0.9.3:\n    taplo\n')"
+  [[ $out == *"undo: cargo uninstall cargo-nextest"* && $out == *"cargo install --locked cargo-nextest" && $out != *"taplo-cli"* ]] \
+    || { echo "only the missing tool may be installed (with its undo): $out"; bad=1; }
+  out="$(run_ FAKE_LIST="$both" T_UPGRADE=1)"
+  [[ $out == *"cargo install --locked taplo-cli cargo-nextest"* ]] || { echo "--upgrade must reinstall both: $out"; bad=1; }
+  out="$(run_ FAKE_LIST="$both" PIN_TAPLO=0.9.0)"
+  [[ $out == *"cargo install --locked taplo-cli@0.9.0"* && $out != *"cargo-nextest"* ]] || { echo "a differing lock pin must be installed, nothing else: $out"; bad=1; }
+  out="$(run_ FAKE_LIST="$both" PIN_TAPLO=0.9.3)"
+  [[ -z $out ]] || { echo "a pin equal to the installed version must be left alone: $out"; bad=1; }
+  out="$(run_ FAKE_LIST='')"
+  [[ $out == *"cargo install --locked taplo-cli cargo-nextest"* && $(grep -c '^undo: ' <<<"$out") == 2 ]] || { echo "nothing installed: both, with 2 undo records: $out"; bad=1; }
+  return $bad
+}
+check "cargo tools: only missing ones are compiled (a re-run does not rebuild), --upgrade and lock pins still honoured" t_cargo_tools
+# Ubuntu's own updater (packagekitd) holds the apt lock after login; apt then fails at once and the script blamed the network.
+# apt_run waits for the lock (apt's own -o DPkg::Lock::Timeout does not cover the lists lock of 'apt-get update').
+t_apt_lock() {
+  local d="$TMP/aptlock" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+warn() { echo "WARN: $*" >> "$LOGF"; }
+sleep() { :; }
+CALLS=0
+sudo() {   # a fake 'sudo env DEBIAN_FRONTEND=... apt-get ...'
+  CALLS=$((CALLS + 1))
+  case $SCENARIO in
+    busy2) if (( CALLS <= 2 )); then
+             echo "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 2826 (packagekitd)" >&2
+             echo "E: Unable to lock directory /var/lib/apt/lists/" >&2; return 100; fi ;;
+    forever) echo "E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 2826 (packagekitd)" >&2; return 100 ;;
+    other) echo "E: Unable to locate package nosuchpkg" >&2; return 100 ;;
+  esac
+  return 0
+}
+APT_LOCK_WAIT="${T_WAIT:-20}"
+rc=0; apt_run update 2>"$ERRF" || rc=$?
+echo "RC=$rc CALLS=$CALLS"
+DRV
+  run_() { env LOGF="$d/log" ERRF="$d/err" "$@" bash "$d/driver.sh" 2>&1 | tail -n1; }
+  : > "$d/log"
+  out="$(run_ SCENARIO=busy2)"
+  [[ $out == "RC=0 CALLS=3" ]] || { echo "busy twice, then free: expected success on the 3rd try, got: $out"; bad=1; }
+  grep -q 'packagekitd (PID 2826)' "$d/log" || { echo "the wait must name the process that holds the lock"; bad=1; }
+  : > "$d/log"
+  out="$(run_ SCENARIO=forever T_WAIT=20)"
+  [[ $out == "RC=100 CALLS=5" ]] || { echo "busy forever, wait 20 s: expected 5 tries and failure, got: $out"; bad=1; }
+  grep -q 'Could not get lock' "$d/err" || { echo "after giving up, apt's own message must be shown"; bad=1; }
+  [[ $(grep -c '^WARN' "$d/log") == 1 ]] || { echo "the wait notice must be printed once, not every 5 s"; bad=1; }
+  : > "$d/log"
+  out="$(run_ SCENARIO=other)"
+  [[ $out == "RC=100 CALLS=1" ]] || { echo "a failure that is not a lock must not be retried: $out"; bad=1; }
+  grep -q 'Unable to locate package' "$d/err" || { echo "other errors must still be shown"; bad=1; }
+  [[ ! -s $d/log ]] || { echo "no waiting notice for a non-lock error"; bad=1; }
+  out="$(run_ SCENARIO=forever T_WAIT=0)"
+  [[ $out == "RC=100 CALLS=1" ]] || { echo "APT_LOCK_WAIT=0 must not wait: $out"; bad=1; }
+  return $bad
+}
+check "apt lock: a busy lock (Ubuntu's updater) is waited for and named, other errors fail at once" t_apt_lock
+# The user decided: an install must not change which app opens a file type, and --undo goes back to Ubuntu's own default.
+# A fake gio and a fake mimeinfo.cache: VLC takes over audio/aac from Rhythmbox, GIMP adds a new type (no default before),
+# text/plain keeps its app. Only audio/aac may be set back; the undo removes exactly that and keeps the user's own entry.
+t_default_apps() {
+  local d="$TMP/defapps" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+log() { :; }; ok() { echo "OK: $*"; }; warn() { echo "WARN: $*"; }
+STATE_DIR="$HOME/state"; UNDO_FILE="$HOME/undo.sh"; : > "$UNDO_FILE"; KEEP_DEFAULT_APPS=1
+export MIMEINFO_CACHE="$HOME/mimeinfo.cache"
+printf '[MIME Cache]\naudio/aac=org.gnome.Rhythmbox3.desktop;vlc.desktop;\ntext/plain=org.gnome.TextEditor.desktop;\nimage/x-xcf=gimp.desktop;\n' > "$MIMEINFO_CACHE"
+gio() {   # gio mime TYPE [APP]: the system answer comes from $PHASE, a user default from ~/.config/mimeapps.list
+  [[ $1 == mime ]] || return 1
+  local f="$HOME/.config/mimeapps.list" v
+  if [[ -n ${3:-} ]]; then
+    mkdir -p "$HOME/.config"
+    python3 -I - "$f" "$2" "$3" <<'PY'
+import os, sys
+p, t, a = sys.argv[1:]
+lines = open(p).read().splitlines() if os.path.exists(p) else []
+def put(sec, val):
+    global lines
+    if sec not in lines: lines += ["", sec] if lines else [sec]
+    i = lines.index(sec) + 1
+    lines.insert(i, t + "=" + val)
+put("[Default Applications]", a + ";"); put("[Added Associations]", a + ";")
+open(p, "w").write("\n".join(lines) + "\n")
+PY
+    return 0
+  fi
+  v="$(awk -F= -v t="$2" '/^\[Default Applications\]/{s=1;next} /^\[/{s=0} s && $1==t {sub(/;.*/,"",$2); print $2; exit}' "$f" 2>/dev/null)"
+  if [[ -z $v ]]; then v="$(awk -v t="$2" '$1==t {print $2}' "$HOME/$PHASE")"; fi
+  if [[ -n $v ]]; then echo "Default application for “$2”: $v"; fi
+}
+printf 'audio/aac org.gnome.Rhythmbox3.desktop\ntext/plain org.gnome.TextEditor.desktop\n' > "$HOME/before"
+printf 'audio/aac vlc.desktop\ntext/plain org.gnome.TextEditor.desktop\nimage/x-xcf gimp.desktop\n' > "$HOME/after"
+if [[ ${T_USERFILE:-} == 1 ]]; then mkdir -p "$HOME/.config"; printf '[Default Applications]\ntext/html=firefox_firefox.desktop;\n' > "$HOME/.config/mimeapps.list"; fi
+PHASE=before; defaults_snapshot
+PHASE=after;  defaults_keep
+echo "AAC=$(gio_default audio/aac) XCF=$(gio_default image/x-xcf) TXT=$(gio_default text/plain)"
+echo "UNDO_LINES=$(grep -c . "$UNDO_FILE")"
+bash -c "$(cat "$UNDO_FILE")"
+echo "AFTER_UNDO_AAC=$(gio_default audio/aac) FILE=$([[ -e $HOME/.config/mimeapps.list ]] && echo exists || echo gone)"
+if [[ -e $HOME/.config/mimeapps.list ]]; then echo "LEFT:"; cat "$HOME/.config/mimeapps.list"; fi
+DRV
+  out="$(HOME="$d/h1" bash -c 'mkdir -p "$HOME"; bash "$0"' "$d/driver.sh" 2>&1)"
+  [[ $out == *"AAC=org.gnome.Rhythmbox3.desktop XCF=gimp.desktop TXT=org.gnome.TextEditor.desktop"* ]] \
+    || { echo "only the taken-over type may be set back (new type and unchanged type left alone): $out"; bad=1; }
+  [[ $out == *"audio/aac: org.gnome.Rhythmbox3 (not vlc)"* ]] || { echo "the run must say which default it kept: $out"; bad=1; }
+  [[ $out == *"UNDO_LINES=1"* && $out == *"AFTER_UNDO_AAC=vlc.desktop FILE=gone"* ]] \
+    || { echo "undo must remove exactly the entry it set, and the file it created: $out"; bad=1; }
+  out="$(HOME="$d/h2" T_USERFILE=1 bash -c 'mkdir -p "$HOME"; bash "$0"' "$d/driver.sh" 2>&1)"
+  [[ $out == *"FILE=exists"* && $out == *"text/html=firefox_firefox.desktop;"* && $out != *"audio/aac="* ]] \
+    || { echo "undo must keep the user's own entries and remove only its own: $out"; bad=1; }
+  out="$(HOME="$d/h3" bash -c 'mkdir -p "$HOME"; source <(head -n -1 ./setup.sh); log() { :; }; ok() { echo "OK: $*"; }; KEEP_DEFAULT_APPS=1; STATE_DIR=$HOME/s; MIMEINFO_CACHE=$HOME/none defaults_snapshot; defaults_keep' 2>&1)"
+  [[ $out == *"No file-type defaults to compare"* ]] || { echo "without a desktop nothing may happen: $out"; bad=1; }
+  # the GNOME settings undo goes to Ubuntu's own default (the user's decision), not back to the old value
+  # shellcheck disable=SC2016  # the literal text in setup.sh, not an expansion
+  grep -q 'record_undo "gsettings reset $schema $key"' setup.sh || { echo "gset must record 'gsettings reset' for --undo"; bad=1; }
+  return $bad
+}
+check "default apps: a file type a new package took over is set back, --undo removes exactly that; gsettings undo = reset" t_default_apps
 # Earlier versions left the undo scripts, manifests, logs and the cheat sheet loose in ~: the records folder
 # (OUT_DIR, ~/workstation-setup) now holds them, and migrate_records moves the old ones (never overwriting).
 t_records_folder() {

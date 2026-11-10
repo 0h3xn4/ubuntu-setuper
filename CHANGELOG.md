@@ -8,6 +8,72 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Changed (defaults: an install keeps Ubuntu's defaults, and `--undo` returns to Ubuntu's own default; the user's decisions)
+- **Audit** (real 24.04 archive data, full install of both profiles: 98 chosen packages, about 850 with dependencies): no package registers the terminal,
+  editor, graphical browser or window manager (only `lynx` as the text-mode `www-browser`, which Ubuntu does not set). So the report "Konsole replaced
+  Terminator" was not the setup (the setup installs only `konsole-kpart`). Of the file types the new apps claim, 178 are decided by Ubuntu's own list
+  (`gnome-mimeapps.list`: Kate does NOT take over text or code files), 95 are not (VLC for some audio/video formats, Inkscape for Visio/Corel, a KDE helper
+  from `kio` for `ssh://`/`telnet://` links). Whether one actually wins depends on GNOME's fallback order, which needs a desktop session to see.
+- **Guard (`KEEP_DEFAULT_APPS`, on by default):** before the first install the setup records `gio mime` (GNOME's own lookup) for every file type that has an
+  app; after the installs it sets back each type whose app changed, as a user default in `~/.config/mimeapps.list`, and says which. `--undo` removes exactly
+  those entries (and the file, if the setup created it). Nothing happens without a desktop. README B18 is the manual version (a note in A3 before installing).
+- **`--undo` returns GNOME settings to Ubuntu's own default** (`gsettings reset`), no longer to the value found before (decided by the user: "ubuntus own default").
+  Your own files that the setup only added to (Kate, Helix, app settings) still come back from their backups: "default" there would mean deleting your settings.
+- Test: `t_default_apps` (fake `gio` and `mimeinfo.cache`: only the taken-over type is set back, a new type and an unchanged one are left alone, the undo keeps
+  the user's own entries and removes the file it created, nothing happens without a desktop, `gset` records `gsettings reset`).
+- **Not verified:** a real desktop session (the guard ran only against a fake `gio`); 26.04's packages were not audited for file types (only the terminal
+  question, via the archive index).
+- **Verified in E2E run #36 on the final code (head `94d00bc`):** the new step ran in all eight jobs and changed nothing, as expected on a fresh runner: "No file-type defaults to compare" on the
+  first install (no `gio` and no desktop database before it), "No default app changed" on the second run of the `personal` jobs. So CI proves the step is harmless; the
+  path that actually sets a type back has only been tested with the fake `gio`.
+
+### Fixed (`--undo` no longer leaves an unreadable terminal halfway; report: a screenshot of a terminal full of empty boxes after running the undo)
+- The undo removed the JetBrains Mono Nerd Font in the **middle** of its run. A terminal that uses that font draws every character as an empty box the
+  moment the files are gone (also the text already on screen), so the rest of the undo, and its summary, could not be read. Now the font removal runs
+  **last**, the plan shown before the question says so in plain words, and a last notice is printed right before it. Nothing else changes order (still
+  newest first). Check: `t_undo_font` (a fake undo file: order C, A, then the font; warning only when a font is removed; broken on purpose once to prove it fails).
+  README: the Undo section and a troubleshooting row (close the window and open a new one; pick another font if the profile names the removed one).
+- **Verified in E2E run #36 on the final code (head `94d00bc`):** in every job's undo log "Removing the Nerd Font now" is printed before the last command, and the undo and leftovers phases pass.
+- **Spaced-out letters in Terminator after the undo (my advice was the trap).** The README told you to untick Terminator's *Use the system fixed width font* and pick
+  *JetBrainsMono Nerd Font Mono* by name. The setup never edits terminal profiles, so the undo, which removes the font, could not put that back, and Terminator fell back to
+  a font that is not truly monospaced. The advice is now the opposite: tick *Use the system fixed width font* (Ubuntu's default; the system font is what `SET_GNOME_FONT`
+  sets and `--undo` restores). The undo also checks Terminator's config and GNOME Terminal's profiles and, if one names the font itself, says which and how to go back.
+- **Not caused by the setup:** a later report that Konsole had replaced Terminator as the terminal. The setup installs only `konsole-kpart` (Kate's
+  embedded terminal panel: no program, no menu entry, no `x-terminal-emulator` registration); checked against the real 24.04 and 26.04 archives, where
+  `konsole-kpart` does not depend on the Konsole app (it is the other way round) and Kate only *suggests* `konsole-kpart`.
+
+### Fixed (a busy apt lock no longer stops the setup; report: a screenshot of `Could not get lock /var/lib/apt/lists/lock ... held by process (packagekitd)`)
+- **The script waits for Ubuntu's own updater instead of failing.** `packagekitd` (behind Software Updater and GNOME Software) holds the apt lock for a while after login and after
+  package installs, and apt fails at once. The script's first step was `apt-get update || die "...Check network / proxy settings."`: it died on that, with a message that pointed the wrong way.
+  Now every `apt-get install` and `apt-get update` goes through `apt_run`, which retries a lock error every 5 s for up to `APT_LOCK_WAIT` seconds (default 300, `0` = do not wait),
+  prints once who holds it ("packagekitd (PID 2826)"), and then gives up with apt's own message. Other errors still fail at once; the lock files are never touched.
+  Found by testing apt 2.8.3 in a scratch directory: `-o DPkg::Lock::Timeout=6` did NOT make `apt-get update` wait (it failed after 0 s), so a retry loop is needed.
+- Check: `t_apt_lock` in `tools/check-all.sh` (fake `sudo`: busy twice then free, busy forever, a non-lock error, `APT_LOCK_WAIT=0`; broken on purpose once to prove it fails), and the
+  download lint now rejects any direct `sudo apt-get install|update` in `setup.sh`. README: the manual's `apt_wait` helper (A2), a troubleshooting row, the script reference.
+- **Not verified for real:** a real `packagekitd` holding the lock (only a fake `sudo` and a lock held by a helper process on a scratch directory); the E2E never meets one.
+- **Verified in E2E run #36 on the final code (head `94d00bc`):** no apt option error and no lock wait in any of the eight jobs' logs (apt was never busy there, so the waiting itself is covered by `t_apt_lock` only).
+
+### Changed (the setup is gentler on the machine; report: "my laptop became considerably slower and laggy")
+- **The run lowers its own priority (`LOW_PRIORITY`, on by default).** Nothing in the script did before: apt, cargo and the self-test ran at normal priority, and cargo
+  compiled on every core with about 1 GB of RAM per `rustc`, which can push a laptop into swapping. `be_gentle` now `renice`s the setup process to 10 (never lowering a
+  niceness you chose), puts it in I/O class best-effort 7 (apt, cargo and cmake inherit both, also through `sudo`), and exports `CARGO_BUILD_JOBS` and
+  `CMAKE_BUILD_PARALLEL_LEVEL` = min(half the cores, free RAM / 1.5 GB, at least 1) unless you set them yourself. Nothing is persisted; `LOW_PRIORITY=0` switches it off.
+  Applies to an install, `--upgrade` and `--self-test`. On desktop kernels each terminal is scheduled as one group ("autogroup"), so the RAM cap matters more than the priority.
+- **A re-run no longer recompiles cargo tools you already have.** `cargo install --locked` was run for every tool on every run, so as soon as a newer `cargo-nextest` or
+  `taplo-cli` existed each re-run spent 10+ minutes compiling it. Now only MISSING tools are installed (`cargo_tools_install`), like every other tool here ("left alone, only
+  `--upgrade` moves it"); a lock pin that differs from the installed version is still installed, and `--upgrade` still reinstalls all.
+- Tests in `tools/check-all.sh` (both broken on purpose once to prove they fail): `t_gentle` (real `renice`, inheritance by a child process, job caps against a fake `/proc/meminfo`,
+  user settings win, a lower priority you chose is not raised) and `t_cargo_tools` (fake `cargo`: nothing installed twice, only the missing tool, `--upgrade`, pins).
+- **Not known yet:** whether this removes your lag. The cause on your laptop was not measured (the diagnostics were not run), and a slowdown that outlasts the run would be something
+  else (e.g. the desktop's file indexer or a language server). README troubleshooting has the one command that names the busy process.
+- **Verified in E2E run #36 on the final code (head `94d00bc`): all eight jobs passed all 12 phases** (24.04 and 26.04, runner VM and container, `work` and `personal`); self-test 34/37
+  (container) and 35/38 (VM), 0 failed, 0 warnings, only the usual skips. Every job logged "at most 2 parallel build jobs", compiled the cargo
+  tools once and left them alone on the second run (no recompile). **The price, stated plainly:** container installs took 773 to 907 s against 535 to 717 s in run #32
+  (VM installs 696 to 1013 s, about as before), most likely the 2-job build cap. One VM install (24.04 `work`) took 71 minutes; its log shows why: about 58 minutes of apt
+  downloads from the runner's Ubuntu mirror at 33 to 750 kB/s (two packages needed apt's new retry), not the setup. One container job (24.04 `personal`) first failed in the
+  workflow's own preparation, before the setup ran: Ubuntu's security server listed new perl packages it could not deliver yet (HTTP 404); its re-run passed.
+  If you prefer speed over a calm machine: `LOW_PRIORITY=0`, or set `CARGO_BUILD_JOBS` yourself.
+
 ### Changed (downloads survive a slow or flaky mirror; request: "make it robust and resilient")
 - **apt retries and times out.** Every `apt-get install` and `apt-get update` in `setup.sh` now runs with `-o Acquire::Retries=3 -o Acquire::http::Timeout=60
   -o Acquire::https::Timeout=60` (`APT_NET`). Before, apt used its defaults: no retry at all, so one failed fetch ended the whole batch (the script then retried

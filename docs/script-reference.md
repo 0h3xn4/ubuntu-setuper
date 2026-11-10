@@ -250,6 +250,38 @@ Health check: `ws-doctor` (installed in `~/.local/bin`, read-only, offline, no r
 reports missing tools, editor and shell setup, and the no-cloud settings in seconds; `--self-test` is
 the full verification.
 
+## Default apps: `KEEP_DEFAULT_APPS`
+
+An apt install can make a new app the default for a file type that Ubuntu's own list (`/usr/share/applications/gnome-mimeapps.list`) does not
+decide. Audited for the full install on 24.04 (real archive: 98 chosen packages, ~850 with dependencies): no package registers the terminal,
+editor or graphical browser (only `lynx` as the text-mode `www-browser`, which Ubuntu does not set); 178 claimed file types are decided by
+Ubuntu's list; 95 are not (VLC for some audio/video types, Inkscape for Visio/Corel, `ktelnetservice5` from KDE's `kio` for `ssh://`/`telnet://`).
+With `KEEP_DEFAULT_APPS=1` (default) `defaults_snapshot` records `gio mime` for every type in `mimeinfo.cache` before the first install, and
+the step "Keep default apps" sets back each type whose app changed, as a user default in `~/.config/mimeapps.list`; `--undo` removes exactly
+those entries (one python command in the undo file) and the file if the setup created it. Nothing happens without a desktop. Test: `t_default_apps`
+(fake `gio`). `gset` (GNOME settings) records `gsettings reset` for `--undo`: Ubuntu's own default, the user's decision.
+
+## A busy apt lock: `APT_LOCK_WAIT`
+
+Ubuntu's own updater (`packagekitd`) holds the apt lock for a while after login and after package installs, and apt then fails at once
+("Could not get lock /var/lib/apt/lists/lock. It is held by process N (packagekitd)"). Every `apt-get install` and `apt-get update` of the script
+goes through `apt_run`, which retries a lock error every 5 s for up to `APT_LOCK_WAIT` seconds (default 300, `0` = do not wait), prints once
+who holds the lock, then gives up with apt's own message. Any other error returns at once; the lock files are never touched. apt's own
+`-o DPkg::Lock::Timeout` is not enough: it does not cover the lists lock of `apt-get update` (tested with apt 2.8.3). The preflight error
+message no longer blames the network for this. Test: `tools/check-all.sh` (`t_apt_lock`, fake `sudo`), plus a lint that rejects a direct
+`sudo apt-get install|update` in `setup.sh`.
+
+## Resource use: `LOW_PRIORITY`
+
+A laptop became slow and laggy during a run (the compiles use every core and about 1 GB of RAM per job). With `LOW_PRIORITY=1` (the
+default; `LOW_PRIORITY=0` switches it off) `be_gentle` runs at the start of an install, `--upgrade` and `--self-test`: it `renice`s the
+setup process to 10 (never *lowering* a niceness you chose), puts it in I/O class best-effort 7, and exports `CARGO_BUILD_JOBS` and
+`CMAKE_BUILD_PARALLEL_LEVEL` = min(half the cores, free RAM / 1.5 GB, at least 1) unless you set them. Children (apt, cargo, cmake,
+also through `sudo`) inherit the priority; nothing is persisted. Cargo tools that are already installed are left alone (a re-run does
+not recompile them for a newer release; `--upgrade` does, and a lock pin that differs from the installed version is installed).
+Tests: `tools/check-all.sh` checks the real `renice` inheritance, the job caps with a fake `/proc/meminfo`, and the cargo skip logic
+with a fake `cargo`.
+
 ## Downloads and checksums
 
 **Network resilience.** Every download goes through two shared option sets in `setup.sh` (command-line options only, no APT source
