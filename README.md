@@ -243,7 +243,9 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   install cannot test this because `--full` turns Oh My Bash on, which owns the prompt. A
   thirteenth phase checks that the full install left Ubuntu's own services exactly as they were, then
   recreates what an older version could leave behind and puts it back with `--reset-defaults`
-  (against the real `systemctl`, `sudo` and git), and `--undo` restores it.
+  (against the real `systemctl`, `sudo` and git), and `--undo` restores it. It passed in all eight jobs
+  (run #39), and on its first try it found two settings the normal `--undo` had left behind (Wireshark's
+  non-root capture, the global Git LFS filter), both fixed.
   The shell-setup phase also checks the aliases themselves in a new shell (`ls`, `ll`, `la`
   must be `eza`, `grep` must be ours) with the real Oh My Bash switched on: that check exists
   because a real-machine run found Oh My Bash replacing them, which the tests had missed;

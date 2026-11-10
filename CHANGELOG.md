@@ -18,6 +18,8 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 - **Not changed, flagged:** the desktop module's optional Firefox/Thunderbird policy files (`DESKTOP_BROWSER_POLICIES`, opt-in; they switch
   off the browser's own telemetry) and its Déjà Dup setting (local backups only). Both concern apps Ubuntu ships; whether they fall under the
   new rule is the user's call.
+- **Verified in E2E run #39 (head `b5a3f19`, all eight jobs):** the new 13th phase compares the state of Ubuntu's services before and after the full
+  install (`--full`) and found them unchanged on every VM; in the containers, which have no `systemctl` before the install, none was disabled or masked.
 
 ### Added (`./setup.sh --reset-defaults`: system settings back to Ubuntu's default, installing nothing; the user's request)
 - **Request:** "a complete reset to ubuntu default only, meaning not setting up but rather just resetting"; scope chosen: system settings.
@@ -40,7 +42,14 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   the answer back to "no" itself. The global Git LFS filter that `git lfs install --skip-repo` adds (with `SET_GIT_DEFAULTS`) had no undo line at all; it
   has one now, when the run added it. The E2E's leftovers phase now checks both. The same run's phase 13 failed in the three container jobs on a test
   bug: a container has no `systemctl` before the install, so the "before" state was empty; it now checks there that no unit is disabled or masked.
-- **Not verified:** a real desktop session (the GNOME part); the E2E result is recorded below once it ran.
+- **Verified in E2E run #39 (head `b5a3f19`): all eight jobs passed all 13 phases** (24.04 and 26.04, runner VM and container, `work` and
+  `personal`); self-test 34/37 (container) and 35/38 (VM), 0 failed, 0 warnings, only the usual skips. After the full install and `--undo`, the
+  reset's dry run listed exactly what the test had planted (a disabled `motd-news.timer`, the inotify file, `init.defaultBranch`, the `~/.bashrc`
+  block), plus the runner's own `docker` group on the VMs; no Wireshark and no Git LFS any more. The runner images' masked `fwupd-refresh.timer`
+  was reported and left alone, as designed. Reset and `--undo` worked against the real `systemctl`, `sudo` and git. Slow mirror again: one
+  container install took 62 minutes (110 MB at 60 kB/s), and one VM job was stopped at 104 minutes in the middle of a 463 MB download at about
+  100 kB/s; its re-run passed in 13 minutes.
+- **Not verified:** a real desktop session (the GNOME part of the reset).
 
 ### Changed (defaults: an install keeps Ubuntu's defaults, and `--undo` returns to Ubuntu's own default; the user's decisions)
 - **Audit** (real 24.04 archive data, full install of both profiles: 98 chosen packages, about 850 with dependencies): no package registers the terminal,
