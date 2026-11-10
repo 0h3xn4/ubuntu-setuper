@@ -3044,6 +3044,21 @@ undo_mode() {
     warn "instead of letters (even the text already on screen). Nothing is broken: close that terminal window and open a"
     warn "new one. If the boxes remain, pick another font in its preferences (Terminator: right-click > Preferences >"
     warn "Profiles > Font; GNOME Terminal: Preferences > your profile > Text)."
+    # A terminal profile that names the font itself (the setup never edits terminal profiles, so the undo cannot change
+    # it back) keeps asking for the removed font and shows spaced-out or boxed letters: say which one, and how to go back.
+    local tcfg="$HOME/.config/terminator/config" named=""
+    if [[ -f $tcfg ]]; then named="$(grep -iE '^[[:space:]]*font[[:space:]]*=.*nerd' "$tcfg" | head -n1 | sed 's/^[[:space:]]*//' || true)"; fi
+    if [[ -n $named ]]; then
+      warn "Your Terminator profile names this font itself ($named). After the undo, go back to Ubuntu's default:"
+      warn "right-click > Preferences > Profiles > General > tick 'Use the system fixed width font'."
+    fi
+    if have dconf; then
+      named="$(dconf dump /org/gnome/terminal/legacy/profiles:/ 2>/dev/null | grep -iE '^font=.*nerd' | head -n1 || true)"
+      if [[ -n $named ]]; then
+        warn "A GNOME Terminal profile names this font itself ($named). After the undo: Preferences > that profile > Text >"
+        warn "untick 'Custom font' to use the system font again."
+      fi
+    fi
     echo
   fi
   if (( DRY_RUN )); then ok "Dry run: nothing was changed"; return 0; fi

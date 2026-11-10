@@ -153,6 +153,11 @@ t_undo_font() {
   printf '#!/usr/bin/env bash\nset -x\necho A >> %s/log\nrm -rf %s/fonts/JetBrainsMonoNerdFont && echo FONT >> %s/log\necho C >> %s/log\n' "$h" "$h" "$h" "$h" > "$h/workstation-undo-1.sh"
   out="$(HOME="$h" ./setup.sh --undo --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   [[ $out == *"EMPTY BOXES"* ]] || { echo "no warning about the font before anything runs"; bad=1; }
+  [[ $out != *"Terminator profile names this font"* ]] || { echo "no Terminator config here, so no Terminator note"; bad=1; }
+  mkdir -p "$h/.config/terminator"; printf '[profiles]\n  [[default]]\n    font = JetBrainsMono Nerd Font Mono 11\n    use_system_font = False\n' > "$h/.config/terminator/config"
+  out="$(HOME="$h" ./setup.sh --undo --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+  [[ $out == *"Terminator profile names this font itself (font = JetBrainsMono Nerd Font Mono 11)"* && $out == *"Use the system fixed width font"* ]] \
+    || { echo "a Terminator profile that names the font must be pointed out, with the way back: $out"; bad=1; }
   [[ $out == *" 3. rm -rf "*JetBrainsMonoNerdFont* ]] || { echo "the font removal must be listed LAST (3.): $out"; bad=1; }
   [[ -d $h/fonts/JetBrainsMonoNerdFont && ! -s $h/log ]] || { echo "a dry run must change nothing"; bad=1; }
   HOME="$h" ./setup.sh --undo --yes >/dev/null 2>&1 || { echo "the undo failed"; bad=1; }

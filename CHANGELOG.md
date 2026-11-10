@@ -14,6 +14,10 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   **last**, the plan shown before the question says so in plain words, and a last notice is printed right before it. Nothing else changes order (still
   newest first). Check: `t_undo_font` (a fake undo file: order C, A, then the font; warning only when a font is removed; broken on purpose once to prove it fails).
   README: the Undo section and a troubleshooting row (close the window and open a new one; pick another font if the profile names the removed one).
+- **Spaced-out letters in Terminator after the undo (my advice was the trap).** The README told you to untick Terminator's *Use the system fixed width font* and pick
+  *JetBrainsMono Nerd Font Mono* by name. The setup never edits terminal profiles, so the undo, which removes the font, could not put that back, and Terminator fell back to
+  a font that is not truly monospaced. The advice is now the opposite: tick *Use the system fixed width font* (Ubuntu's default; the system font is what `SET_GNOME_FONT`
+  sets and `--undo` restores). The undo also checks Terminator's config and GNOME Terminal's profiles and, if one names the font itself, says which and how to go back.
 - **Not caused by the setup:** a later report that Konsole had replaced Terminator as the terminal. The setup installs only `konsole-kpart` (Kate's
   embedded terminal panel: no program, no menu entry, no `x-terminal-emulator` registration); checked against the real 24.04 and 26.04 archives, where
   `konsole-kpart` does not depend on the Konsole app (it is the other way round) and Kate only *suggests* `konsole-kpart`.

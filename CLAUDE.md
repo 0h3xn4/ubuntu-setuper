@@ -218,7 +218,9 @@ Kate modes on a small untyped file and requires no errors/warnings; the control 
 upstream default changed). check-all t_lsp_default_level tests that client against a mock server (we never run downloaded binaries in the
 sandbox). The user's `uv python install` stays blocked (python-downloads = "never"): asked, answer "no, if not strictly need".
 Terminal: the user "occasionally" uses Terminator; a spaced-out-letters screenshot (apt output) came from a terminal whose font is not a true
-monospace; README troubleshooting has the Terminator steps (profile font = JetBrainsMono Nerd Font Mono). Not reproducible from here.
+monospace; README troubleshooting has the Terminator steps: TICK 'Use the system fixed width font' (the system font is what SET_GNOME_FONT sets and --undo restores). The earlier advice to name
+'JetBrainsMono Nerd Font Mono' in the profile was a TRAP: after --undo removed the font the user's Terminator showed spaced-out letters (the setup never edits terminal profiles, so
+the undo cannot put that back). --undo now names a Terminator/GNOME Terminal profile that uses the font by name, with the way back. Never advise naming a setup-installed font in an app's own settings.
 
 ### Older installs keep older settings files (found on the user's real machine: the quiet-basedpyright self-test FAILED)
 install_file never overwrites, so a NEW default in a shipped settings file never reaches an existing install. migrate_user_json (setup.sh) adds the MISSING keys
