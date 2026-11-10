@@ -167,6 +167,17 @@ run `./setup.sh --check` first.
   off by default.) Parts of Ubuntu itself (apt, snapd, time sync) are outside
   this guide; see [Still network-connected](#still-network-connected-os-level).
 
+### While it runs: priority, memory and what a re-run costs
+
+A full run compiles Rust tools (every core, about 1 GB of RAM per compile job), downloads wheels and crates, pulls a container
+image and finishes with a self-test that builds with sanitizers and runs QEMU. So that the computer stays usable, the script
+(`LOW_PRIORITY`, **on** by default) gives itself nice 10 and best-effort I/O class 7 (apt, cargo and cmake inherit both, also
+through `sudo`) and caps parallel builds at half your cores **and** at one job per 1.5 GB of free RAM (`CARGO_BUILD_JOBS`,
+`CMAKE_BUILD_PARALLEL_LEVEL`; values you set yourself win; `LOW_PRIORITY=0` switches it off). It changes nothing outside that one run.
+Desktop kernels also schedule each terminal as one group, which is why the RAM cap matters more than the priority.
+A **re-run is cheap**: tools you already have are left alone (cargo tools included), so nothing is recompiled just because a newer
+release exists; only `./setup.sh --upgrade` moves them forward.
+
 ### What it never does
 
 Remove a package. Upgrade the system or any package you already have. Edit a
@@ -334,6 +345,9 @@ machine ends up in the same state.
 - **Sections marked [opt-in]** change the system or your login files. Skip
   them unless you want that change; the heading names the switch the script
   uses for the same thing (all are listed in [the big picture](#the-big-picture)).
+- **Keep the computer usable.** The long steps (the cargo tools in B5, the self-test builds) use every core and a lot of RAM.
+  The script lowers its own priority and limits parallel builds for you; by hand, start the shell you work in with
+  `nice -n 10 ionice -c2 -n7 bash` and run `export CARGO_BUILD_JOBS=2 CMAKE_BUILD_PARALLEL_LEVEL=2` first (use 1 on 8 GB of RAM or less).
 - Some tools may be absent from your Ubuntu release's archive. The
   `apt_install` helper in A2 skips and tells you about missing packages,
   like the script does.
@@ -807,12 +821,17 @@ take several minutes. They need a few development libraries:
 
 ```bash
 apt_install libssl-dev pkg-config
+export CARGO_BUILD_JOBS=2          # compiles use every core and about 1 GB of RAM each: keep the laptop usable
 for c in taplo-cli cargo-nextest; do
-  cargo install --list | grep -q "^$c v" || record_undo "cargo uninstall $c"
+  if cargo install --list | grep -q "^$c v"; then echo "already installed, left alone: $c"; continue; fi
+  record_undo "cargo uninstall $c"
+  cargo install --locked "$c"
 done
-cargo install --locked taplo-cli cargo-nextest
 ```
 
+A tool you already have is **left alone**, like every other tool in this guide: a re-run does not spend ten minutes
+recompiling it just because a newer release came out meanwhile. To move one forward on purpose, run
+`cargo install --locked <tool>` yourself (the script does this for all of them with `--upgrade`).
 `--locked` makes cargo use the exact dependency versions the tool's authors
 tested. Pin a tool with `cargo install --locked taplo-cli@X.Y.Z`.
 
@@ -1911,6 +1930,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | The install is very slow, or prints "Operation too slow" / apt "Retrying" | Your network or Ubuntu mirror is slow. The script retries on its own: apt tries each fetch 3 times and drops a connection that is silent for 60 s; downloads from GitHub and others are aborted and retried when they stay below 4 KB/s for 60 s (up to 180 s in total, then that step is reported as failed). A mirror that is slow but alive is still waited for: apt has no minimum speed. Simply run `./setup.sh` again, it is safe to repeat and continues where it stopped. To use a closer mirror, choose it yourself in *Software & Updates*; this setup never changes APT sources. |
+| The computer is slow or laggy while the script runs (or right after) | During a run the compiles are the cause: by default the script already runs at low priority and caps parallel builds by cores and free RAM (`LOW_PRIORITY=1`). If you still see swapping, lower it further: `CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./setup.sh`. If it is slow **after** the run, find what is busy: `ps -eo pid,ni,pcpu,pmem,etime,comm --sort=-pcpu | head -12`; typical culprits are the desktop's file indexer working through the new files in your home folder, or a language server scanning a very large folder. Send the output and the cause can be named. |
 | Neovim starts but there is no completion, hover or error list | Inside Neovim, `:checkhealth vim.lsp` shows which servers are attached to the file. The usual cause is a language server that is not on `PATH` (`ws-doctor` names the missing ones) or a `~/.config/nvim` of your own that replaced `init.lua`. Completion that pops up by itself needs Neovim 0.11 or newer (the upstream release has it; Ubuntu 24.04's 0.9.5 does not: use `Ctrl-x Ctrl-o`). |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
 | I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |

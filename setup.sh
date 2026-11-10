@@ -58,6 +58,8 @@
 #  and the profile. Environment variables override switches for one run,
 #  e.g.:  INSTALL_DOCKER=1 ./setup.sh
 #  Run as your normal user, NOT with sudo.
+#  The run is polite to your computer (LOW_PRIORITY=1, the default): low CPU and disk
+#  priority, parallel builds capped by your cores AND free RAM. LOW_PRIORITY=0 turns it off.
 #
 #  NO-CLOUD POLICY (fixed, every profile)
 #    Downloading during installation is allowed. Afterwards, no installed
@@ -254,6 +256,37 @@ apt_candidates() {
 }
 
 # Install apt packages, skipping (and recording) any that don't exist.
+# Keep the machine usable while the setup runs (LOW_PRIORITY, default on). Found on a real laptop that became slow and
+# laggy during a run: the script never lowered its own priority and cargo compiles on every core, several rustc at about
+# 1 GB each, which can push a laptop into swapping. This process (and so apt, cargo, cmake and everything else it starts,
+# also through sudo) gets nice 10 and best-effort I/O class 7, and parallel builds are capped by cores AND free RAM.
+# Settings you made yourself (CARGO_BUILD_JOBS, CMAKE_BUILD_PARALLEL_LEVEL) win. Nothing is persisted: only this run.
+# (On desktops the kernel also groups processes per terminal, "autogroup", so priority matters less than memory.)
+gentle_jobs() {   # how many parallel build jobs are reasonable: half the cores, at most one per ~1.5 GB of free RAM
+  local cpus mem_kb jobs by_mem
+  cpus="$(nproc 2>/dev/null || echo 2)"
+  jobs=$(( (cpus + 1) / 2 ))
+  mem_kb="$(awk '/^MemAvailable:/ { print $2; exit }' "${MEMINFO:-/proc/meminfo}" 2>/dev/null || true)"
+  if [[ $mem_kb =~ ^[0-9]+$ ]]; then
+    by_mem=$(( mem_kb / 1500000 ))
+    if (( by_mem < jobs )); then jobs=$by_mem; fi
+  fi
+  if (( jobs < 1 )); then jobs=1; fi
+  echo "$jobs"
+}
+be_gentle() {
+  on "$LOW_PRIORITY" || return 0
+  local cur jobs
+  cur="$(ps -o ni= -p $$ 2>/dev/null | tr -d ' ' || true)"
+  # never LOWER a niceness you already chose (renice -n sets an absolute value)
+  if [[ $cur =~ ^-?[0-9]+$ ]] && (( cur < 10 )); then renice -n 10 -p $$ >/dev/null 2>&1 || true; fi
+  if have ionice; then ionice -c2 -n7 -p $$ >/dev/null 2>&1 || true; fi
+  jobs="$(gentle_jobs)"
+  export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$jobs}"
+  export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$jobs}"
+  log "Low priority (nice 10, best-effort I/O 7); at most $CARGO_BUILD_JOBS parallel build jobs. LOW_PRIORITY=0 switches this off."
+}
+
 # Network resilience, for everything this script downloads (command-line options only: no APT source and no package-owned
 # configuration is touched). Found by an E2E job that sat for hours on a slow Ubuntu mirror: apt retries nothing by
 # default (Acquire::Retries is 0) and curl only retried on errors, never on a download that just trickled along.
@@ -1099,17 +1132,33 @@ rust_toolchain() {
 
   if on "$INSTALL_CARGO_TOOLS"; then
     apt_install "${PKGS_RUST_BUILD[@]}"
-    local specs=() c pin cargo_tools
-    mapfile -t cargo_tools < <(cargo_tool_list)
-    for c in "${cargo_tools[@]}"; do
-      pin="${CARGO_PINS[$c]:-}"
-      if [[ -n $pin ]]; then specs+=("$c@$pin"); else specs+=("$c"); fi
-    done
-    local installed_before; installed_before="$(cargo install --list 2>/dev/null || true)"
-    for c in "${cargo_tools[@]}"; do
-      if ! grep -q "^$c v" <<<"$installed_before"; then record_undo "cargo uninstall $c"; fi
-    done
-    log "Compiling cargo tools (this can take 10+ minutes)"
+    cargo_tools_install
+  fi
+}
+
+# Compile and install the cargo tools that are MISSING. A tool you already have is left alone (like every other tool
+# here; only --upgrade moves it to the newest release), so a re-run no longer recompiles it just because a newer release
+# came out meanwhile (a 10+ minute build per tool). A pin from the lock that differs from the installed version is
+# installed, because the lock is what you asked for.
+cargo_tools_install() {
+  local specs=() c pin have_ver cargo_tools installed_before skipped=()
+  mapfile -t cargo_tools < <(cargo_tool_list)
+  installed_before="$(cargo install --list 2>/dev/null || true)"
+  for c in "${cargo_tools[@]}"; do
+    pin="${CARGO_PINS[$c]:-}"
+    have_ver="$(awk -v n="$c" '$1 == n { v = $2; sub(/^v/, "", v); sub(/:$/, "", v); print v; exit }' <<<"$installed_before")"
+    if [[ -z $have_ver ]]; then
+      record_undo "cargo uninstall $c"
+    elif ! on "$UPGRADE" && [[ -z $pin || $pin == "$have_ver" ]]; then
+      skipped+=("$c $have_ver"); continue
+    fi
+    if [[ -n $pin ]]; then specs+=("$c@$pin"); else specs+=("$c"); fi
+  done
+  if (( ${#skipped[@]} )); then
+    ok "Cargo tools already installed, left alone (--upgrade moves them to the newest release): $(printf '%s; ' "${skipped[@]}" | sed 's/; $//')"
+  fi
+  if (( ${#specs[@]} )); then
+    log "Compiling cargo tools: ${specs[*]} (this can take 10+ minutes)"
     cargo install --locked "${specs[@]}"
   fi
 }
@@ -3030,7 +3079,7 @@ main() {
   case "$MODE" in
     check)    check_mode; return 0 ;;
     explain)  explain_mode; return 0 ;;
-    selftest) mkdir -p "$DATA_DIR"; self_test; return ;;
+    selftest) mkdir -p "$DATA_DIR"; be_gentle; self_test; return ;;
     manifest) write_manifest; return 0 ;;
     lock)     write_lock; return 0 ;;
   esac
@@ -3053,6 +3102,7 @@ main() {
   exec > >(tee -a "$LOG_FILE") 2>&1
 
   section "Workstation setup — profile $PROFILE — $(date)"
+  be_gentle
   migrate_records
   preflight
   remember_profile

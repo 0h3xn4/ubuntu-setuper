@@ -250,6 +250,17 @@ Health check: `ws-doctor` (installed in `~/.local/bin`, read-only, offline, no r
 reports missing tools, editor and shell setup, and the no-cloud settings in seconds; `--self-test` is
 the full verification.
 
+## Resource use: `LOW_PRIORITY`
+
+A laptop became slow and laggy during a run (the compiles use every core and about 1 GB of RAM per job). With `LOW_PRIORITY=1` (the
+default; `LOW_PRIORITY=0` switches it off) `be_gentle` runs at the start of an install, `--upgrade` and `--self-test`: it `renice`s the
+setup process to 10 (never *lowering* a niceness you chose), puts it in I/O class best-effort 7, and exports `CARGO_BUILD_JOBS` and
+`CMAKE_BUILD_PARALLEL_LEVEL` = min(half the cores, free RAM / 1.5 GB, at least 1) unless you set them. Children (apt, cargo, cmake,
+also through `sudo`) inherit the priority; nothing is persisted. Cargo tools that are already installed are left alone (a re-run does
+not recompile them for a newer release; `--upgrade` does, and a lock pin that differs from the installed version is installed).
+Tests: `tools/check-all.sh` checks the real `renice` inheritance, the job caps with a fake `/proc/meminfo`, and the cargo skip logic
+with a fake `cargo`.
+
 ## Downloads and checksums
 
 **Network resilience.** Every download goes through two shared option sets in `setup.sh` (command-line options only, no APT source

@@ -8,6 +8,20 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Changed (the setup is gentler on the machine; report: "my laptop became considerably slower and laggy")
+- **The run lowers its own priority (`LOW_PRIORITY`, on by default).** Nothing in the script did before: apt, cargo and the self-test ran at normal priority, and cargo
+  compiled on every core with about 1 GB of RAM per `rustc`, which can push a laptop into swapping. `be_gentle` now `renice`s the setup process to 10 (never lowering a
+  niceness you chose), puts it in I/O class best-effort 7 (apt, cargo and cmake inherit both, also through `sudo`), and exports `CARGO_BUILD_JOBS` and
+  `CMAKE_BUILD_PARALLEL_LEVEL` = min(half the cores, free RAM / 1.5 GB, at least 1) unless you set them yourself. Nothing is persisted; `LOW_PRIORITY=0` switches it off.
+  Applies to an install, `--upgrade` and `--self-test`. On desktop kernels each terminal is scheduled as one group ("autogroup"), so the RAM cap matters more than the priority.
+- **A re-run no longer recompiles cargo tools you already have.** `cargo install --locked` was run for every tool on every run, so as soon as a newer `cargo-nextest` or
+  `taplo-cli` existed each re-run spent 10+ minutes compiling it. Now only MISSING tools are installed (`cargo_tools_install`), like every other tool here ("left alone, only
+  `--upgrade` moves it"); a lock pin that differs from the installed version is still installed, and `--upgrade` still reinstalls all.
+- Tests in `tools/check-all.sh` (both broken on purpose once to prove they fail): `t_gentle` (real `renice`, inheritance by a child process, job caps against a fake `/proc/meminfo`,
+  user settings win, a lower priority you chose is not raised) and `t_cargo_tools` (fake `cargo`: nothing installed twice, only the missing tool, `--upgrade`, pins).
+- **Not known yet:** whether this removes your lag. The cause on your laptop was not measured (the diagnostics were not run), and a slowdown that outlasts the run would be something
+  else (e.g. the desktop's file indexer or a language server). README troubleshooting has the one command that names the busy process.
+
 ### Changed (downloads survive a slow or flaky mirror; request: "make it robust and resilient")
 - **apt retries and times out.** Every `apt-get install` and `apt-get update` in `setup.sh` now runs with `-o Acquire::Retries=3 -o Acquire::http::Timeout=60
   -o Acquire::https::Timeout=60` (`APT_NET`). Before, apt used its defaults: no retry at all, so one failed fetch ended the whole batch (the script then retried

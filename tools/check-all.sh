@@ -335,6 +335,73 @@ DRV
   return $bad
 }
 check "downloads: apt retries/timeouts and a curl minimum-speed guard everywhere (fake curl/sudo + lint)" t_resilient_net
+# A laptop became slow and laggy during a run: the script never lowered its own priority and cargo compiles on every core.
+# be_gentle lowers priority (really: renice on this process, inherited by children) and caps build jobs by cores AND free RAM.
+t_gentle() {
+  local d="$TMP/gentle" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+log() { :; }
+[[ -n ${FAKE_NPROC:-} ]] && nproc() { echo "$FAKE_NPROC"; }
+if [[ ${T_MODE:-} == jobs ]]; then gentle_jobs; exit 0; fi
+base="$(ps -o ni= -p $$ | tr -d ' ')"
+be_gentle
+echo "BASE=$base NI=$(ps -o ni= -p $$ | tr -d ' ') CHILD=$(bash -c 'ps -o ni= -p $$' | tr -d ' ') CARGO=${CARGO_BUILD_JOBS:-none} CMAKE=${CMAKE_BUILD_PARALLEL_LEVEL:-none}"
+DRV
+  run_() { env "$@" bash "$d/driver.sh" 2>&1 | tail -n1; }
+  out="$(run_ LOW_PRIORITY=1 FAKE_NPROC=4)"
+  [[ $out == *"NI=10 CHILD=10 CARGO="[0-9]*" CMAKE="[0-9]* ]] || { echo "low priority not applied or not inherited: $out"; bad=1; }
+  out="$(run_ LOW_PRIORITY=0)"
+  [[ $out =~ BASE=(-?[0-9]+)\ NI=(-?[0-9]+)\ .*CARGO=none\ CMAKE=none && ${BASH_REMATCH[1]} == "${BASH_REMATCH[2]}" ]] \
+    || { echo "LOW_PRIORITY=0 must change nothing: $out"; bad=1; }
+  out="$(run_ LOW_PRIORITY=1 CARGO_BUILD_JOBS=7 CMAKE_BUILD_PARALLEL_LEVEL=3)"
+  [[ $out == *"CARGO=7 CMAKE=3"* ]] || { echo "settings the user made must win: $out"; bad=1; }
+  out="$(nice -n 15 env LOW_PRIORITY=1 bash "$d/driver.sh" 2>&1 | tail -n1)"
+  [[ $out == *"NI=15 "* ]] || { echo "a lower priority the user chose must not be raised: $out"; bad=1; }
+  # jobs = min(half the cores, free RAM / 1.5 GB), at least 1
+  local mem jobs
+  for mem in "16:64000000:8" "16:4000000:2" "16:500000:1" "1:64000000:1" "3:64000000:2"; do
+    IFS=: read -r cpus kb want <<<"$mem"
+    printf 'MemTotal: 99999999 kB\nMemAvailable: %s kB\n' "$kb" > "$d/meminfo"
+    jobs="$(env T_MODE=jobs FAKE_NPROC="$cpus" MEMINFO="$d/meminfo" bash "$d/driver.sh" 2>&1 | tail -n1)"
+    [[ $jobs == "$want" ]] || { echo "gentle_jobs: $cpus cores, $kb kB free: expected $want, got '$jobs'"; bad=1; }
+  done
+  return $bad
+}
+check "low priority: renice inherited by children, build jobs capped by cores and free RAM, user settings win" t_gentle
+# cargo install runs only for what is missing (or a pin from the lock that differs); --upgrade moves everything.
+t_cargo_tools() {
+  local d="$TMP/cargotools" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+log() { :; }; ok() { :; }
+declare -A CARGO_PINS=()
+[[ -n ${PIN_TAPLO:-} ]] && CARGO_PINS[taplo-cli]="$PIN_TAPLO"
+cargo_tool_list() { printf '%s\n' taplo-cli cargo-nextest; }
+record_undo() { echo "undo: $*" >> "$OUTLOG"; }
+cargo() { if [[ $1 == install && ${2:-} == --list ]]; then printf '%b' "$FAKE_LIST"; else echo "cargo $*" >> "$OUTLOG"; fi; }
+: > "$OUTLOG"; UPGRADE="${T_UPGRADE:-0}"   # (sourcing setup.sh resets UPGRADE to 0)
+cargo_tools_install
+cat "$OUTLOG"
+DRV
+  local both='taplo-cli v0.9.3:\n    taplo\ncargo-nextest v0.9.100:\n    cargo-nextest\n'
+  run_() { env OUTLOG="$d/out.log" "$@" bash "$d/driver.sh" 2>&1; }
+  out="$(run_ FAKE_LIST="$both")"
+  [[ -z $out ]] || { echo "both installed: nothing may be compiled, got: $out"; bad=1; }
+  out="$(run_ FAKE_LIST='taplo-cli v0.9.3:\n    taplo\n')"
+  [[ $out == *"undo: cargo uninstall cargo-nextest"* && $out == *"cargo install --locked cargo-nextest" && $out != *"taplo-cli"* ]] \
+    || { echo "only the missing tool may be installed (with its undo): $out"; bad=1; }
+  out="$(run_ FAKE_LIST="$both" T_UPGRADE=1)"
+  [[ $out == *"cargo install --locked taplo-cli cargo-nextest"* ]] || { echo "--upgrade must reinstall both: $out"; bad=1; }
+  out="$(run_ FAKE_LIST="$both" PIN_TAPLO=0.9.0)"
+  [[ $out == *"cargo install --locked taplo-cli@0.9.0"* && $out != *"cargo-nextest"* ]] || { echo "a differing lock pin must be installed, nothing else: $out"; bad=1; }
+  out="$(run_ FAKE_LIST="$both" PIN_TAPLO=0.9.3)"
+  [[ -z $out ]] || { echo "a pin equal to the installed version must be left alone: $out"; bad=1; }
+  out="$(run_ FAKE_LIST='')"
+  [[ $out == *"cargo install --locked taplo-cli cargo-nextest"* && $(grep -c '^undo: ' <<<"$out") == 2 ]] || { echo "nothing installed: both, with 2 undo records: $out"; bad=1; }
+  return $bad
+}
+check "cargo tools: only missing ones are compiled (a re-run does not rebuild), --upgrade and lock pins still honoured" t_cargo_tools
 # Earlier versions left the undo scripts, manifests, logs and the cheat sheet loose in ~: the records folder
 # (OUT_DIR, ~/workstation-setup) now holds them, and migrate_records moves the old ones (never overwriting).
 t_records_folder() {

@@ -341,6 +341,11 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
   sources or package config. check-all `t_resilient_net` (fake curl/sudo + a lint over setup.sh) fails if a new download skips them. Small metadata calls that
   use `--max-time 30` (tag redirects, the GitHub API fallbacks) are exempt. apt has no minimum-speed setting: slow-but-alive mirrors are waited for, the E2E job
   `timeout-minutes: 150` is the backstop.
+- Machine load (the user's laptop got slow and laggy during a run): the install, `--upgrade` and `--self-test` call `be_gentle` (LOW_PRIORITY=1 default): renice 10 (never lowering a
+  chosen niceness; util-linux `renice -n` is ABSOLUTE), ionice best-effort 7, and CARGO_BUILD_JOBS / CMAKE_BUILD_PARALLEL_LEVEL = min(cores/2, free RAM / 1.5 GB, >= 1) unless the user set them.
+  Memory is the likelier cause than CPU (autogroup already isolates a terminal's CPU from the desktop). Do NOT write /proc/self/autogroup (it would leave the user's terminal niced) and do not
+  re-exec under setsid (loses the controlling tty: no Ctrl-C). Cargo tools already installed are left alone unless --upgrade or a differing lock pin (cargo_tools_install). Checks: t_gentle, t_cargo_tools.
+  Never measured on the user's laptop; ask for `ps -eo pid,ni,pcpu,pmem,etime,comm --sort=-pcpu | head -12` before claiming a cause.
 - Downloads outside APT: prefer `fetch_published URL DEST SUMS_URL [NAME]` (checks the
   checksum the PROJECT publishes; refuses a mismatch; if the checksum file cannot be fetched it RETRIES then
   REFUSES, never trust-on-first-use, unless the lock pins the SHA-256; records "<url> <sha> published"
