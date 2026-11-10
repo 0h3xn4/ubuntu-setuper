@@ -42,6 +42,14 @@
 #                                  works. Shows every command first and asks (--dry-run only
 #                                  lists, --yes skips the question). Undo: ./setup.sh --undo.
 #                                  The zsh package itself is never removed.
+#    ./setup.sh --reset-defaults   Put the SYSTEM settings this setup can change back to Ubuntu's own
+#                                  default, installing nothing: Ubuntu's services (crash reports,
+#                                  MOTD news, firmware refresh) on again, APT news on, the setup's
+#                                  files below /etc removed, GNOME settings reset, the setup's global
+#                                  git defaults and its ~/.bashrc block removed, the groups it adds
+#                                  left. Tools, fonts, editors and your files stay. Shows every
+#                                  change first and asks (--dry-run only lists, --yes skips the
+#                                  question). Undo: ./setup.sh --undo.
 #    ./setup.sh --list-profiles    Show the available profiles and modules.
 #    ./setup.sh --help
 #
@@ -49,8 +57,7 @@
 #
 #  STRUCTURE
 #    core                 always installed: bash, Helix + language servers, git
-#                         tooling, Python/C/C++/Rust, offline docs, privacy
-#                         hardening, offline caches
+#                         tooling, Python/C/C++/Rust, offline docs, offline caches
 #    modules/<name>/      optional parts (embedded, desktop, ...)
 #    profiles/<name>.conf chooses the modules of a machine
 #
@@ -62,9 +69,11 @@
 #  priority, parallel builds capped by your cores AND free RAM. LOW_PRIORITY=0 turns it off.
 #
 #  NO-CLOUD POLICY (fixed, every profile)
-#    Downloading during installation is allowed. Afterwards, no installed
-#    tool contacts external services: no cloud-connected tools, update
-#    checks and telemetry are disabled, and podman never pulls on its own.
+#    Downloading during installation is allowed. Afterwards, no tool this
+#    setup installs contacts external services: no cloud-connected tools, their
+#    update checks and telemetry are disabled, and podman never pulls on its own.
+#    Ubuntu's OWN services and telemetry (crash reports, MOTD news, firmware
+#    refresh, GNOME's privacy settings) are left as Ubuntu ships them.
 #    You are never blocked from the network: uv, pip, cargo and podman fetch
 #    what YOU ask them to (a strict lock that limits them to the local caches
 #    is opt-in, ENFORCE_OFFLINE_ENV=1). Networked apps (browser, mail) only
@@ -125,6 +134,7 @@ while (( $# )); do
     --lock)        MODE=lock ;;
     --list-profiles) LIST_PROFILES=1 ;;
     --reset-shell) MODE=reset-shell ;;
+    --reset-defaults) MODE=reset-defaults ;;
     --undo)        MODE=undo
                    if [[ ${2:-} != "" && ${2:-} != --* ]]; then UNDO_ARG="$2"; shift; fi ;;
     --dry-run)     DRY_RUN=1 ;;
@@ -952,70 +962,18 @@ preflight() {
   apt_run install -y --no-remove --no-upgrade curl ca-certificates gnupg distro-info
 }
 
+INOTIFY_CONF_TEXT=$'fs.inotify.max_user_watches = 524288\nfs.inotify.max_user_instances = 1024\n'
 system_tuning() {
   # Large source trees (clangd, rust-analyzer, file watchers) need more inotify
   # watches. A new drop-in file; nothing existing is modified.
   local f=/etc/sysctl.d/60-dev-inotify.conf
   if [[ ! -e $f ]]; then
-    printf 'fs.inotify.max_user_watches = 524288\nfs.inotify.max_user_instances = 1024\n' \
-      | sudo tee "$f" >/dev/null
+    printf '%s' "$INOTIFY_CONF_TEXT" | sudo tee "$f" >/dev/null
     record_undo "sudo rm -f $f"       # recorded as soon as the file exists, whatever sysctl does next
     if sudo sysctl -p "$f" >/dev/null 2>&1; then ok "Raised inotify limits"
     else warn "Wrote $f but could not apply it now (a container?); it takes effect at the next boot"; fi
   else
     ok "Unchanged: $f"
-  fi
-}
-
-# Disable (never mask) units that are currently enabled.
-disable_units() {
-  local u state
-  for u in "$@"; do
-    state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
-    if [[ $state == enabled ]]; then
-      # 'disable' is what matters; stopping is best effort (no running systemd in a container)
-      sudo systemctl disable "$u" >/dev/null 2>&1 || { warn "Could not disable $u"; continue; }
-      sudo systemctl stop "$u" >/dev/null 2>&1 || true
-      record_undo "sudo systemctl enable $u"
-      ok "Disabled $u"
-    fi
-  done
-}
-
-UNITS_REPORTING=(apport.service apport-autoreport.path apport-autoreport.timer
-                 whoopsie.service whoopsie.path kerneloops.service)
-UNITS_MOTD=(motd-news.timer)
-UNITS_FWUPD=(fwupd-refresh.timer)
-NM_CONNECTIVITY_CONF=/etc/NetworkManager/conf.d/99-no-connectivity-check.conf
-
-# Units to disable, according to the switches (one per line).
-enabled_privacy_units() {
-  if on "$DISABLE_REPORTING_SERVICES"; then printf '%s\n' "${UNITS_REPORTING[@]}"; fi
-  if on "$DISABLE_MOTD_NEWS"; then printf '%s\n' "${UNITS_MOTD[@]}"; fi
-  if on "$DISABLE_FWUPD_REFRESH"; then printf '%s\n' "${UNITS_FWUPD[@]}"; fi
-}
-
-privacy_hardening() {
-  # Only services are disabled and NEW drop-in files are added. No packages
-  # are removed and no package-owned config files are edited, so updates
-  # (including unattended security updates) keep working normally. Each part
-  # runs only if its own switch is on.
-  local units
-  mapfile -t units < <(enabled_privacy_units)
-  if (( ${#units[@]} )); then disable_units "${units[@]}"; fi
-
-  if on "$DISABLE_APT_NEWS" && have pro; then
-    if sudo pro config set apt_news=false >/dev/null 2>&1; then
-      record_undo "sudo pro config set apt_news=true"
-      ok "Disabled APT news"
-    fi
-  fi
-
-  if on "$DISABLE_NM_CONNECTIVITY_CHECK" && [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
-    printf '[connectivity]\nenabled=false\n' | sudo tee "$NM_CONNECTIVITY_CONF" >/dev/null
-    sudo systemctl reload NetworkManager 2>/dev/null || true
-    record_undo "sudo rm -f $NM_CONNECTIVITY_CONF && sudo systemctl reload NetworkManager"
-    ok "Disabled NetworkManager connectivity check"
   fi
 }
 
@@ -1646,21 +1604,22 @@ git_setup() {
   install_file .config/lazygit/config.yml
 }
 
+# The global git defaults (SET_GIT_DEFAULTS), "key=value". One list for the install and for --reset-defaults.
+GIT_DEFAULTS=(init.defaultBranch=main pull.rebase=true rerere.enabled=true fetch.prune=true
+              push.autoSetupRemote=true merge.conflictStyle=zdiff3 diff.colorMoved=default)
+GIT_DEFAULTS_DELTA=(core.pager=delta "interactive.diffFilter=delta --color-only" delta.navigate=true delta.line-numbers=true)
+
 git_defaults() {
-  git_set init.defaultBranch main
-  git_set pull.rebase true
-  git_set rerere.enabled true
-  git_set fetch.prune true
-  git_set push.autoSetupRemote true
-  git_set merge.conflictStyle zdiff3
-  git_set diff.colorMoved default
+  local kv
+  for kv in "${GIT_DEFAULTS[@]}"; do git_set "${kv%%=*}" "${kv#*=}"; done
   if have delta; then
-    git_set core.pager delta
-    git_set interactive.diffFilter "delta --color-only"
-    git_set delta.navigate true
-    git_set delta.line-numbers true
+    for kv in "${GIT_DEFAULTS_DELTA[@]}"; do git_set "${kv%%=*}" "${kv#*=}"; done
   fi
-  if have git-lfs; then git lfs install --skip-repo >/dev/null; fi
+  if have git-lfs; then
+    # Its global filter was never recorded for --undo (found by --reset-defaults in the E2E): record it when this run adds it.
+    if [[ -z "$(git config --global --get filter.lfs.process 2>/dev/null || true)" ]]; then record_undo "git lfs uninstall --skip-repo"; fi
+    git lfs install --skip-repo >/dev/null
+  fi
   ok "Git defaults set (existing settings were kept)"
 }
 
@@ -1672,20 +1631,13 @@ desktop_tweaks() {
   have gsettings || return 0
   if ! have_desktop_session; then
     warn "No desktop session detected; run setup.sh from a logged-in desktop"
-    warn "to apply font and GNOME privacy settings."
+    warn "to apply the font setting."
     return 0
   fi
   # Recent Ubuntu releases use a small default monospace font; the terminal follows this.
+  # Ubuntu's own privacy and reporting settings are NOT touched (decided by the user: the setup leaves
+  # Ubuntu's own telemetry and services as Ubuntu ships them).
   if on "$SET_GNOME_FONT"; then gset org.gnome.desktop.interface monospace-font-name "$(gnome_mono_font)"; fi
-  if on "$SET_GNOME_PRIVACY"; then
-    gset org.gnome.system.location enabled false
-    gset org.gnome.desktop.datetime automatic-timezone false
-    gset org.gnome.desktop.privacy report-technical-problems false
-    gset org.gnome.desktop.privacy send-software-usage-stats false
-    # Also turns off the web-search and Snap Store search providers in the
-    # Activities overview (searching for installed apps still works).
-    gset org.gnome.desktop.search-providers disable-external true
-  fi
 }
 
 # ============================================================================
@@ -1928,16 +1880,6 @@ check_mode() {
     if id -nG "$USER" | grep -qw "$g"; then echo "    group $g: already a member"
     else echo "    group $g: add $USER"; fi
   done
-  local u state
-  while IFS= read -r u; do
-    state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
-    if [[ $state == enabled ]]; then echo "    service $u: disable"; fi
-  done < <(enabled_privacy_units)
-  if on "$DISABLE_APT_NEWS"; then echo "    APT news: off ('pro config set apt_news=false')"; fi
-  if on "$DISABLE_NM_CONNECTIVITY_CHECK" && [[ -d /etc/NetworkManager/conf.d && ! -e $NM_CONNECTIVITY_CONF ]]; then
-    echo "    new file $NM_CONNECTIVITY_CONF (no connectivity probe)"
-  fi
-  if on "$SET_GNOME_PRIVACY"; then echo "    GNOME: location services, automatic timezone, problem reporting, usage stats, external search providers off"; fi
   if on "$SET_GNOME_FONT"; then echo "    GNOME: monospace font JetBrains Mono 11"; fi
   if on "$ENABLE_SHELL_LOADER"; then echo "    ~/.bashrc: one marked block that loads ~/.bashrc.d"; fi
   if on "$SET_GIT_DEFAULTS"; then echo "    ~/.gitconfig: global git defaults (only options you have not set)"; fi
@@ -2293,15 +2235,6 @@ EOF
     problems+=("offline environment (~/.bashrc.d/20-offline.sh) missing"); fi
   if grep -Eq 'repo:[[:space:]]*https?://' "$TEMPLATE_DIR/generic/.pre-commit-config.yaml" 2>/dev/null; then
     problems+=("pre-commit template references remote repositories"); fi
-  # Only what you switched on is checked; the rest stays as Ubuntu ships it
-  # (listed by './setup.sh --explain').
-  if have systemctl; then
-    while IFS= read -r u; do
-      if [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" == enabled ]]; then problems+=("$u is enabled"); fi
-    done < <(enabled_privacy_units)
-  fi
-  if on "$DISABLE_NM_CONNECTIVITY_CHECK" && [[ -d /etc/NetworkManager/conf.d && ! -f $NM_CONNECTIVITY_CONF ]]; then
-    problems+=("NetworkManager connectivity check is enabled"); fi
   # The runtime offline lock lives in ~/.bashrc.d; without the loader it is not active.
   if on "$ENFORCE_OFFLINE_ENV" && ! grep -q 'bashrc.d' "$HOME/.bashrc" 2>/dev/null; then
     warnings+=("~/.bashrc does not load ~/.bashrc.d, so the offline lock for uv/pip/cargo is not active in new shells (ENABLE_SHELL_LOADER=1, or add the loader yourself)"); fi
@@ -2777,13 +2710,7 @@ EOF
 # ============================================================================
 OPT_IN_CORE=(
   "TUNE_INOTIFY|raise the inotify limits (NEW file /etc/sysctl.d/60-dev-inotify.conf)"
-  "DISABLE_REPORTING_SERVICES|disable crash/problem reporting services (apport, whoopsie, kerneloops)"
-  "DISABLE_MOTD_NEWS|disable the MOTD news timer (motd-news.timer)"
-  "DISABLE_FWUPD_REFRESH|disable the firmware metadata refresh timer (fwupd-refresh.timer)"
-  "DISABLE_APT_NEWS|turn off APT news from Canonical ('pro config set apt_news=false')"
-  "DISABLE_NM_CONNECTIVITY_CHECK|turn off NetworkManager's connectivity probe (NEW file in /etc/NetworkManager/conf.d)"
   "SET_GNOME_FONT|set the GNOME monospace font (JetBrainsMono Nerd Font Mono 11; JetBrains Mono 11 without the Nerd Font)"
-  "SET_GNOME_PRIVACY|GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search"
   "JOIN_DOCKER_GROUP|add your user to group 'docker' (only with INSTALL_DOCKER=1; equivalent to root)"
   "ENABLE_SHELL_LOADER|append ONE marked block to ~/.bashrc that loads ~/.bashrc.d (aliases, PATH, prompt)"
   "SET_GIT_DEFAULTS|set global git defaults (only options you have not set yourself)"
@@ -2812,9 +2739,6 @@ show_opt_in() {
 # ============================================================================
 STEP_WHY["System tuning"]="(Only with TUNE_INOTIFY=1.) Raises the inotify limits so language servers and file watchers can watch large source trees."
 STEP_TOUCHES["System tuning"]="system: one NEW file /etc/sysctl.d/60-dev-inotify.conf (sudo)."
-
-STEP_WHY["Privacy hardening"]="(Only with the DISABLE_* switches.) Stops Ubuntu's own background reporting, one switch each: crash reports, MOTD news, the firmware-refresh timer, APT news, the network connectivity probe. Services are disabled, never masked or removed. It runs after all installs, because installing packages can switch such timers back on."
-STEP_TOUCHES["Privacy hardening"]="system, only for the switches that are on: disables services, a NEW file /etc/NetworkManager/conf.d/99-no-connectivity-check.conf, 'pro config set apt_news=false' (sudo)."
 
 STEP_WHY["Base CLI tools"]="Everyday command-line tools (git, ripgrep, fzf, jq, tmux, ...) and the tldr example pages."
 STEP_TOUCHES["Base CLI tools"]="apt packages; ~/.config/tealdeer/config.toml; network: tldr pages, once."
@@ -2868,7 +2792,7 @@ STEP_TOUCHES["Git setup"]="~/.config/lazygit/config.yml; ~/.gitconfig only with 
 STEP_WHY["Project templates"]="Starter files for new projects (formatter, linter, pre-commit and CMake presets), copied into a project by ws-init without overwriting anything."
 STEP_TOUCHES["Project templates"]="~/.local/share/workstation/templates."
 
-STEP_WHY["Desktop settings"]="(Only with SET_GNOME_FONT=1 and/or SET_GNOME_PRIVACY=1.) A readable monospace font (JetBrainsMono Nerd Font Mono, which the terminal follows), and GNOME privacy settings: no location services, no automatic time zone, no problem reports or usage stats, no web search in the Activities overview. Needs a desktop session."
+STEP_WHY["Desktop settings"]="(Only with SET_GNOME_FONT=1.) A readable monospace font (JetBrainsMono Nerd Font Mono, which the terminal follows). Ubuntu's own privacy and reporting settings are left as Ubuntu ships them. Needs a desktop session."
 STEP_TOUCHES["Desktop settings"]="GNOME settings of your user (dconf)."
 
 STEP_WHY["Offline cache: Python wheels"]="Downloads a local library of Python packages now, so uv and pip can install them later without network."
@@ -2970,14 +2894,8 @@ run_steps() {
   if on "$INSTALL_OH_MY_BASH";   then step "Oh My Bash"                oh_my_bash; fi
   step "Git setup"                     git_setup
   step "Project templates"             project_templates
-  if any_on "$SET_GNOME_FONT" "$SET_GNOME_PRIVACY"; then step "Desktop settings" desktop_tweaks; fi
+  if on "$SET_GNOME_FONT";        then step "Desktop settings"          desktop_tweaks; fi
   module_collect steps
-  # After every package install: installing packages can switch their timers on (a dependency
-  # pulls in motd-news.timer, fwupd-refresh.timer, apport ...), so disabling them earlier did not stick.
-  if any_on "$DISABLE_REPORTING_SERVICES" "$DISABLE_MOTD_NEWS" "$DISABLE_FWUPD_REFRESH" \
-            "$DISABLE_APT_NEWS" "$DISABLE_NM_CONNECTIVITY_CHECK"; then
-    step "Privacy hardening"           privacy_hardening
-  fi
   if on "$KEEP_DEFAULT_APPS";      then step "Keep default apps"                defaults_keep; fi
   if on "$CACHE_PYTHON";           then step "Offline cache: Python wheels"     cache_python; fi
   if on "$CACHE_RUST";             then step "Offline cache: Rust crates"       cache_rust; fi
@@ -3080,6 +2998,207 @@ reset_shell_mode() {
   ok "Done. Take it back any time with: ./setup.sh --undo $UNDO_FILE"
   echo "Next: ./setup.sh --profile work --check, then ./setup.sh --profile work   (--full for the shell loader too)."
   if (( ${#found[@]} )); then echo "Your zsh files are in $backup (delete that folder yourself when you are sure you do not need them)."; fi
+}
+
+# --reset-defaults: put the SYSTEM settings this setup can change back to UBUNTU'S OWN DEFAULT, and install
+# nothing (decided by the user: "a complete reset to ubuntu default only, ... not setting up but rather just
+# resetting"; scope: system settings). It covers everything any version of this setup could change outside
+# your own files, also what the removed switches did (older versions could switch off Ubuntu's crash reports,
+# MOTD news, firmware refresh, APT news, the connectivity probe and GNOME's privacy settings; the user decided
+# the setup must never stop Ubuntu's own telemetry or services). Only what differs from Ubuntu's default is
+# listed; every change is shown first, asked for, and recorded for --undo. Installed packages and tools, fonts,
+# editors and their settings, ~/.bashrc.d and your own files stay. Like --reset-shell and --undo it is an
+# explicit one-off command: it is not part of an install and --full never runs it.
+#
+# Units Ubuntu's packages ENABLE when they are installed ('deb-systemd-helper enable' in their postinst; read in
+# the 24.04 and 26.04 archives: apport, whoopsie, kerneloops (24.04 only), base-files, fwupd). Not in the list:
+# whoopsie.service (no [Install] section: whoopsie.path starts it) and apport.service (not shipped any more).
+UNITS_UBUNTU=(apport-autoreport.path apport-autoreport.timer whoopsie.path kerneloops.service
+              motd-news.timer fwupd-refresh.timer)
+# GNOME settings any version of this setup could change; reset to the schema default (Ubuntu's own).
+RESET_GSETTINGS=("org.gnome.desktop.interface monospace-font-name" "org.gnome.system.location enabled"
+                 "org.gnome.desktop.datetime automatic-timezone" "org.gnome.desktop.privacy report-technical-problems"
+                 "org.gnome.desktop.privacy send-software-usage-stats"
+                 "org.gnome.desktop.search-providers disable-external" "org.gnome.DejaDup backend")
+# Groups the setup can add you to that Ubuntu does not give a user. plugdev is not in it: Ubuntu puts the first
+# user in plugdev itself.
+RESET_GROUPS=(dialout wireshark docker)
+NM_CONNECTIVITY_TEXT=$'[connectivity]\nenabled=false\n'
+
+# Switches that older versions had: say once that they are gone instead of silently ignoring them.
+removed_switches_note() {
+  local v
+  for v in DISABLE_REPORTING_SERVICES DISABLE_MOTD_NEWS DISABLE_FWUPD_REFRESH DISABLE_APT_NEWS \
+           DISABLE_NM_CONNECTIVITY_CHECK SET_GNOME_PRIVACY; do
+    if [[ ${!v:-} == 1 ]]; then
+      warn "$v no longer exists and is ignored: this setup leaves Ubuntu's own services and privacy settings as Ubuntu ships them. To turn back what an older version switched off: ./setup.sh --reset-defaults"
+    fi
+  done
+}
+
+# True when FILE exists and holds exactly TEXT (the setup's own content, so it is ours to remove).
+file_has_text() { [[ -f $1 ]] && cmp -s "$1" <(printf '%s' "$2"); }
+# True when FILE (REL below /etc) still holds exactly what this setup wrote there.
+etc_is_ours() {
+  case "$1" in
+    NetworkManager/*) file_has_text "$2" "$NM_CONNECTIVITY_TEXT" ;;
+    sysctl.d/*)       file_has_text "$2" "$INOTIFY_CONF_TEXT" ;;
+    firefox/*)        cmp -s "$2" "$SCRIPT_DIR/modules/desktop/files/system/firefox-policies.json" ;;
+    thunderbird/*)    cmp -s "$2" "$SCRIPT_DIR/modules/desktop/files/system/thunderbird-policies.json" ;;
+    *)                return 1 ;;
+  esac
+}
+
+reset_defaults_mode() {
+  local user="${USER:-$(id -un)}" etc="${RESET_ETC_DIR:-/etc}" n=0 answer u state v s k cur def g mygroups kv f
+  local backup="$OUT_DIR/reset-backup-$TIMESTAMP" need_sudo=0 done_n=0 n_skip=0
+  local -a text=() act=() notes=() keys=()
+  if [[ "$(id -u)" == 0 ]]; then die "Run this as your normal user, not as root"; fi
+  _rd_add() { text+=("$1"); act+=("$2"); case "$2" in unit\|*|aptnews|etc\|*|wireshark|group\|*) need_sudo=1 ;; esac; }
+
+  # 1. Ubuntu's services
+  if have systemctl; then
+    for u in "${UNITS_UBUNTU[@]}"; do
+      state="$(systemctl is-enabled "$u" 2>/dev/null || true)"
+      case "$state" in
+        disabled) _rd_add "switch $u on again (Ubuntu enables it; it is disabled now)" "unit|$u" ;;
+        masked)   notes+=("$u is MASKED (this setup never masks): 'sudo systemctl unmask $u' if you want Ubuntu's default") ;;
+      esac
+    done
+  fi
+  # 2. APT news (Ubuntu's default: on)
+  if have pro; then
+    v="$(pro config show apt_news 2>/dev/null | awk '$1 == "apt_news" { print $2 }' || true)"
+    if [[ $v == False ]]; then _rd_add "APT news on again ('pro config set apt_news=true'; Ubuntu's default)" aptnews; fi
+  fi
+  # 3. Files below /etc that this setup wrote (removed only when they still hold exactly the setup's content)
+  for kv in "NetworkManager/conf.d/99-no-connectivity-check.conf|NetworkManager's connectivity probe on again" \
+            "sysctl.d/60-dev-inotify.conf|Ubuntu's inotify limits, from the next boot" \
+            "firefox/policies/policies.json|Firefox without the setup's policy file" \
+            "thunderbird/policies/policies.json|Thunderbird without the setup's policy file"; do
+    f="$etc/${kv%%|*}"
+    [[ -e $f ]] || continue
+    if etc_is_ours "${kv%%|*}" "$f"; then _rd_add "remove $f (${kv#*|})" "etc|$f"
+    else notes+=("$f exists but is not the setup's file (or was changed): left alone"); fi
+  done
+  # 4. Wireshark capture for non-root users (Ubuntu's default: off)
+  if dpkg -s wireshark-common >/dev/null 2>&1; then
+    v="$(debconf-show wireshark-common 2>/dev/null | awk -F': ' '/install-setuid/ { print $2 }' || true)"
+    if [[ $v == true ]]; then _rd_add "Wireshark: capture needs root again (debconf answer 'no' + dpkg-reconfigure; Ubuntu's default)" wireshark; fi
+  fi
+  # 5. Groups
+  mygroups=" $(id -nG "$user" 2>/dev/null || true) "
+  for g in "${RESET_GROUPS[@]}"; do
+    if [[ $mygroups == *" $g "* ]]; then _rd_add "leave group '$g' (Ubuntu does not add users to it; you may have joined it yourself: then answer no)" "group|$g"; fi
+  done
+  # 6. GNOME settings (reading needs no desktop session, writing does)
+  if have gsettings; then
+    for s in "${RESET_GSETTINGS[@]}"; do
+      read -r s k <<<"$s"
+      mapfile -t keys < <(gsettings list-keys "$s" 2>/dev/null || true)
+      [[ " ${keys[*]} " == *" $k "* ]] || continue
+      cur="$(gsettings get "$s" "$k" 2>/dev/null || true)"
+      def="$(GSETTINGS_BACKEND=memory gsettings get "$s" "$k" 2>/dev/null || true)"
+      if [[ -n $def && $cur != "$def" ]]; then _rd_add "GNOME $s $k: $cur -> $def (Ubuntu's default)" "gnome|$s|$k|$cur"; fi
+    done
+  fi
+  # 7. Global git defaults this setup sets (only where the value is still exactly the setup's)
+  if have git; then
+    for kv in "${GIT_DEFAULTS[@]}" "${GIT_DEFAULTS_DELTA[@]}"; do
+      cur="$(git config --global --get "${kv%%=*}" 2>/dev/null || true)"
+      if [[ $cur == "${kv#*=}" ]]; then _rd_add "git: remove global ${kv%%=*} = ${kv#*=}" "git|${kv%%=*}|${kv#*=}"; fi
+    done
+    if have git-lfs && [[ "$(git config --global --get filter.lfs.process 2>/dev/null || true)" == "git-lfs filter-process" ]]; then
+      _rd_add "git: remove the global Git LFS filter ('git lfs uninstall --skip-repo')" gitlfs
+    fi
+  fi
+  # 8. The block in ~/.bashrc that loads ~/.bashrc.d
+  if grep -qF '# >>> workstation-setup' "$HOME/.bashrc" 2>/dev/null; then
+    _rd_add "remove the setup's block from ~/.bashrc (new terminals stop loading ~/.bashrc.d: no aliases, prompt or PATH additions from it; a backup is kept)" bashrc
+  fi
+
+  section "Reset to Ubuntu's defaults (system settings; nothing is installed)"
+  if (( ${#text[@]} )); then
+    echo "These settings differ from Ubuntu's default and will be put back:"
+    for v in "${text[@]}"; do n=$((n + 1)); printf '  %d. %s\n' "$n" "$v"; done
+  else
+    ok "Nothing to do: every system setting this setup can change is at Ubuntu's default"
+  fi
+  for v in "${notes[@]}"; do warn "$v"; done
+  echo
+  echo "Not touched: installed packages and tools, the Nerd Font, editors and their settings, ~/.bashrc.d,"
+  echo "your login shell (see --reset-shell), file-type defaults in ~/.config/mimeapps.list, udev rules you"
+  echo "wrote with ws-devname, group plugdev (Ubuntu's own default for the first user). To take back an"
+  echo "install completely, use ./setup.sh --undo."
+  echo
+  (( ${#text[@]} )) || return 0
+  if (( DRY_RUN )); then ok "Dry run: nothing was changed"; return 0; fi
+  if (( ! ASSUME_YES )); then
+    [[ -t 0 && -t 1 ]] || die "Not a terminal: add --yes to run without asking"
+    read -rp "Put these back to Ubuntu's default? [y/N] " answer
+    [[ $answer == [yY] ]] || { echo "Nothing was changed."; return 1; }
+  fi
+  if (( need_sudo )); then sudo -v || die "sudo is needed for the system settings"; fi
+  init_undo_file
+  local a rest x
+  for (( x = 0; x < ${#act[@]}; x++ )); do
+    a="${act[x]}"; rest="${a#*|}"
+    case "$a" in
+      unit\|*)
+        record_undo "sudo systemctl disable $rest"
+        if sudo systemctl enable "$rest" >/dev/null 2>&1; then
+          sudo systemctl start "$rest" >/dev/null 2>&1 || true   # best effort (no running systemd in a container)
+          ok "Switched $rest on again"; done_n=$((done_n + 1))
+        else warn "Could not enable $rest"; n_skip=$((n_skip + 1)); fi ;;
+      aptnews)
+        record_undo "sudo pro config set apt_news=false"
+        if sudo pro config set apt_news=true >/dev/null 2>&1; then ok "APT news on again"; done_n=$((done_n + 1))
+        else warn "Could not switch APT news on"; n_skip=$((n_skip + 1)); fi ;;
+      etc\|*)
+        mkdir -p "$backup"; cp -p -- "$rest" "$backup/${rest//\//_}"
+        record_undo "sudo install -D -m 644 $(printf %q "$backup/${rest//\//_}") $(printf %q "$rest")"
+        if sudo rm -f -- "$rest"; then
+          # only the policies folders were created by the setup; conf.d and sysctl.d belong to their packages
+          if [[ $rest == */policies/policies.json ]]; then sudo rmdir --ignore-fail-on-non-empty -- "$(dirname "$rest")" 2>/dev/null || true; fi
+          if [[ $rest == */NetworkManager/* ]]; then sudo systemctl reload NetworkManager >/dev/null 2>&1 || true; fi
+          ok "Removed $rest"; done_n=$((done_n + 1))
+        else warn "Could not remove $rest"; n_skip=$((n_skip + 1)); fi ;;
+      wireshark)
+        record_undo "echo 'wireshark-common wireshark-common/install-setuid boolean true' | sudo debconf-set-selections && sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common"
+        if echo 'wireshark-common wireshark-common/install-setuid boolean false' | sudo debconf-set-selections \
+           && sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common >/dev/null 2>&1; then
+          ok "Wireshark capture needs root again"; done_n=$((done_n + 1))
+        else warn "Could not reconfigure wireshark-common"; n_skip=$((n_skip + 1)); fi ;;
+      group\|*)
+        record_undo "sudo usermod -aG $rest $(printf %q "$user")"
+        if sudo gpasswd -d "$user" "$rest" >/dev/null 2>&1; then ok "Left group '$rest' (takes effect at your next login)"; done_n=$((done_n + 1))
+        else warn "Could not leave group '$rest'"; n_skip=$((n_skip + 1)); fi ;;
+      gnome\|*)
+        IFS='|' read -r s k cur <<<"$rest"
+        if ! have_desktop_session; then warn "GNOME $s $k: needs your desktop session (run this from a terminal on your desktop)"; n_skip=$((n_skip + 1)); continue; fi
+        record_undo "gsettings set $s $k $(printf %q "$cur")"
+        if gsettings reset "$s" "$k"; then ok "GNOME $s $k is Ubuntu's default again"; done_n=$((done_n + 1))
+        else warn "Could not reset $s $k"; n_skip=$((n_skip + 1)); fi ;;
+      git\|*)
+        record_undo "git config --global $(printf %q "${rest%%|*}") $(printf %q "${rest#*|}")"
+        if git config --global --unset "${rest%%|*}"; then ok "git: removed global ${rest%%|*}"; done_n=$((done_n + 1))
+        else warn "Could not remove git ${rest%%|*}"; n_skip=$((n_skip + 1)); fi ;;
+      gitlfs)
+        record_undo "git lfs install --skip-repo"
+        if git lfs uninstall --skip-repo >/dev/null 2>&1; then ok "git: removed the global Git LFS filter"; done_n=$((done_n + 1))
+        else warn "Could not remove the Git LFS filter"; n_skip=$((n_skip + 1)); fi ;;
+      bashrc)
+        mkdir -p "$backup"; cp -p -- "$HOME/.bashrc" "$backup/bashrc"
+        record_undo "cp -p $(printf %q "$backup/bashrc") ~/.bashrc"
+        if sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' "$HOME/.bashrc"; then
+          ok "Removed the setup's block from ~/.bashrc (new terminals)"; done_n=$((done_n + 1))
+        else warn "Could not edit ~/.bashrc"; n_skip=$((n_skip + 1)); fi ;;
+    esac
+  done
+  echo
+  if (( n_skip )); then warn "$n_skip change(s) could not be made (see above)"; fi
+  ok "Done: $done_n setting(s) are Ubuntu's default again."
+  echo "Take it back any time with: ./setup.sh --undo $UNDO_FILE"
 }
 
 # --undo: replay an undo file newest-first. The commands are the ones this setup
@@ -3206,7 +3325,9 @@ main() {
   if (( LIST_PROFILES )); then list_profiles; return 0; fi
   if [[ $MODE == undo ]]; then undo_mode; return; fi
   if [[ $MODE == reset-shell ]]; then reset_shell_mode; return; fi
+  if [[ $MODE == reset-defaults ]]; then reset_defaults_mode; return; fi
   load_config
+  removed_switches_note
   case "$MODE" in
     check)    check_mode; return 0 ;;
     explain)  explain_mode; return 0 ;;

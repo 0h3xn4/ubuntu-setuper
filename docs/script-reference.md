@@ -50,6 +50,7 @@ Make your own profile by copying a file in `profiles/`; it only needs
 |---|---|
 | `./setup.sh --profile NAME` | Choose the profile (remembered afterwards) |
 | `./setup.sh --undo [FILE]` | Take back an install run: replays the newest `~/workstation-setup/workstation-undo-*.sh` (or FILE) newest-first after listing every command and asking. `--dry-run` only lists, `--yes` skips the question. Never removes APT packages. Works on the manual guide's `~/workstation-setup/workstation-undo.sh` too (and on undo files that earlier versions left in `~`) |
+| `./setup.sh --reset-defaults` | Puts every **system setting** this setup (any version of it) can change back to **Ubuntu's own default**, installing nothing: Ubuntu's services that Ubuntu enables (`apport-autoreport.path`/`.timer`, `whoopsie.path`, `kerneloops.service`, `motd-news.timer`, `fwupd-refresh.timer`) on again when they are disabled (a masked one is reported, not touched), APT news on, the setup's files below `/etc` removed when they still hold exactly the setup's content (connectivity probe, inotify limits, Firefox/Thunderbird policies), Wireshark capture back to root only, groups `dialout`/`wireshark`/`docker` left (`plugdev` stays: Ubuntu gives it to the first user), GNOME settings any version could change reset to the schema default, the setup's global git defaults removed where the value is still the setup's, and the `~/.bashrc` loader block removed (backup kept). Only what differs from Ubuntu's default is listed. Lists first and asks (`--dry-run`, `--yes`); recorded, so `./setup.sh --undo` takes it back. Tools, fonts, editors, `~/.bashrc.d` and your files stay. A one-off command like `--undo`: not part of an install, `--full` never runs it |
 | `./setup.sh --reset-shell` | For someone coming from **zsh / Oh My Zsh** (this setup is for bash): moves their zsh files (`~/.oh-my-zsh`, `~/.zshrc`, `~/.zshenv`, `~/.zsh_history`, ...) into `~/workstation-shell-backup-<time>/` (nothing is deleted; symlinks are moved as links), copies `~/.bashrc` / `~/.profile` from `/etc/skel` if missing, and makes bash the login shell (`sudo usermod -s /bin/bash`, effective at the next login). Lists every change first and asks (`--dry-run` only lists, `--yes` skips the question); `./setup.sh --undo` takes it back. The `zsh` package is never removed. An explicit one-off command like `--undo`: not part of an install, and `--full` does not turn it on |
 | `./setup.sh --full` | The **full setup**: switch on every opt-in system change (services, `/etc` drop-ins, groups, GNOME settings, `~/.bashrc` loader, git defaults, browser policies). Switches you set yourself in the environment still win. Also `FULL_SETUP=1`. Asks for confirmation in a terminal. Combine with `--explain`/`--check` to preview. Pass it to `--self-test` too so the extra changes are verified |
 | `./setup.sh --explain` | Plain-language tour of every step this profile runs: what it does, why, where it changes things; plus which system changes are on or off. Changes nothing, needs no network |
@@ -90,6 +91,7 @@ Precedence of settings: environment > lock (versions only) > profile >
 anything there). The setup never edits your existing `~/.bashrc.d/10-workstation.sh`; if that earlier version still looks for
 `~/WORKSTATION-CHEATSHEET.md`, a link is left there (recorded for `--undo`) and can be deleted once you replace the file.
 The `--reset-shell` backup folder (`~/workstation-shell-backup-<time>/`) stays where it is: it holds your own zsh files.
+`--reset-defaults` keeps the files it removes (and `~/.bashrc` before its edit) in `~/workstation-setup/reset-backup-<time>/`; its undo copies them back from there.
 
 ### Starter files in projects
 
@@ -143,9 +145,7 @@ is switched off by the policy file.
 **System changes are opt-in.** By default the setup only installs packages
 and writes new files in your home directory. Everything that touches the
 system or your login files has its own switch, **off by default**:
-`TUNE_INOTIFY`, `DISABLE_REPORTING_SERVICES`, `DISABLE_MOTD_NEWS`,
-`DISABLE_FWUPD_REFRESH`, `DISABLE_APT_NEWS`, `DISABLE_NM_CONNECTIVITY_CHECK`,
-`SET_GNOME_FONT`, `SET_GNOME_PRIVACY`, `JOIN_DOCKER_GROUP`,
+`TUNE_INOTIFY`, `SET_GNOME_FONT`, `JOIN_DOCKER_GROUP`,
 `ENABLE_SHELL_LOADER` (the ~/.bashrc block), `SET_GIT_DEFAULTS`, `INSTALL_OH_MY_BASH`
 (Oh My Bash from one pinned commit, loaded from `~/.bashrc.d` with its update
 check off; its own installer is never used; it replaces the starship prompt), and the
@@ -153,6 +153,14 @@ modules' `JOIN_SERIAL_GROUPS`, `JOIN_WIRESHARK_GROUP`,
 `DESKTOP_BROWSER_POLICIES`. `--explain`, `--check` and the install summary
 list them with their state. Without `ENABLE_SHELL_LOADER` the shell setup
 is installed but inactive (the summary prints the line to add yourself).
+
+**Ubuntu's own services and telemetry are never touched** (decided by the user: the setup must not stop
+Ubuntu's default telemetry, and leaves all of Ubuntu's own services as Ubuntu ships them). Crash reports
+(apport, whoopsie, kerneloops), `motd-news`, the `fwupd` refresh, APT news, NetworkManager's connectivity
+probe and GNOME's privacy settings stay as they are. The no-cloud policy above is about the tools the setup
+installs. Older versions had switches for these (`DISABLE_REPORTING_SERVICES`, `DISABLE_MOTD_NEWS`,
+`DISABLE_FWUPD_REFRESH`, `DISABLE_APT_NEWS`, `DISABLE_NM_CONNECTIVITY_CHECK`, `SET_GNOME_PRIVACY`); they are
+gone, the script warns if one is still set, and `./setup.sh --reset-defaults` puts back what such a version changed.
 
 **Fonts.** `INSTALL_NERD_FONT` (on by default) installs JetBrains Mono Nerd Font
 for your user in `~/.local/share/fonts` (one checksum-verified download from
@@ -231,7 +239,7 @@ desktop module only places policy files for Firefox and Thunderbird.
 |---|---|
 | `tools/check-all.sh [--quick]` | Every check of this repository: `shellcheck`/`bash -n`, JSON/TOML/YAML parsing, README sync, the README's code blocks, `--explain`/`--check` for every profile; without `--quick` also functional tests in a throw-away `HOME` (`ws-init`, `ws-doctor`, `--undo`, manifest diff, the checksum-verified download helper incl. a tamper test, the LibreOffice helper) |
 | `tools/check-readme-sync.sh` | Fails if the README misses a package, tool, home file, step, switch, option or privacy service the script knows about |
-| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine (12 phases; the eleventh is a zsh user: real zsh, `--reset-shell`, `--undo`; the twelfth installs starship from its real release): explain/check, full install, self-test (a skipped RISC-V QEMU test counts as a failure), `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock (must pin the Rust toolchain, uv and, when installed, Node.js), uv, Helix, Neovim and lazygit must come from upstream (`~/.local/bin`, not Ubuntu; rustup too in the container jobs), the default install must not block `uv`/`cargo`, no record file may be loose in `~`, `--undo`, leftovers (incl. `~/.local/opt` and the node/npm/npx links). Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
+| `tools/e2e.sh --profile P --i-know-this-machine-is-disposable` | Full end-to-end test on a DISPOSABLE Ubuntu machine (13 phases; the eleventh is a zsh user: real zsh, `--reset-shell`, `--undo`; the twelfth installs starship from its real release; the thirteenth checks that the full install left Ubuntu's own services as they were, then puts what an older version could leave behind back with `--reset-defaults` and restores it with `--undo`): explain/check, full install, self-test (a skipped RISC-V QEMU test counts as a failure), `ws-doctor` in a new shell, shell checks, idempotent re-install, manifest, lock (must pin the Rust toolchain, uv and, when installed, Node.js), uv, Helix, Neovim and lazygit must come from upstream (`~/.local/bin`, not Ubuntu; rustup too in the container jobs), the default install must not block `uv`/`cargo`, no record file may be loose in `~`, `--undo`, leftovers (incl. `~/.local/opt` and the node/npm/npx links). Env: `E2E_SWITCHES`, `E2E_ALLOW_FAILED_STEPS`, `E2E_ALLOW_MISSING`, `E2E_LOG_DIR`. `--plan` shows the phases. Run by `.github/workflows/e2e.yml` |
 | `tools/manifest-diff.sh A B` | Compare two manifests (two machines, or manual vs scripted setup), ignoring host, user, CPU, kernel, hashes and dates |
 | `tools/install-hooks.sh` | Enable the git pre-commit hook (`check-all.sh --quick`) in this clone |
 

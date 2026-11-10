@@ -27,10 +27,10 @@ lists them all.
 - [How well tested is this?](#how-well-tested-is-this)
 - [Rules this guide follows](#rules-this-guide-follows)
 - [How to use this guide](#how-to-use-this-guide)
-- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 privacy *(opt-in)*, A7 coming from zsh *(only if you use zsh)*
+- [Part A. Preparation](#part-a-preparation): A1 check the system, A2 helpers, A3 package lists, A4 (no system upgrade), A5 tuning *(opt-in)*, A6 Ubuntu's own services *(left alone)*, A7 coming from zsh *(only if you use zsh)*
 - [Part B. Core](#part-b-core-always): B1 CLI tools ... B13 desktop settings, B14 Nerd Font, B15 Oh My Bash *(opt-in)*, B16 Kate, B17 Neovim, B18 default apps
 - [Part C. Optional parts](#part-c-optional-parts): C1 embedded, C2 desktop
-- [Part D. Offline caches and lock-down](#part-d-offline-caches-and-lock-down)
+- [Part D. Offline caches and lock-down](#part-d-offline-caches-and-the-optional-strict-lock)
 - [Part E. Verify](#part-e-verify)
 - [Part F. Record, pin and undo](#part-f-record-pin-and-undo)
 - [Troubleshooting](#troubleshooting)
@@ -71,13 +71,7 @@ only if you want it. The script lists them with their state:
 | Switch | What it does | Where this guide covers it | Undo |
 |---|---|---|---|
 | `TUNE_INOTIFY` | New file `/etc/sysctl.d/60-dev-inotify.conf`: more file watches, so language servers cope with big source trees | [A5](#a5-system-tuning) | delete the file |
-| `DISABLE_REPORTING_SERVICES` | Disables crash and problem reporting: `apport`, `whoopsie`, `kerneloops` | [A6](#a6-privacy-hardening-at-os-level) | `systemctl enable` |
-| `DISABLE_MOTD_NEWS` | Disables `motd-news.timer` (news fetched at login) | A6 | `systemctl enable` |
-| `DISABLE_FWUPD_REFRESH` | Disables `fwupd-refresh.timer` (firmware metadata refresh) | A6 | `systemctl enable` |
-| `DISABLE_APT_NEWS` | `pro config set apt_news=false` (messages apt fetches from Canonical) | A6 | `pro config set apt_news=true` |
-| `DISABLE_NM_CONNECTIVITY_CHECK` | New file in `/etc/NetworkManager/conf.d/`: no periodic connectivity probe | A6 | delete the file |
-| `SET_GNOME_FONT` | GNOME monospace font: JetBrainsMono Nerd Font Mono 11 (JetBrains Mono 11 without B14) | [B13](#b13-desktop-gnome-settings) | `gsettings set` back |
-| `SET_GNOME_PRIVACY` | GNOME: no location, no automatic time zone, no problem reports, no usage stats, no web search in Activities | B13 | `gsettings set` back |
+| `SET_GNOME_FONT` | GNOME monospace font: JetBrainsMono Nerd Font Mono 11 (JetBrains Mono 11 without B14) | [B13](#b13-desktop-gnome-settings) | `gsettings reset` (Ubuntu's default) |
 | `JOIN_DOCKER_GROUP` | Adds you to group `docker` (equivalent to root; only if you install Docker) | [B9](#b9-containers-optional-install_podman-install_docker) | `gpasswd -d` |
 | `ENABLE_SHELL_LOADER` | Appends one marked block to `~/.bashrc` that loads `~/.bashrc.d` (aliases, PATH, prompt) | [B10](#b10-shell-bash) | delete the block |
 | `SET_GIT_DEFAULTS` | Global git defaults, only options you have not set | [B11](#b11-git) | `git config --unset` |
@@ -86,12 +80,17 @@ only if you want it. The script lists them with their state:
 | `JOIN_WIRESHARK_GROUP` | *(embedded)* lets group `wireshark` capture without root (debconf answer, group) | C1 | `dpkg-reconfigure`, `gpasswd -d` |
 | `DESKTOP_BROWSER_POLICIES` | *(desktop)* new policy files below `/etc/firefox` and `/etc/thunderbird` | [C2](#c2-desktop-part-personal-profile) | delete the files |
 
-In the script, the privacy changes (A6) run *after* all package installs, because installing a
-package can switch its timer back on; the guide lists A6 early only to keep the opt-in sections together.
+**Not in this table, on purpose: Ubuntu's own services and telemetry.** Crash reports (apport, whoopsie,
+kerneloops), the login news (`motd-news`), the firmware list refresh (`fwupd`), APT news, NetworkManager's
+connectivity probe and GNOME's privacy settings (problem reports, usage statistics, location, automatic time zone,
+web search) stay exactly as Ubuntu ships them: the setup never switches them off (your decision; see
+[A6](#a6-ubuntus-own-services-and-telemetry-left-alone)). Older versions of the setup had switches for them; to
+put back what such a version changed: `./setup.sh --reset-defaults`
+([Reset to Ubuntu's defaults](#reset-to-ubuntus-defaults-without-installing-anything)).
 
 **The full setup.** To do all of them: in this guide, do every section marked
-**[opt-in]** (A5, all five blocks of A6, the Docker group in B9, the loader in
-B10, the git defaults in B11, both parts of B13, the groups and Wireshark
+**[opt-in]** (A5, the Docker group in B9, the loader in
+B10, the git defaults in B11, the font in B13, the groups and Wireshark
 group in C1, and the policy files in C2). With the script it is one option:
 `./setup.sh --profile work --full` (or `FULL_SETUP=1`). `--full` switches on
 every opt-in change, except any switch you set yourself
@@ -241,7 +240,12 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   again, tested against the real `usermod`) and then `--undo` (zsh and the files come back). A
   twelfth phase installs starship from its real release with the published checksum, runs it and
   installs it a second time (skipped because the newest release is already there); the main
-  install cannot test this because `--full` turns Oh My Bash on, which owns the prompt.
+  install cannot test this because `--full` turns Oh My Bash on, which owns the prompt. A
+  thirteenth phase checks that the full install left Ubuntu's own services exactly as they were, then
+  recreates what an older version could leave behind and puts it back with `--reset-defaults`
+  (against the real `systemctl`, `sudo` and git), and `--undo` restores it. It passed in all eight jobs
+  (run #39), and on its first try it found two settings the normal `--undo` had left behind (Wireshark's
+  non-root capture, the global Git LFS filter), both fixed.
   The shell-setup phase also checks the aliases themselves in a new shell (`ls`, `ll`, `la`
   must be `eza`, `grep` must be ours) with the real Oh My Bash switched on: that check exists
   because a real-machine run found Oh My Bash replacing them, which the tests had missed;
@@ -284,7 +288,7 @@ Be skeptical, and check for yourself; this is what has and has not been verified
 - **Not yet verified:** the desktop apps' settings (written
   from documentation, not from running each app), the Firefox/Thunderbird policy
   files (do they apply to the snaps? check `about:policies`), the GNOME
-  settings (`SET_GNOME_FONT`, `SET_GNOME_PRIVACY`) and how the icons look in a
+  font setting (`SET_GNOME_FONT`), `--reset-defaults` on a real desktop, and how the icons look in a
   real terminal, and everything on a real desktop. Also not run yet: the lock files
 (`locks/`) are not committed, so version pinning has been tested (the lock phase of
 the E2E test) but no real pins exist.
@@ -300,7 +304,9 @@ machine ends up in the same state.
    JSON/YAML language servers) are never installed. For apps that are
    networked by nature (browser, mail): traffic *you* direct to a
    destination *you* chose is fine; anything automatic or in the background
-   is not.
+   is not. This rule is about the tools the setup installs: **Ubuntu's own**
+   telemetry and services (crash reports, news, firmware refresh, GNOME's
+   privacy settings) are not switched off (your decision, [A6](#a6-ubuntus-own-services-and-telemetry-left-alone)).
 2. **Don't break Ubuntu.**
    - **Changes to the system itself are opt-in**: off unless you switch
      them on (table above). By default only `apt` installs and new files in
@@ -316,7 +322,7 @@ machine ends up in the same state.
    - Never edit a file that belongs to a package (it would cause conffile
      prompts that block unattended security updates). Add *new* files
      (drop-ins) instead, and never overwrite an existing one.
-   - Disable services, never mask them. Do not touch kernel, boot,
+   - No service is disabled or masked: Ubuntu's services stay as Ubuntu ships them. Do not touch kernel, boot,
      coreutils or APT sources.
 3. **Everything reversible.** Each section ends with an **Undo** line. The
    helpers in A2 also append the undo commands for the files you create to
@@ -385,7 +391,7 @@ Older releases (22.04 and before) are too old for the tools used here (for
 example Python 3.11+ is needed); a non-LTS release or a newer LTS than 26.04 has not
 been verified, so check every package name before you rely on it.
 Also make sure you can use `sudo`, and run this guide from a logged-in
-desktop session (A6 and B13 change GNOME settings).
+desktop session (B13 changes a GNOME setting).
 
 ## A2. Helpers
 
@@ -563,67 +569,23 @@ fi
 
 Undo: `sudo rm -f /etc/sysctl.d/60-dev-inotify.conf`.
 
-## A6. Privacy hardening at OS level
+## A6. Ubuntu's own services and telemetry *(left alone)*
 
-> **[opt-in: `DISABLE_REPORTING_SERVICES`, `DISABLE_MOTD_NEWS`,
-> `DISABLE_FWUPD_REFRESH`, `DISABLE_APT_NEWS`,
-> `DISABLE_NM_CONNECTIVITY_CHECK`]** Five independent switches: do only the
-> blocks you want. Skip the whole section to keep Ubuntu's defaults.
+**Nothing to do here, on purpose.** Ubuntu's own background services stay exactly as Ubuntu ships them:
+crash and problem reports (`apport`, `whoopsie`, `kerneloops`), the news shown at login (`motd-news`), the
+firmware list refresh (`fwupd`), APT news, NetworkManager's connectivity probe, and GNOME's privacy settings
+(problem reports, usage statistics, location services, automatic time zone, web search in the overview).
+They are Ubuntu's business, not this setup's (your decision: the setup must not stop Ubuntu's default telemetry).
+The no-cloud rule applies to the tools the *setup* installs.
 
-*Mirrors `step "Privacy hardening"`, function `privacy_hardening`.*
+If you want to change one of them, Ubuntu's own **Settings** app does it (*Privacy & Security*), and you
+can take it back there too.
 
-> **Order matters:** the script runs this step *after* all package installs (end of
-> Part C), because installing a package can switch its timer back on (a dependency
-> pulled in `motd-news.timer` in the end-to-end test). In this manual, do A6 after
-> Parts B and C, or re-check with `systemctl is-enabled` afterwards.
-
-Only services are **disabled** (not masked, not removed) and new drop-in
-files are added, so updates keep working. These are Ubuntu's own background
-features (reports, news, probes), not tools of this setup, which is why they
-are your choice.
-
-```bash
-# DISABLE_REPORTING_SERVICES: crash/problem reporting, kernel oops reports
-for u in apport.service apport-autoreport.path apport-autoreport.timer \
-         whoopsie.service whoopsie.path kerneloops.service; do
-  if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-    sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
-    sudo systemctl stop "$u" || true     # best effort: a container has no running systemd
-  fi
-done
-
-# DISABLE_MOTD_NEWS: news fetched at login
-u=motd-news.timer
-if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-  sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
-  sudo systemctl stop "$u" || true
-fi
-
-# DISABLE_FWUPD_REFRESH: periodic firmware metadata refresh
-u=fwupd-refresh.timer
-if [ "$(systemctl is-enabled "$u" 2>/dev/null)" = enabled ]; then
-  sudo systemctl disable "$u" && record_undo "sudo systemctl enable $u"
-  sudo systemctl stop "$u" || true
-fi
-
-# DISABLE_APT_NEWS: messages fetched from Canonical when you run apt
-if command -v pro >/dev/null && sudo pro config set apt_news=false; then
-  record_undo "sudo pro config set apt_news=true"
-fi
-
-# DISABLE_NM_CONNECTIVITY_CHECK: NetworkManager's periodic connectivity probe (new drop-in file)
-f=/etc/NetworkManager/conf.d/99-no-connectivity-check.conf
-if [ -d /etc/NetworkManager/conf.d ] && [ ! -e "$f" ]; then
-  printf '[connectivity]\nenabled=false\n' | sudo tee "$f" >/dev/null
-  sudo systemctl reload NetworkManager
-  record_undo "sudo rm -f $f && sudo systemctl reload NetworkManager"
-fi
-```
-
-GNOME-level privacy settings (location, automatic time zone, problem
-reports, web search in the Activities overview) are in [B13](#b13-desktop-gnome-settings).
-
-Undo: the `record_undo` lines above; the commands are in `~/workstation-setup/workstation-undo.sh`.
+**An older version of this setup switched some of them off?** (Its switches were called `DISABLE_REPORTING_SERVICES`,
+`DISABLE_MOTD_NEWS`, `DISABLE_FWUPD_REFRESH`, `DISABLE_APT_NEWS`, `DISABLE_NM_CONNECTIVITY_CHECK` and `SET_GNOME_PRIVACY`,
+and `--full` turned them on.) Put them back with `./setup.sh --reset-defaults`, or by hand as described in
+[Reset to Ubuntu's defaults](#reset-to-ubuntus-defaults-without-installing-anything). The script now ignores those
+switches and says so if one is still set.
 
 ## A7. Coming from zsh or Oh My Zsh *(only if you use zsh)*
 
@@ -1009,7 +971,7 @@ apt_install docker.io docker-compose-v2 docker-buildx
 > `sudo usermod -aG docker "$USER" && record_undo "sudo gpasswd -d $USER docker"`
 
 Images and the "never pull implicitly" setting come later, in
-[D3](#d3-container-images-and-pull-policy).
+[D3](#d3-container-images-and-pull-policy-optional-cache_container_images).
 
 ## B10. Shell (bash)
 
@@ -1125,7 +1087,10 @@ if command -v delta >/dev/null; then
   git_set delta.navigate true
   git_set delta.line-numbers true
 fi
-command -v git-lfs >/dev/null && git lfs install --skip-repo
+if command -v git-lfs >/dev/null; then
+  git config --global --get filter.lfs.process >/dev/null || record_undo "git lfs uninstall --skip-repo"
+  git lfs install --skip-repo
+fi
 ```
 
 (Your identity, if not set yet: `git config --global user.name "Your Name"`
@@ -1161,27 +1126,19 @@ starter-file sets are installed.
 
 ## B13. Desktop (GNOME) settings
 
-> **[opt-in: `SET_GNOME_FONT`, `SET_GNOME_PRIVACY`]** Two independent
-> switches: the font line, and the privacy block. Skip this section to keep
-> GNOME's defaults.
+> **[opt-in: `SET_GNOME_FONT`]** The font line. Skip this section to keep
+> GNOME's defaults. GNOME's privacy settings are not touched ([A6](#a6-ubuntus-own-services-and-telemetry-left-alone)).
 
 *Mirrors `step "Desktop settings"`, function `desktop_tweaks`. Needs a
-logged-in GNOME session. Each `gset` prints and records the previous value.*
+logged-in GNOME session. The undo puts Ubuntu's own default back (`gsettings reset`).*
 
 ```bash
 gset() {   # gset SCHEMA KEY VALUE
-  local old; old="$(gsettings get "$1" "$2")" || return 0
-  gsettings set "$1" "$2" "$3" && record_undo "gsettings set $1 $2 $(printf %q "$old")"
+  gsettings get "$1" "$2" >/dev/null || return 0
+  gsettings set "$1" "$2" "$3" && record_undo "gsettings reset $1 $2"
 }
 # SET_GNOME_FONT: Ubuntu's default monospace font is small; the terminal follows this setting
 gset org.gnome.desktop.interface monospace-font-name 'JetBrainsMono Nerd Font Mono 11'   # needs B14; else 'JetBrains Mono 11'
-# SET_GNOME_PRIVACY
-gset org.gnome.system.location enabled false
-gset org.gnome.desktop.datetime automatic-timezone false
-gset org.gnome.desktop.privacy report-technical-problems false
-gset org.gnome.desktop.privacy send-software-usage-stats false
-# no web / Snap Store search in the Activities overview (installed apps still found)
-gset org.gnome.desktop.search-providers disable-external true
 ```
 
 Leave **GNOME Online Accounts** (Settings > Online Accounts) empty. Accounts
@@ -1474,7 +1431,7 @@ apt_install wireshark
 ```bash
 echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
 sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common
-record_undo "sudo dpkg-reconfigure wireshark-common   # answer 'No' to disallow non-root capture"
+record_undo "echo 'wireshark-common wireshark-common/install-setuid boolean false' | sudo debconf-set-selections && sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common"
 sudo usermod -aG wireshark "$USER" && record_undo "sudo gpasswd -d $USER wireshark"
 ```
 
@@ -1863,7 +1820,7 @@ import tomllib, os
 l = {x["name"]: x for x in tomllib.load(open(os.path.expanduser("~/.config/helix/languages.toml"), "rb"))["language"]}
 print("json/yaml language servers disabled:", all(l[n].get("language-servers") == [] for n in ("json", "yaml")))
 EOF
-systemctl is-enabled apport.service whoopsie.service motd-news.timer fwupd-refresh.timer 2>&1   # "disabled" only for the A6 switches you chose; otherwise Ubuntu's defaults stay
+systemctl is-enabled whoopsie.path motd-news.timer fwupd-refresh.timer 2>&1   # "enabled": Ubuntu's own default, which this setup never changes (A6)
 ls ~/.config/goa-1.0/accounts.conf 2>&1                        # should not exist (no online accounts)
 ```
 
@@ -1876,6 +1833,10 @@ be fully isolated; they should point at internal infrastructure:
 - `snapd` (Firefox, Thunderbird, App Center): a Snap Store proxy, or remove/hold snaps.
 - `chrony` time sync (NTS, Ubuntu servers): an internal NTP server.
 - Ubuntu Insights is opt-in: decline any consent prompt.
+- Ubuntu's own reporting and news (crash reports, `motd-news`, the `fwupd` firmware list, APT news,
+  NetworkManager's connectivity probe, GNOME's problem reports and usage statistics): this setup leaves them
+  as Ubuntu ships them ([A6](#a6-ubuntus-own-services-and-telemetry-left-alone)); switch them off in Ubuntu's
+  Settings or with your IT if your machine must not send them.
 
 ---
 
@@ -1936,6 +1897,65 @@ security updates. The manifest records them instead.
 To move to newer versions deliberately: install the newest versions (drop
 the pins), run Part E, then record a new manifest.
 
+## Reset to Ubuntu's defaults (without installing anything)
+
+*Mirrors `./setup.sh --reset-defaults`, function `reset_defaults_mode`.* Puts every **system setting** that
+this setup (any version of it) can change back to Ubuntu's own default, and installs nothing. Installed packages
+and tools, the Nerd Font, the editors and their settings, `~/.bashrc.d` and your own files stay; to take back an
+install completely, use [Undo](#undo). The script lists only what differs from Ubuntu's default, asks first
+(`--dry-run` only lists, `--yes` skips the question) and records every change, so `./setup.sh --undo` takes the
+reset back. It is a one-off command like `--undo`: an install never runs it, and `--full` does not either.
+
+```bash
+./setup.sh --reset-defaults --dry-run   # the list, nothing changed
+./setup.sh --reset-defaults             # the list, then the question
+```
+
+What it puts back, and the same by hand (each line only if it applies to you):
+
+```bash
+# 1. Ubuntu's services that an older version could switch off: these are the ones Ubuntu's packages enable
+#    (read in the 24.04 and 26.04 archives; kerneloops exists on 24.04 only). Only "disabled" ones; a "masked"
+#    one was masked by someone else (this setup never masks): it is reported, not touched.
+for u in apport-autoreport.path apport-autoreport.timer whoopsie.path kerneloops.service motd-news.timer fwupd-refresh.timer; do
+  [ "$(systemctl is-enabled "$u" 2>/dev/null)" = disabled ] && sudo systemctl enable --now "$u"
+done
+# 2. APT news (Ubuntu's default: on)
+pro config show apt_news                  # "apt_news False" means it was switched off
+sudo pro config set apt_news=true
+# 3. Files below /etc that the setup wrote (only if they still hold exactly the setup's content)
+sudo rm -f /etc/NetworkManager/conf.d/99-no-connectivity-check.conf && sudo systemctl reload NetworkManager
+sudo rm -f /etc/sysctl.d/60-dev-inotify.conf                          # Ubuntu's limits again from the next boot
+sudo rm -f /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json
+# 4. Wireshark capture needs root again (Ubuntu's default)
+echo 'wireshark-common wireshark-common/install-setuid boolean false' | sudo debconf-set-selections
+sudo dpkg-reconfigure -f noninteractive wireshark-common
+# 5. Groups the setup can add you to that Ubuntu does not (plugdev stays: Ubuntu gives it to the first user)
+id -nG                                     # then, for dialout, wireshark, docker if listed and not your own choice:
+sudo gpasswd -d "$USER" dialout
+# 6. GNOME settings any version could change, back to Ubuntu's default (in your desktop session)
+for k in "org.gnome.desktop.interface monospace-font-name" "org.gnome.system.location enabled" \
+         "org.gnome.desktop.datetime automatic-timezone" "org.gnome.desktop.privacy report-technical-problems" \
+         "org.gnome.desktop.privacy send-software-usage-stats" "org.gnome.desktop.search-providers disable-external" \
+         "org.gnome.DejaDup backend"; do
+  gsettings reset $k
+done
+# 7. The global git defaults of B11, only where the value is still the setup's (git config --global --list shows them)
+git config --global --unset init.defaultBranch      # ... and pull.rebase, rerere.enabled, fetch.prune, push.autoSetupRemote,
+                                                    # merge.conflictStyle, diff.colorMoved, core.pager, interactive.diffFilter,
+                                                    # delta.navigate, delta.line-numbers; Git LFS: git lfs uninstall --skip-repo
+# 8. The block in ~/.bashrc that loads ~/.bashrc.d (new terminals then load none of the setup's shell files)
+cp ~/.bashrc ~/.bashrc.before-reset
+sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' ~/.bashrc
+```
+
+Things the script decides for you and the manual leaves to you: it removes a file below `/etc` only when it still
+holds exactly the setup's content (a changed file is reported and left alone), it removes a git setting only when its
+value is still the setup's (your own value of the same key stays), and GNOME settings are listed only when they differ
+from Ubuntu's default. Not touched at all: your login shell ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh),
+`--reset-shell`), file-type defaults in `~/.config/mimeapps.list` ([B18](#b18-keep-default-apps-keep_default_apps-default-on)), and udev rules you
+wrote yourself with `ws-devname`.
+
 ## Undo
 
 Each section above ended with its undo. In general:
@@ -1992,6 +2012,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | The computer is slow or laggy while the script runs (or right after) | During a run the compiles are the cause: by default the script already runs at low priority and caps parallel builds by cores and free RAM (`LOW_PRIORITY=1`). If you still see swapping, lower it further: `CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./setup.sh`. If it is slow **after** the run, find what is busy: `ps -eo pid,ni,pcpu,pmem,etime,comm --sort=-pcpu | head -12`; typical culprits are the desktop's file indexer working through the new files in your home folder, or a language server scanning a very large folder. Send the output and the cause can be named. |
 | Neovim starts but there is no completion, hover or error list | Inside Neovim, `:checkhealth vim.lsp` shows which servers are attached to the file. The usual cause is a language server that is not on `PATH` (`ws-doctor` names the missing ones) or a `~/.config/nvim` of your own that replaced `init.lua`. Completion that pops up by itself needs Neovim 0.11 or newer (the upstream release has it; Ubuntu 24.04's 0.9.5 does not: use `Ctrl-x Ctrl-o`). |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
+| Crash reports, the login news or GNOME's problem reporting are switched off and you did not do it | An older version of this setup did it (its `DISABLE_*` and `SET_GNOME_PRIVACY` switches, turned on by `--full`). This version never touches Ubuntu's own services ([A6](#a6-ubuntus-own-services-and-telemetry-left-alone)). Put them back: `./setup.sh --reset-defaults --dry-run` shows what differs from Ubuntu's default, `./setup.sh --reset-defaults` puts it back ([Reset to Ubuntu's defaults](#reset-to-ubuntus-defaults-without-installing-anything)). An undo file from that older run also works, but it may restore the GNOME settings to the values you had before instead of Ubuntu's default. |
 | I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
 | Self-test: "No-cloud policy ... yaml-language-server (or vscode-json-languageserver) is installed" | That language server fetches JSON/YAML schemas from the internet and Kate would use it. This setup never installs it, so it was already on your machine; the message says where it comes from. Remove it with the tool that installed it ([B16](#b16-kate-editor-optional-install_kate-default-on)), or keep it knowingly. |
 | `hx --health` shows red entries | A language server is not installed or not on `PATH`. `ws-doctor` names the missing ones. |

@@ -147,12 +147,20 @@ wireshark_setup() {
     log "JOIN_WIRESHARK_GROUP=0: capture needs sudo (packet capture for non-root users is not enabled)"
     return 0
   fi
+  local before=""
+  if dpkg -s wireshark-common >/dev/null 2>&1; then
+    before="$(debconf-show wireshark-common 2>/dev/null | awk -F': ' '/install-setuid/ { print $2 }' || true)"
+  fi
   echo "wireshark-common wireshark-common/install-setuid boolean true" \
     | sudo debconf-set-selections
   apt_install "${PKGS_WIRESHARK[@]}"
   if dpkg -s wireshark-common >/dev/null 2>&1; then
+    # The undo must work unattended (--undo --yes): a plain 'dpkg-reconfigure' only asks a person, so replayed by
+    # the undo it left non-root capture ON (found by --reset-defaults in the E2E). Back to Ubuntu's default: false.
+    if [[ $before != true ]]; then
+      record_undo "echo 'wireshark-common wireshark-common/install-setuid boolean false' | sudo debconf-set-selections && sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common"
+    fi
     sudo env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive wireshark-common
-    record_undo "sudo dpkg-reconfigure wireshark-common   # answer 'No' to disallow non-root capture"
   fi
   add_to_groups wireshark
 }

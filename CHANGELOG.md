@@ -8,6 +8,49 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Changed (Ubuntu's own telemetry and services are never switched off; the user's decision)
+- **Request:** "the script should not stop any ubuntu default telemetry"; asked for the scope, the answer was "all of Ubuntu's own
+  services". Removed the switches `DISABLE_REPORTING_SERVICES` (apport, whoopsie, kerneloops), `DISABLE_MOTD_NEWS`, `DISABLE_FWUPD_REFRESH`,
+  `DISABLE_APT_NEWS`, `DISABLE_NM_CONNECTIVITY_CHECK` and `SET_GNOME_PRIVACY` (location, automatic time zone, problem reports, usage
+  statistics, web search), and with them the step "Privacy hardening". They were off by default, but `--full` turned them on. The
+  setup now leaves all of these as Ubuntu ships them; the no-cloud rule is about the tools the setup installs. A switch that is still
+  set (in a profile or the environment) is ignored with a warning that names `--reset-defaults`.
+- **Not changed, flagged:** the desktop module's optional Firefox/Thunderbird policy files (`DESKTOP_BROWSER_POLICIES`, opt-in; they switch
+  off the browser's own telemetry) and its Déjà Dup setting (local backups only). Both concern apps Ubuntu ships; whether they fall under the
+  new rule is the user's call.
+- **Verified in E2E run #39 (head `b5a3f19`, all eight jobs):** the new 13th phase compares the state of Ubuntu's services before and after the full
+  install (`--full`) and found them unchanged on every VM; in the containers, which have no `systemctl` before the install, none was disabled or masked.
+
+### Added (`./setup.sh --reset-defaults`: system settings back to Ubuntu's default, installing nothing; the user's request)
+- **Request:** "a complete reset to ubuntu default only, meaning not setting up but rather just resetting"; scope chosen: system settings.
+  It covers everything any version of the setup could change outside your own files: Ubuntu's services that Ubuntu enables (read from the
+  packages' install scripts in the real 24.04 and 26.04 archives: `apport-autoreport.path`/`.timer`, `whoopsie.path`, `kerneloops.service`,
+  `motd-news.timer`, `fwupd-refresh.timer`; not `whoopsie.service`, which Ubuntu does not enable), APT news, the setup's files below `/etc`
+  (only when they still hold exactly the setup's content), Wireshark's non-root capture, the groups `dialout`/`wireshark`/`docker` (`plugdev`
+  stays: Ubuntu gives it to the first user), the GNOME settings any version could change, the setup's global git defaults (only where the value
+  is still the setup's) and the `~/.bashrc` loader block. Only what differs from Ubuntu's default is listed; it asks first (`--dry-run`, `--yes`),
+  keeps backups, and `./setup.sh --undo` takes it back. Tools, fonts, editors, `~/.bashrc.d` and your files stay.
+- **Why it matters for an existing install:** an earlier `--full` run switched Ubuntu's crash reports, MOTD news and the rest off, and its undo
+  file predates the "Ubuntu's own default" rule for GNOME settings. `--reset-defaults` puts back Ubuntu's default directly.
+- **Tests:** `t_reset_defaults` in `tools/check-all.sh` (fakes for `systemctl`, `pro`, debconf, `gsettings` and the groups, a fake `/etc`, real git:
+  dry run, reset, a second run finds nothing, `--undo` restores; broken on purpose four ways to prove it fails), and a 13th E2E phase on real
+  machines: the full install must leave Ubuntu's services exactly as they were, then `--reset-defaults` and `--undo` run against the real
+  `systemctl`, `sudo` and git. README: A6 (now "left alone"), B13 (font only), a new "Reset to Ubuntu's defaults" section with the manual
+  commands, a troubleshooting row; also two links that pointed at renamed sections.
+- **Found by the reset in the first E2E run (#38), and fixed:** two settings the normal `--undo` left behind. Wireshark's non-root capture: its undo
+  line was a plain `dpkg-reconfigure wireshark-common`, which only asks a person, so replayed by `--undo --yes` capture stayed allowed; it now sets
+  the answer back to "no" itself. The global Git LFS filter that `git lfs install --skip-repo` adds (with `SET_GIT_DEFAULTS`) had no undo line at all; it
+  has one now, when the run added it. The E2E's leftovers phase now checks both. The same run's phase 13 failed in the three container jobs on a test
+  bug: a container has no `systemctl` before the install, so the "before" state was empty; it now checks there that no unit is disabled or masked.
+- **Verified in E2E run #39 (head `b5a3f19`): all eight jobs passed all 13 phases** (24.04 and 26.04, runner VM and container, `work` and
+  `personal`); self-test 34/37 (container) and 35/38 (VM), 0 failed, 0 warnings, only the usual skips. After the full install and `--undo`, the
+  reset's dry run listed exactly what the test had planted (a disabled `motd-news.timer`, the inotify file, `init.defaultBranch`, the `~/.bashrc`
+  block), plus the runner's own `docker` group on the VMs; no Wireshark and no Git LFS any more. The runner images' masked `fwupd-refresh.timer`
+  was reported and left alone, as designed. Reset and `--undo` worked against the real `systemctl`, `sudo` and git. Slow mirror again: one
+  container install took 62 minutes (110 MB at 60 kB/s), and one VM job was stopped at 104 minutes in the middle of a 463 MB download at about
+  100 kB/s; its re-run passed in 13 minutes.
+- **Not verified:** a real desktop session (the GNOME part of the reset).
+
 ### Changed (defaults: an install keeps Ubuntu's defaults, and `--undo` returns to Ubuntu's own default; the user's decisions)
 - **Audit** (real 24.04 archive data, full install of both profiles: 98 chosen packages, about 850 with dependencies): no package registers the terminal,
   editor, graphical browser or window manager (only `lynx` as the text-mode `www-browser`, which Ubuntu does not set). So the report "Konsole replaced
