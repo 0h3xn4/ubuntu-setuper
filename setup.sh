@@ -297,6 +297,29 @@ be_gentle() {
 APT_NET=(-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60)
 CURL_DL=(--retry 6 --retry-max-time 180 --connect-timeout 20 --speed-limit 4096 --speed-time 60)
 
+# apt-get as root, waiting for a busy lock. Ubuntu's own updater (packagekitd, behind Software Updater and GNOME Software)
+# holds the apt lock for a while after login and after package installs, and apt then fails at once ("Could not get lock
+# /var/lib/apt/lists/lock. It is held by process N (packagekitd)"). apt's own -o DPkg::Lock::Timeout does NOT cover the lists
+# lock of 'apt-get update' (tested: apt 2.8.3 fails at once with it set), so a lock error is retried here, every 5 s, for up to
+# APT_LOCK_WAIT seconds (0 = do not wait), saying who holds it. Any other failure returns at once; the lock files are never touched.
+apt_run() {   # apt_run ARGS...   (e.g. apt_run install -y --no-remove --no-upgrade pkg)
+  local errf rc waited=0 holder wait_for="${APT_LOCK_WAIT:-300}"
+  errf="$(mktemp)"
+  while :; do
+    rc=0
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" "$@" 2>"$errf" || rc=$?
+    if (( rc == 0 )) || ! grep -qE 'Could not get lock|Unable to acquire the dpkg frontend lock|Unable to lock (the )?(administration )?directory' "$errf" \
+       || (( waited >= wait_for )); then
+      cat "$errf" >&2; rm -f "$errf"; return "$rc"
+    fi
+    holder="$(sed -n 's/.*held by process \([0-9][0-9]*\) (\([^)]*\)).*/\2 (PID \1)/p' "$errf" | head -n1)"
+    if (( waited % 30 == 0 )); then
+      warn "The package system is busy${holder:+: $holder}. This is normal right after login or after installs (Ubuntu's own updater). Waiting up to ${wait_for} s, then giving up..."
+    fi
+    sleep 5; waited=$(( waited + 5 ))
+  done
+}
+
 # --no-remove: abort rather than uninstall anything to resolve a conflict.
 # --no-upgrade: do not upgrade packages that are already installed; this
 # script never upgrades the system (updates are Ubuntu's own business).
@@ -320,10 +343,10 @@ apt_install() {
     fi
   done
   (( ${#available[@]} )) || return 0
-  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "${available[@]}"; then
+  if ! apt_run install -y --no-remove --no-upgrade "${available[@]}"; then
     warn "Batch install failed; retrying one package at a time"
     for pkg in "${available[@]}"; do
-      sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "$pkg" \
+      apt_run install -y --no-remove --no-upgrade "$pkg" \
         || { warn "Skipped (conflict or error): $pkg"; echo "$pkg (not installed: conflict or error)" >> "$MISSING_FILE"; }
     done
   fi
@@ -924,8 +947,8 @@ preflight() {
   trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true; rm -rf "$STATE_DIR"' EXIT
 
   log "Updating package lists"
-  sudo apt-get "${APT_NET[@]}" update || die "apt-get update failed. Check network / proxy settings."
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade curl ca-certificates gnupg distro-info
+  apt_run update || die "apt-get update failed (see the message above). A busy apt lock is waited for (APT_LOCK_WAIT=${APT_LOCK_WAIT:-300} s); otherwise check your network / proxy settings."
+  apt_run install -y --no-remove --no-upgrade curl ca-certificates gnupg distro-info
 }
 
 system_tuning() {

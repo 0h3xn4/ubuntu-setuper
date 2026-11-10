@@ -308,7 +308,7 @@ machine ends up in the same state.
      business (Software Updater, unattended-upgrades), not part of this setup.
    - Downloads are made resilient with command-line options only (`APT_NET`, `CURL_DL` in A2): apt retries a failed
      fetch 3 times and drops a connection that is silent for 60 s; curl retries transient errors and counts a transfer
-     below 4 KB/s for 60 s as stalled. No APT source and no package configuration is touched for this.
+     below 4 KB/s for 60 s as stalled. A busy apt lock (Ubuntu's own updater) is waited for, for up to 5 minutes (`apt_wait` in A2). No APT source and no package configuration is touched for this.
    - Never edit a file that belongs to a package (it would cause conffile
      prompts that block unattended security updates). Add *new* files
      (drop-ins) instead, and never overwrite an existing one.
@@ -407,6 +407,19 @@ record_undo() { printf '%s\n' "$*" >> "$UNDO"; }
 APT_NET=(-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60)
 CURL_DL=(--retry 6 --retry-max-time 180 --connect-timeout 20 --speed-limit 4096 --speed-time 60)
 
+# apt_wait CMD...  runs an apt command, and retries it for up to 5 minutes while Ubuntu's own updater (packagekitd, behind
+# Software Updater) holds the apt lock ("Could not get lock ... held by process N (packagekitd)"). Never touch the lock files.
+apt_wait() {
+  local i
+  for i in $(seq 1 60); do
+    if "$@" 2>/tmp/apt-wait.err; then cat /tmp/apt-wait.err >&2; return 0; fi
+    if grep -q 'Could not get lock\|Unable to acquire the dpkg frontend lock' /tmp/apt-wait.err; then
+      echo "the package system is busy (Ubuntu's updater?), waiting 5 s ($i of 60)"; sleep 5
+    else cat /tmp/apt-wait.err >&2; return 1; fi
+  done
+  cat /tmp/apt-wait.err >&2; return 1
+}
+
 # apt_install PKG...  installs what exists in the archive, skips the rest. Never removes packages.
 apt_install() {
   local ok=() p
@@ -415,7 +428,7 @@ apt_install() {
     else echo "not in archive, skipping: $p"; fi
   done
   if [ "${#ok[@]}" -gt 0 ]; then
-    sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "${ok[@]}"
+    apt_wait sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_NET[@]}" install -y --no-remove --no-upgrade "${ok[@]}"
   fi
 }
 
@@ -495,7 +508,7 @@ Notes:
 *Mirrors `preflight` (the `apt-get update` and prerequisites part).*
 
 ```bash
-sudo apt-get "${APT_NET[@]}" update
+apt_wait sudo apt-get "${APT_NET[@]}" update
 apt_install curl ca-certificates gnupg distro-info
 ```
 
@@ -1930,6 +1943,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | `podman info` fails in a container or CI job | Podman needs user namespaces and a cgroup setup that a plain Docker container does not give it. That is not a setup bug; the guard in [B9](#b9-containers-optional-install_podman-install_docker) only removes `containers.conf` if podman worked before the file was added. |
 | `qemu-system-riscv64: command not found` | On Ubuntu 26.04 RISC-V emulation is its own package: `apt_install qemu-system-riscv` (on 24.04 it is part of `qemu-system-misc`). The embedded part ([C1](#c1-embedded-part-work-and-personal-profiles)) installs it. |
 | The install is very slow, or prints "Operation too slow" / apt "Retrying" | Your network or Ubuntu mirror is slow. The script retries on its own: apt tries each fetch 3 times and drops a connection that is silent for 60 s; downloads from GitHub and others are aborted and retried when they stay below 4 KB/s for 60 s (up to 180 s in total, then that step is reported as failed). A mirror that is slow but alive is still waited for: apt has no minimum speed. Simply run `./setup.sh` again, it is safe to repeat and continues where it stopped. To use a closer mirror, choose it yourself in *Software & Updates*; this setup never changes APT sources. |
+| `E: Could not get lock /var/lib/apt/lists/lock. It is held by process N (packagekitd)` | Ubuntu's own updater (`packagekitd`, behind Software Updater and GNOME Software) is using apt for a moment, usually right after login or after package installs. It is not a fault and not caused by this setup. The script waits for it (up to `APT_LOCK_WAIT`, 300 s by default, and tells you who holds the lock) instead of failing. If you ran `apt` by hand: check `ps -o pid,etime,cmd -p N`, wait a minute and repeat. **Never delete the lock files.** Only if the same process is still there after ten minutes, stop it with `sudo systemctl stop packagekit` (it restarts when needed). |
 | The computer is slow or laggy while the script runs (or right after) | During a run the compiles are the cause: by default the script already runs at low priority and caps parallel builds by cores and free RAM (`LOW_PRIORITY=1`). If you still see swapping, lower it further: `CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./setup.sh`. If it is slow **after** the run, find what is busy: `ps -eo pid,ni,pcpu,pmem,etime,comm --sort=-pcpu | head -12`; typical culprits are the desktop's file indexer working through the new files in your home folder, or a language server scanning a very large folder. Send the output and the cause can be named. |
 | Neovim starts but there is no completion, hover or error list | Inside Neovim, `:checkhealth vim.lsp` shows which servers are attached to the file. The usual cause is a language server that is not on `PATH` (`ws-doctor` names the missing ones) or a `~/.config/nvim` of your own that replaced `init.lua`. Completion that pops up by itself needs Neovim 0.11 or newer (the upstream release has it; Ubuntu 24.04's 0.9.5 does not: use `Ctrl-x Ctrl-o`). |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |

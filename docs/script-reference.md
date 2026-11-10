@@ -250,6 +250,16 @@ Health check: `ws-doctor` (installed in `~/.local/bin`, read-only, offline, no r
 reports missing tools, editor and shell setup, and the no-cloud settings in seconds; `--self-test` is
 the full verification.
 
+## A busy apt lock: `APT_LOCK_WAIT`
+
+Ubuntu's own updater (`packagekitd`) holds the apt lock for a while after login and after package installs, and apt then fails at once
+("Could not get lock /var/lib/apt/lists/lock. It is held by process N (packagekitd)"). Every `apt-get install` and `apt-get update` of the script
+goes through `apt_run`, which retries a lock error every 5 s for up to `APT_LOCK_WAIT` seconds (default 300, `0` = do not wait), prints once
+who holds the lock, then gives up with apt's own message. Any other error returns at once; the lock files are never touched. apt's own
+`-o DPkg::Lock::Timeout` is not enough: it does not cover the lists lock of `apt-get update` (tested with apt 2.8.3). The preflight error
+message no longer blames the network for this. Test: `tools/check-all.sh` (`t_apt_lock`, fake `sudo`), plus a lint that rejects a direct
+`sudo apt-get install|update` in `setup.sh`.
+
 ## Resource use: `LOW_PRIORITY`
 
 A laptop became slow and laggy during a run (the compiles use every core and about 1 GB of RAM per job). With `LOW_PRIORITY=1` (the

@@ -8,6 +8,16 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Fixed (a busy apt lock no longer stops the setup; report: a screenshot of `Could not get lock /var/lib/apt/lists/lock ... held by process (packagekitd)`)
+- **The script waits for Ubuntu's own updater instead of failing.** `packagekitd` (behind Software Updater and GNOME Software) holds the apt lock for a while after login and after
+  package installs, and apt fails at once. The script's first step was `apt-get update || die "...Check network / proxy settings."`: it died on that, with a message that pointed the wrong way.
+  Now every `apt-get install` and `apt-get update` goes through `apt_run`, which retries a lock error every 5 s for up to `APT_LOCK_WAIT` seconds (default 300, `0` = do not wait),
+  prints once who holds it ("packagekitd (PID 2826)"), and then gives up with apt's own message. Other errors still fail at once; the lock files are never touched.
+  Found by testing apt 2.8.3 in a scratch directory: `-o DPkg::Lock::Timeout=6` did NOT make `apt-get update` wait (it failed after 0 s), so a retry loop is needed.
+- Check: `t_apt_lock` in `tools/check-all.sh` (fake `sudo`: busy twice then free, busy forever, a non-lock error, `APT_LOCK_WAIT=0`; broken on purpose once to prove it fails), and the
+  download lint now rejects any direct `sudo apt-get install|update` in `setup.sh`. README: the manual's `apt_wait` helper (A2), a troubleshooting row, the script reference.
+- **Not verified for real:** a real `packagekitd` holding the lock (only a fake `sudo` and a lock held by a helper process on a scratch directory); the E2E never meets one.
+
 ### Changed (the setup is gentler on the machine; report: "my laptop became considerably slower and laggy")
 - **The run lowers its own priority (`LOW_PRIORITY`, on by default).** Nothing in the script did before: apt, cargo and the self-test ran at normal priority, and cargo
   compiled on every core with about 1 GB of RAM per `rustc`, which can push a laptop into swapping. `be_gentle` now `renice`s the setup process to 10 (never lowering a

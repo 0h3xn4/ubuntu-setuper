@@ -330,8 +330,10 @@ DRV
   # lint: no download or apt install may skip the shared options
   out="$(grep -n 'curl -fsSL' setup.sh | grep -v 'CURL_DL\|--max-time' || true)"
   [[ -z $out ]] || { echo "curl download without CURL_DL:"; echo "$out"; bad=1; }
-  out="$(grep -nE 'sudo .*apt-get .*(install|update)' setup.sh | grep -v 'APT_NET' || true)"
-  [[ -z $out ]] || { echo "apt-get without APT_NET:"; echo "$out"; bad=1; }
+  out="$(grep -nE 'sudo .*apt-get .*(install|update)' setup.sh || true)"
+  [[ -z $out ]] || { echo "direct sudo apt-get install/update (use apt_run: retries, timeouts, waits for a busy lock):"; echo "$out"; bad=1; }
+  out="$(grep -n 'apt-get ' setup.sh | grep -E 'sudo' | grep -v 'APT_NET' || true)"
+  [[ -z $out ]] || { echo "sudo apt-get without APT_NET:"; echo "$out"; bad=1; }
   return $bad
 }
 check "downloads: apt retries/timeouts and a curl minimum-speed guard everywhere (fake curl/sudo + lint)" t_resilient_net
@@ -402,6 +404,50 @@ DRV
   return $bad
 }
 check "cargo tools: only missing ones are compiled (a re-run does not rebuild), --upgrade and lock pins still honoured" t_cargo_tools
+# Ubuntu's own updater (packagekitd) holds the apt lock after login; apt then fails at once and the script blamed the network.
+# apt_run waits for the lock (apt's own -o DPkg::Lock::Timeout does not cover the lists lock of 'apt-get update').
+t_apt_lock() {
+  local d="$TMP/aptlock" bad=0 out; rm -rf "$d"; mkdir -p "$d"
+  cat > "$d/driver.sh" <<'DRV'
+source <(head -n -1 ./setup.sh)
+warn() { echo "WARN: $*" >> "$LOGF"; }
+sleep() { :; }
+CALLS=0
+sudo() {   # a fake 'sudo env DEBIAN_FRONTEND=... apt-get ...'
+  CALLS=$((CALLS + 1))
+  case $SCENARIO in
+    busy2) if (( CALLS <= 2 )); then
+             echo "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 2826 (packagekitd)" >&2
+             echo "E: Unable to lock directory /var/lib/apt/lists/" >&2; return 100; fi ;;
+    forever) echo "E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 2826 (packagekitd)" >&2; return 100 ;;
+    other) echo "E: Unable to locate package nosuchpkg" >&2; return 100 ;;
+  esac
+  return 0
+}
+APT_LOCK_WAIT="${T_WAIT:-20}"
+rc=0; apt_run update 2>"$ERRF" || rc=$?
+echo "RC=$rc CALLS=$CALLS"
+DRV
+  run_() { env LOGF="$d/log" ERRF="$d/err" "$@" bash "$d/driver.sh" 2>&1 | tail -n1; }
+  : > "$d/log"
+  out="$(run_ SCENARIO=busy2)"
+  [[ $out == "RC=0 CALLS=3" ]] || { echo "busy twice, then free: expected success on the 3rd try, got: $out"; bad=1; }
+  grep -q 'packagekitd (PID 2826)' "$d/log" || { echo "the wait must name the process that holds the lock"; bad=1; }
+  : > "$d/log"
+  out="$(run_ SCENARIO=forever T_WAIT=20)"
+  [[ $out == "RC=100 CALLS=5" ]] || { echo "busy forever, wait 20 s: expected 5 tries and failure, got: $out"; bad=1; }
+  grep -q 'Could not get lock' "$d/err" || { echo "after giving up, apt's own message must be shown"; bad=1; }
+  [[ $(grep -c '^WARN' "$d/log") == 1 ]] || { echo "the wait notice must be printed once, not every 5 s"; bad=1; }
+  : > "$d/log"
+  out="$(run_ SCENARIO=other)"
+  [[ $out == "RC=100 CALLS=1" ]] || { echo "a failure that is not a lock must not be retried: $out"; bad=1; }
+  grep -q 'Unable to locate package' "$d/err" || { echo "other errors must still be shown"; bad=1; }
+  [[ ! -s $d/log ]] || { echo "no waiting notice for a non-lock error"; bad=1; }
+  out="$(run_ SCENARIO=forever T_WAIT=0)"
+  [[ $out == "RC=100 CALLS=1" ]] || { echo "APT_LOCK_WAIT=0 must not wait: $out"; bad=1; }
+  return $bad
+}
+check "apt lock: a busy lock (Ubuntu's updater) is waited for and named, other errors fail at once" t_apt_lock
 # Earlier versions left the undo scripts, manifests, logs and the cheat sheet loose in ~: the records folder
 # (OUT_DIR, ~/workstation-setup) now holds them, and migrate_records moves the old ones (never overwriting).
 t_records_folder() {

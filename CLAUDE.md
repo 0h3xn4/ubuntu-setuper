@@ -341,6 +341,9 @@ Answered later: tools WITHOUT an LTS line (uv, Helix, starship, rustup, lazygit)
   sources or package config. check-all `t_resilient_net` (fake curl/sudo + a lint over setup.sh) fails if a new download skips them. Small metadata calls that
   use `--max-time 30` (tag redirects, the GitHub API fallbacks) are exempt. apt has no minimum-speed setting: slow-but-alive mirrors are waited for, the E2E job
   `timeout-minutes: 150` is the backstop.
+- apt lock: never call `sudo apt-get install|update` directly in setup.sh; use `apt_run ARGS` (APT_NET options + waits for a busy lock, APT_LOCK_WAIT 300 s, 5 s steps, names the holder).
+  Reason: packagekitd (Ubuntu's updater) holds the lock after login/after installs and apt fails at once; `-o DPkg::Lock::Timeout` does NOT cover the lists lock of `apt-get update` (tested, apt 2.8.3).
+  Test t_apt_lock + a lint in t_resilient_net. Never delete lock files; the manual uses the `apt_wait` helper. Found on the user's machine (screenshot, packagekitd PID 2826, gone a minute later).
 - Machine load (the user's laptop got slow and laggy during a run): the install, `--upgrade` and `--self-test` call `be_gentle` (LOW_PRIORITY=1 default): renice 10 (never lowering a
   chosen niceness; util-linux `renice -n` is ABSOLUTE), ionice best-effort 7, and CARGO_BUILD_JOBS / CMAKE_BUILD_PARALLEL_LEVEL = min(cores/2, free RAM / 1.5 GB, >= 1) unless the user set them.
   Memory is the likelier cause than CPU (autogroup already isolates a terminal's CPU from the desktop). Do NOT write /proc/self/autogroup (it would leave the user's terminal niced) and do not
