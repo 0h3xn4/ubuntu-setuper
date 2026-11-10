@@ -23,6 +23,9 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   the user's own entries and removes the file it created, nothing happens without a desktop, `gset` records `gsettings reset`).
 - **Not verified:** a real desktop session (the guard ran only against a fake `gio`); 26.04's packages were not audited for file types (only the terminal
   question, via the archive index).
+- **Verified in E2E run #36 on the final code (head `94d00bc`):** the new step ran in all eight jobs and changed nothing, as expected on a fresh runner: "No file-type defaults to compare" on the
+  first install (no `gio` and no desktop database before it), "No default app changed" on the second run of the `personal` jobs. So CI proves the step is harmless; the
+  path that actually sets a type back has only been tested with the fake `gio`.
 
 ### Fixed (`--undo` no longer leaves an unreadable terminal halfway; report: a screenshot of a terminal full of empty boxes after running the undo)
 - The undo removed the JetBrains Mono Nerd Font in the **middle** of its run. A terminal that uses that font draws every character as an empty box the
@@ -30,6 +33,7 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   **last**, the plan shown before the question says so in plain words, and a last notice is printed right before it. Nothing else changes order (still
   newest first). Check: `t_undo_font` (a fake undo file: order C, A, then the font; warning only when a font is removed; broken on purpose once to prove it fails).
   README: the Undo section and a troubleshooting row (close the window and open a new one; pick another font if the profile names the removed one).
+- **Verified in E2E run #36 on the final code (head `94d00bc`):** in every job's undo log "Removing the Nerd Font now" is printed before the last command, and the undo and leftovers phases pass.
 - **Spaced-out letters in Terminator after the undo (my advice was the trap).** The README told you to untick Terminator's *Use the system fixed width font* and pick
   *JetBrainsMono Nerd Font Mono* by name. The setup never edits terminal profiles, so the undo, which removes the font, could not put that back, and Terminator fell back to
   a font that is not truly monospaced. The advice is now the opposite: tick *Use the system fixed width font* (Ubuntu's default; the system font is what `SET_GNOME_FONT`
@@ -47,6 +51,7 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 - Check: `t_apt_lock` in `tools/check-all.sh` (fake `sudo`: busy twice then free, busy forever, a non-lock error, `APT_LOCK_WAIT=0`; broken on purpose once to prove it fails), and the
   download lint now rejects any direct `sudo apt-get install|update` in `setup.sh`. README: the manual's `apt_wait` helper (A2), a troubleshooting row, the script reference.
 - **Not verified for real:** a real `packagekitd` holding the lock (only a fake `sudo` and a lock held by a helper process on a scratch directory); the E2E never meets one.
+- **Verified in E2E run #36 on the final code (head `94d00bc`):** no apt option error and no lock wait in any of the eight jobs' logs (apt was never busy there, so the waiting itself is covered by `t_apt_lock` only).
 
 ### Changed (the setup is gentler on the machine; report: "my laptop became considerably slower and laggy")
 - **The run lowers its own priority (`LOW_PRIORITY`, on by default).** Nothing in the script did before: apt, cargo and the self-test ran at normal priority, and cargo
@@ -61,6 +66,13 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   user settings win, a lower priority you chose is not raised) and `t_cargo_tools` (fake `cargo`: nothing installed twice, only the missing tool, `--upgrade`, pins).
 - **Not known yet:** whether this removes your lag. The cause on your laptop was not measured (the diagnostics were not run), and a slowdown that outlasts the run would be something
   else (e.g. the desktop's file indexer or a language server). README troubleshooting has the one command that names the busy process.
+- **Verified in E2E run #36 on the final code (head `94d00bc`): all eight jobs passed all 12 phases** (24.04 and 26.04, runner VM and container, `work` and `personal`); self-test 34/37
+  (container) and 35/38 (VM), 0 failed, 0 warnings, only the usual skips. Every job logged "at most 2 parallel build jobs", compiled the cargo
+  tools once and left them alone on the second run (no recompile). **The price, stated plainly:** container installs took 773 to 907 s against 535 to 717 s in run #32
+  (VM installs 696 to 1013 s, about as before), most likely the 2-job build cap. One VM install (24.04 `work`) took 71 minutes; its log shows why: about 58 minutes of apt
+  downloads from the runner's Ubuntu mirror at 33 to 750 kB/s (two packages needed apt's new retry), not the setup. One container job (24.04 `personal`) first failed in the
+  workflow's own preparation, before the setup ran: Ubuntu's security server listed new perl packages it could not deliver yet (HTTP 404); its re-run passed.
+  If you prefer speed over a calm machine: `LOW_PRIORITY=0`, or set `CARGO_BUILD_JOBS` yourself.
 
 ### Changed (downloads survive a slow or flaky mirror; request: "make it robust and resilient")
 - **apt retries and times out.** Every `apt-get install` and `apt-get update` in `setup.sh` now runs with `-o Acquire::Retries=3 -o Acquire::http::Timeout=60

@@ -219,7 +219,11 @@ Be skeptical, and check for yourself; this is what has and has not been verified
   design). The newest full run (eight jobs on the final code, after the last merge) passed all
   12 phases everywhere. Earlier runs found real bugs: a transient GitHub download error exposed two
   (an optional `lazygit` download aborting its step, and a silent fallback to unverified downloads),
-  both fixed. The install step takes 10 to 19 minutes (once 51 on a slow runner).
+  both fixed. The install step takes 10 to 19 minutes (once 51 on a slow runner). Since the setup builds with at most
+  two parallel jobs by default (to keep your computer usable), the newest run's container installs took 13 to 15 minutes
+  instead of 9 to 12; one VM install took 71 minutes because the runner's Ubuntu mirror delivered at 33 to 750 kB/s. In that
+  run the second install compiled nothing again, the undo removed the Nerd Font last, and the new "Keep default apps" step
+  had nothing to set back on a fresh runner (its real effect needs a desktop session, which CI does not have).
   **Node.js 26 (the newest LTS) from nodejs.org is installed and used on both releases**
   (the 24.04 archive has Node 18, which is end of life). **uv, Helix, lazygit and rustup come from their
   projects' releases too** (checked in every job: uv 0.13.7, Helix 25.07.1 and lazygit 0.66.2 landed in `~/.local`, rustup

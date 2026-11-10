@@ -382,10 +382,19 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-LATEST E2E (GitHub run #32, workflow_dispatch on the branch, head 59773ec = APT_NET/CURL_DL resilience change): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+LATEST E2E (GitHub run #36, workflow_dispatch on the branch, head 94d00bc = gentle + apt lock wait + undo font last + default-app guard): 8/8 GREEN, 12/12 phases in
+every job (checked in the downloaded artifacts); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings, only the usual skips. Every job: 'at most 2
+parallel build jobs', cargo tools compiled once and 'left alone' on the second run, 0 apt lock waits, 0 option errors, 'Removing the Nerd Font now' in the undo log.
+Keep default apps: 'No file-type defaults to compare' on every first install (a runner has no gio/mimeinfo.cache before the install), 'No default app changed' on the
+second run of the personal jobs: the step's real set-back path is covered ONLY by t_default_apps (fake gio), never in CI. Install times: containers 773-907 s (run #32:
+535-717 s; most likely the 2-job cap), VMs 696-1013 s, except vm 24.04 work 4252 s = ~58 min of apt downloads from azure.archive.ubuntu.com at 33-750 kB/s (slow but
+alive mirror, two apt retries; LOW_PRIORITY does not slow the network). container 24.04 personal attempt 1 failed in the WORKFLOW's prerequisite apt step (before setup.sh):
+security.ubuntu.com listed perl 5.38.2-3.2ubuntu0.7 but returned 404 for the files (index ahead of pool); rerun_failed_jobs passed. LESSON: a job that fails in seconds
+in a workflow step before 'Full lifecycle' is infrastructure, read the log, then rerun.
+PREVIOUS E2E (GitHub run #32, workflow_dispatch on the branch, head 59773ec = APT_NET/CURL_DL resilience change): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
 artifacts); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings, only the usual 2 skips; no option errors in any install log; install phases 9-12 min. NO retry
 or 'Operation too slow' line appeared in any log: the retry/speed-guard path is verified only with fakes (t_resilient_net), not under a real stalled mirror.
-PREVIOUS E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
+EARLIER E2E (GitHub run #28, workflow_dispatch on the branch, head 4fafeb4 = the Neovim commit, PR #18): 8/8 GREEN, 12/12 phases in every job (checked in the downloaded
 artifacts: 12 PASS, 0 FAIL per summary.md); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings; Neovim v0.12.6 from upstream in all 8, t_nvim
 PASSED on first contact (real nvim headless, real basedpyright at 'standard'). Not covered: interactive Neovim use. Neovim is trust-on-first-use (no checksum file
 confirmed: the sandbox proxy hides release pages). LESSON: one job (vm 24.04 work) stalled 78 min with no log (GitHub's get_job_logs of a running job is 404; the
