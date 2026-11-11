@@ -46,6 +46,12 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   them, so the test passed). The reset now walks the dependencies itself, one level at a time, with plain `apt-cache depends`, and keeps only
   installed names (checked against this machine's real apt: `dbus` and its parts now stay for `systemd-resolved`). The test's stand-in now
   behaves like the real apt-cache, and the old code fails it.
+- **Verified (run #46, head 6b3d86a): all eight jobs passed the whole test**, 13 of 13 phases, self-test 0 failed (34 to 38 passed), and
+  **the package step ran everywhere, containers included**: 620 / 839 packages removed on the 24.04 VMs (work / personal), 638 / 858 on the
+  26.04 VMs, 1074 / 1379 in the 24.04 containers, 1129 / 1408 in the 26.04 containers; the guard refused nothing; `--undo` reinstalled them (the
+  test checks a probe package is gone and back; the full counts were read in three jobs, e.g. 1074 of 1074 reinstalled in a container). Five
+  jobs show "failure" on GitHub only because GitHub's own artifact upload broke during an outage (HTML instead of JSON); their test step
+  passed, and the numbers above come from their logs.
 - `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
   (with apt's retries and a lock wait, marking the dependencies automatic again).
 - **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the

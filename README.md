@@ -207,6 +207,13 @@ seconds, without network.
 Be skeptical, and check for yourself; this is what has and has not been verified
 (newest facts first; the details and dates are in `CHANGELOG.md` and `CLAUDE.md`).
 
+- **Complete reset (`--reset-defaults`), phase 13 of the end-to-end test:** in all eight jobs (24.04 and 26.04, VM and
+  container, `work` and `personal`) the reset, run right after a full install, put back `~/.bashrc` from `/etc/skel`, moved
+  the setup's home files into the backup folder, and removed the packages the setup installed: 620 to 858 on the VMs, 1074 to
+  1408 in the containers. Packages that Ubuntu's base system or other installed software still needs stayed (9 to 34).
+  `--undo` then put everything back, the packages included; the test checks that one of them is gone after the reset and installed again after the undo.
+  Ubuntu's own services were left exactly as they were. It took six runs to get there; each run before found a real bug, all
+  fixed (`CHANGELOG.md`). Not tested: a real desktop session (GNOME settings are reset by `gsettings`, which CI cannot show).
 - **Full end-to-end test on Ubuntu 24.04 LTS and 26.04 LTS (in CI, `tools/e2e.sh`):**
   the *whole* life cycle of both profiles passes on **both releases**, in a GitHub runner
   VM and in an Ubuntu container, for `work` and `personal` (eight jobs; `personal` includes

@@ -429,7 +429,13 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-LATEST E2E (GitHub run #39, workflow_dispatch on the branch, head b5a3f19 = Ubuntu's services left alone + --reset-defaults + the Wireshark/Git LFS undo fixes):
+LATEST E2E (GitHub run #46, workflow_dispatch, head 6b3d86a = the COMPLETE reset with packages): 'Full lifecycle' PASSED in 8/8 jobs, 13/13 phases, self-test 0 failed
+(34-38 passed). Phase 13 package part ran in ALL 8 (no guard refusal): removed 620/839 (VM 24.04 work/personal), 638/858 (VM 26.04), 1074/1379 (container 24.04),
+1129/1408 (container 26.04), 9-34 kept; probe package gone and back via --undo everywhere (container 24.04 work: 1074 newly installed). 5 jobs are marked failure ONLY
+because actions/upload-artifact failed in a GitHub outage (~20:17-20:35Z, "Unexpected token '<'"; artifact zips/job logs also 500/502 for ~40 min): read the step
+conclusions (jobs API, steps[]) and the job logs before calling a run red. History of the reset runs: #41 Multi-Arch names (:amd64), #42 container systemd purged
+(base system stays), #43 systemd-resolved needed a setup package (closure), #44 virtual deps (<dbus-system-bus>), #45 apt-cache --installed drops virtual lines.
+EARLIER E2E (GitHub run #39, workflow_dispatch on the branch, head b5a3f19 = Ubuntu's services left alone + --reset-defaults + the Wireshark/Git LFS undo fixes):
 8/8 GREEN, 13/13 phases in every job (checked in the downloaded artifacts); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings, only
 the usual skips. Phase 13: UNITS_UBUNTU unchanged by the full install on every VM (containers: none disabled/masked, no systemctl before the install); the reset
 dry run listed only what the test planted (+ the runner's own docker group on VMs), NO wireshark/LFS; fwupd-refresh.timer is MASKED on the GitHub VM images
