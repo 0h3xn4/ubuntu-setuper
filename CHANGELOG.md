@@ -23,6 +23,10 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   safely"): read from apt's own history (entries with the setup's `--no-remove --no-upgrade`, so nothing that was already on the machine),
   purged only after `apt-get -s purge` shows that nothing else would go (otherwise none is removed and the plan names what would go), and the
   settings folders of their apps (Kate, GIMP, VLC, KeePassXC, Inkscape, Wireshark) moved too; (6) the Nerd Font, last.
+- **Found by the first E2E run of this (#41), fixed:** the package list lost every library. `dpkg-query` names a Multi-Arch library with its
+  architecture (`libc6:amd64`) and the comparison used the name without it, so about two thirds of the setup's packages fell out of the list.
+  The guard did its job: the simulation showed those libraries going too, and in all eight jobs nothing was removed (on two runner VMs apt
+  could not even resolve the partial removal). The check-all fake now prints library names the way the real `dpkg-query` does.
 - `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
   (with apt's retries and a lock wait, marking the dependencies automatic again).
 - **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the

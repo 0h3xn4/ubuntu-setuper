@@ -3094,7 +3094,10 @@ _rd_packages() {
     names+=("$name"); kinds+=("$kind")
   done < <(python3 -I -c "$APT_SETUP_PKGS_PY" "${RESET_APT_HISTORY_DIR:-/var/log/apt}" 2>/dev/null || true)
   (( ${#names[@]} )) || return 0
-  mapfile -t inst < <(dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev}\n' "${names[@]}" 2>/dev/null | awk '$2 == "ii" { print $1 }' || true)
+  # dpkg-query names Multi-Arch: same packages (most libraries) WITH their architecture (libc6:amd64): compare without it
+  # (found by the E2E: every library fell out of the list, and the simulation then refused the removal)
+  mapfile -t inst < <(dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev}\n' "${names[@]}" 2>/dev/null \
+                      | awk -v a=":$native" '$2 == "ii" { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
   set_list=" ${inst[*]} "
   for (( i = 0; i < ${#names[@]}; i++ )); do
     if [[ $set_list == *" ${names[i]} "* ]]; then rd_pkgs+=("${names[i]}"); if [[ ${kinds[i]} == auto ]]; then rd_autos+=("${names[i]}"); fi; fi

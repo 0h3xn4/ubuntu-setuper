@@ -234,7 +234,8 @@ t_reset_defaults() {
     printf '#!/bin/sh\nif [ "$1" = -s ]; then echo "$2" > %s/shell; exit 0; fi\necho "$(cat %s/groups) ${2#-aG }" > %s/groups\n' "$d" "$d" "$d" > "$d/bin/usermod"
     printf '#!/bin/sh\necho "tester:x:1000:1000::%s:$(cat %s/shell)"\n' "$h" "$d" > "$d/bin/getent"
     # packages: one file per installed package in $d/pkgs
-    printf '#!/bin/sh\nshift 2\nfor p in "$@"; do [ -e %s/pkgs/$p ] && echo "$p ii"; done; exit 0\n' "$d" > "$d/bin/dpkg-query"
+    # like the real one: a Multi-Arch: same library (here libfoo) is printed WITH its architecture
+    printf '#!/bin/sh\nshift 2\nfor p in "$@"; do [ -e %s/pkgs/$p ] || continue; case $p in lib*) echo "$p:amd64 ii";; *) echo "$p ii";; esac; done; exit 0\n' "$d" > "$d/bin/dpkg-query"
     printf '#!/bin/sh\necho "$*" >> %s/aptmark.log\n' "$d" > "$d/bin/apt-mark"
     cat > "$d/bin/apt-get" <<AG
 #!/bin/sh
