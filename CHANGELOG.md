@@ -27,6 +27,11 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   architecture (`libc6:amd64`) and the comparison used the name without it, so about two thirds of the setup's packages fell out of the list.
   The guard did its job: the simulation showed those libraries going too, and in all eight jobs nothing was removed (on two runner VMs apt
   could not even resolve the partial removal). The check-all fake now prints library names the way the real `dpkg-query` does.
+- **Found by the second run (#42), fixed:** Ubuntu's base system now stays even where the setup installed it. A container has no systemd until
+  the install pulls it in, so systemd was on the list: on 26.04 apt refused (essential `systemd-sysv`) and removed nothing, on 24.04 it removed
+  systemd. Packages marked Essential or Protected, of priority required or important, and everything they need stay installed. On the real
+  runner VMs, where systemd was there before, the removal worked as intended: 620 and 668 packages removed, `--undo` reinstalled all of them in
+  about two minutes.
 - `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
   (with apt's retries and a lock wait, marking the dependencies automatic again).
 - **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the

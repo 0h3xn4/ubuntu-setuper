@@ -201,7 +201,8 @@ replayed (a reset's undo would undo the reset; found by t_reset_defaults); then 
 (a package already on the machine never appears there); still installed per dpkg-query; `apt-get -s purge` must show only those (Purg/Remv),
 else NOTHING is removed and a note names the extra ones; apt_run purge; undo = apt-get ${APT_NET[*]} -o DPkg::Lock::Timeout=300 install
 --no-remove --no-upgrade + apt-mark auto (the t_resilient_net lint allows a direct apt-get only in such a record_undo line with APT_NET);
-RESET_APP_PATHS moves the settings folders of removed apps; (6) the Nerd Font LAST (mv + fc-cache). Earlier, narrower version (same day):
+Ubuntu's base system stays (Essential/Protected/priority required|important + their recursive installed deps via apt-cache depends; a container
+has no systemd until the setup pulls it in: run #42 removed it on 24.04, apt refused on 26.04); RESET_APP_PATHS moves the settings folders of removed apps; (6) the Nerd Font LAST (mv + fc-cache). Earlier, narrower version (same day):
 DECIDED by the user: "a complete reset to ubuntu default only, meaning not setting up but rather just resetting"; scope (asked)
 "System settings" (NOT tools, fonts, editors, home files) — SUPERSEDED by the complete reset above. reset_defaults_mode (setup.sh) installs nothing, lists ONLY what differs
 from Ubuntu's default, asks (--dry-run, --yes), records undo lines (so `--undo` takes the reset back), keeps removed files and
