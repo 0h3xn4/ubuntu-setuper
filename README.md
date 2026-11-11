@@ -1967,8 +1967,9 @@ ls -l ~/.local/bin      # move what the setup put there: ws-*, uv, uvx, hx, nvim
 # 8. The Ubuntu packages the setup installed: apt's own history, entries with the setup's --no-remove --no-upgrade.
 #    Anything already on the machine never appears there. SIMULATE first: if anything else would go, stop.
 zgrep -h -A4 -- '--no-remove --no-upgrade' /var/log/apt/history.log* | grep '^Install:'
-apt-get -s purge <those packages>        # every "Purg"/"Remv" line must be one of them; then:
-sudo apt-get purge <those packages>      # their apps' settings (~/.config/kate, ~/.config/GIMP, ~/.config/vlc, ...) go to "$b/home" too
+pkgs="gdb-multiarch qemu-system-arm"     # put the names from those Install: lines here (without ":amd64" and the versions)
+apt-get -s purge $pkgs                   # every "Purg"/"Remv" line must be one of them; only then:
+sudo apt-get purge $pkgs                 # their apps' settings (~/.config/kate, ~/.config/GIMP, ~/.config/vlc, ...) go to "$b/home" too
 # 9. LAST, the Nerd Font: a terminal that uses it shows empty boxes until you open a new one
 mkdir -p "$b/home/.local/share/fonts" && mv ~/.local/share/fonts/JetBrainsMonoNerdFont "$b/home/.local/share/fonts/" && fc-cache -f
 ```
