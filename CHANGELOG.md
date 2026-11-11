@@ -32,6 +32,11 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   systemd. Packages marked Essential or Protected, of priority required or important, and everything they need stay installed. On the real
   runner VMs, where systemd was there before, the removal worked as intended: 620 and 668 packages removed, `--undo` reinstalled all of them in
   about two minutes.
+- **Third run (#43): all eight jobs green.** On the four runner VMs (the case of a real machine) the reset removed 620 to 894 packages and
+  `--undo` reinstalled every one of them (`gdb-multiarch`, `qemu-system-arm` gone and back), in about two to three minutes. In the four containers
+  the guard still refused the package step, rightly: Ubuntu's own `systemd-resolved` needed one of the packages. Refusing everything for one
+  shared package was too blunt, so now **a package stays when anything that stays still needs it** (Ubuntu's base, software you installed
+  yourself, ...), and the plan names those; only the rest is removed.
 - `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
   (with apt's retries and a lock wait, marking the dependencies automatic again).
 - **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the

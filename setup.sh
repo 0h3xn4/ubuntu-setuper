@@ -3103,20 +3103,29 @@ _rd_packages() {
     if [[ $set_list == *" ${names[i]} "* ]]; then rd_pkgs+=("${names[i]}"); if [[ ${kinds[i]} == auto ]]; then rd_autos+=("${names[i]}"); fi; fi
   done
   (( ${#rd_pkgs[@]} )) || return 0
-  # Ubuntu's base system stays, even where the setup installed it (a container has no systemd until the install pulls
-  # it in; found by the E2E, where apt refused to remove the essential systemd-sysv): Essential, Protected, priority
-  # required/important, and everything those need (apt-cache depends --recurse over installed packages).
-  local -a base=() need=() keep_set=()
+  # What stays although the setup installed it: Ubuntu's base system (Essential, Protected, priority required/important: a
+  # container has no systemd until the install pulls it in; found by the E2E, where apt refused to remove the essential
+  # systemd-sysv) and EVERYTHING that a package which stays still needs (apt-cache depends --recurse over installed
+  # packages, from the base ones and from every installed package that is not on the list: in the E2E containers the
+  # Ubuntu-installed systemd-resolved needed one of them, and the simulation refused the whole removal).
+  local -a base=() others=() need=() keep_set=() all=()
   mapfile -t base < <(dpkg-query -W -f='${binary:Package}|${Essential}|${Protected}|${Priority}\n' "${rd_pkgs[@]}" 2>/dev/null \
                       | awk -F'|' -v a=":$native" '$2 == "yes" || $3 == "yes" || $4 == "required" || $4 == "important" { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
-  if (( ${#base[@]} )); then
+  mapfile -t all < <(dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev}\n' 2>/dev/null \
+                     | awk -v a=":$native" '$2 == "ii" { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
+  set_list=" ${rd_pkgs[*]} "
+  for name in "${all[@]}"; do if [[ $set_list != *" $name "* ]]; then others+=("$name"); fi; done
+  if (( ${#base[@]} + ${#others[@]} )); then
     mapfile -t need < <(apt-cache depends --recurse --installed --no-recommends --no-suggests --no-conflicts --no-breaks \
-                          --no-replaces --no-enhances "${base[@]}" 2>/dev/null | awk -v a=":$native" '!/^ / && !/^</ { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
-    set_list=" ${base[*]} ${need[*]} "
-    for name in "${rd_pkgs[@]}"; do if [[ $set_list != *" $name "* ]]; then keep_set+=("$name"); fi; done
-    notes+=("Packages: $(( ${#rd_pkgs[@]} - ${#keep_set[@]} )) of the ${#rd_pkgs[@]} the setup installed stay, because Ubuntu's base system needs them ($(printf '%s ' "${base[@]:0:6}")...)")
+                          --no-replaces --no-enhances "${base[@]}" "${others[@]}" 2>/dev/null | awk -v a=":$native" '!/^ / && !/^</ { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
+  fi
+  set_list=" ${base[*]} ${need[*]} "
+  for name in "${rd_pkgs[@]}"; do if [[ $set_list != *" $name "* ]]; then keep_set+=("$name"); fi; done
+  if (( ${#keep_set[@]} < ${#rd_pkgs[@]} )); then
+    local -a stay=() autos2=()
     set_list=" ${keep_set[*]} "
-    local -a autos2=()
+    for name in "${rd_pkgs[@]}"; do if [[ $set_list != *" $name "* ]]; then stay+=("$name"); fi; done
+    notes+=("Packages: ${#stay[@]} of the ${#rd_pkgs[@]} the setup installed stay, because Ubuntu's base system or other installed software needs them ($(printf '%s ' "${stay[@]:0:8}")...)")
     for name in "${rd_autos[@]}"; do if [[ $set_list == *" $name "* ]]; then autos2+=("$name"); fi; done
     rd_pkgs=("${keep_set[@]}"); rd_autos=("${autos2[@]}")
     (( ${#rd_pkgs[@]} )) || return 0
