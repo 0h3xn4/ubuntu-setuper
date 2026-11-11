@@ -237,8 +237,10 @@ t_reset_defaults() {
     # like the real one: a Multi-Arch: same library (here libfoo) is printed WITH its architecture
     # (with the Essential/Protected/Priority format it reports basepkg as priority required, everything else optional)
     printf '#!/bin/sh\nf="$2"; shift 2\n[ $# -eq 0 ] && set -- $(ls %s/pkgs)\nfor p in "$@"; do [ -e %s/pkgs/$p ] || continue; n=$p; case $p in lib*) n="$p:amd64";; esac\n  case "$f" in *Essential*) if [ $p = basepkg ]; then echo "$n|no|no|required"; else echo "$n|no|no|optional"; fi;; *) echo "$n ii";; esac; done; exit 0\n' "$d" "$d" > "$d/bin/dpkg-query"
-    # apt-cache depends --recurse: basepkg needs libbase; the user's own userapp needs libshared (which the setup installed)
-    printf '#!/bin/sh\nfor a in "$@"; do case $a in -*|depends) ;; basepkg) printf "basepkg\\n  Depends: libbase\\nlibbase\\n";; userapp) printf "userapp\\n  Depends: libshared\\nlibshared\\n";; resolvd) printf "resolvd\\n  Depends: <bus>\\n    busd\\n<bus>\\n";; busd) printf "busd\\n  Depends: libbus\\n";; *) echo "$a";; esac; done\n' > "$d/bin/apt-cache"
+    # apt-cache depends, ONE level like the real one: basepkg needs libbase; the user's own userapp needs libshared (which the
+    # setup installed); resolvd needs the virtual <bus> that busd provides (indented line), busd needs libbus. Like the real
+    # apt-cache, --installed drops the virtual lines with their providers (the E2E found the setup relying on them).
+    printf '#!/bin/sh\ninst=0; for a in "$@"; do [ "$a" = --installed ] && inst=1; done\nfor a in "$@"; do case $a in -*|depends) ;; basepkg) printf "basepkg\\n  Depends: libbase\\n";; userapp) printf "userapp\\n  Depends: libshared\\n";; resolvd) printf "resolvd\\n"; [ $inst = 1 ] || printf "  Depends: <bus>\\n    busd\\n    notinst\\n";; busd) printf "busd\\n  Depends: libbus\\n";; *) echo "$a";; esac; done\n' > "$d/bin/apt-cache"
     printf '#!/bin/sh\necho "$*" >> %s/aptmark.log\n' "$d" > "$d/bin/apt-mark"
     cat > "$d/bin/apt-get" <<AG
 #!/bin/sh

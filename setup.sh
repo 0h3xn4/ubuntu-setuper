@@ -3079,26 +3079,29 @@ for pkg, kind in seen.items():
     print(pkg, kind)
 '
 
-# Every installed package that the given packages need, recursively (Depends and Pre-Depends). A virtual dependency
-# (systemd-resolved needs <dbus-system-bus>) is fulfilled by a package that apt-cache prints on an INDENTED line and does not
-# follow further, so those names are collected too and the walk repeats until nothing new turns up (found by the E2E: in the
-# containers dbus looked removable and systemd-resolved would have gone with it).
+# Every installed package that the given packages need, recursively (Depends and Pre-Depends). The walk is done here, one
+# level per round, with plain `apt-cache depends` (no --recurse, no --installed) and only installed names kept: a virtual
+# dependency (systemd-resolved needs <dbus-system-bus>) is fulfilled by a package that apt-cache prints on an INDENTED line
+# under it, and with --installed apt-cache drops those lines altogether (found by the E2E, twice: in the containers dbus looked
+# removable and systemd-resolved would have gone with it). Arguments: the native architecture, then the installed packages as
+# ONE space-separated word, then the packages to start from.
 _rd_needed() {
-  local native="$1" round=0 new
-  shift
-  local -A seen=()
-  local -a todo=("$@")
-  while (( ${#todo[@]} )) && (( round++ < 10 )); do
-    mapfile -t new < <(apt-cache depends --recurse --installed --no-recommends --no-suggests --no-conflicts --no-breaks \
-                         --no-replaces --no-enhances "${todo[@]}" 2>/dev/null \
+  local native="$1" installed="$2" round=0 n
+  shift 2
+  local -A seen=() isinst=()
+  local -a todo=() new=()
+  for n in $installed; do isinst[$n]=1; done
+  for n in "$@"; do if [[ -n $n && -z ${seen[$n]:-} ]]; then seen[$n]=1; todo+=("$n"); fi; done
+  while (( ${#todo[@]} )) && (( round++ < 100 )); do
+    mapfile -t new < <(apt-cache depends --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances \
+                         "${todo[@]}" 2>/dev/null \
                        | awk -v a=":$native" '
-                           /^[^ <]/                       { n = $1 }                      # a package header
                            /^ [ |]?[A-Za-z-]*Depends: [^<]/ { n = $2 }                    # a real dependency
                            /^    [^ <]/                   { n = $1 }                      # a provider of a virtual one
                            n != "" { sub(a "$", "", n); sub(/:all$/, "", n); print n; n = "" }' | sort -u || true)
     todo=()
     for n in "${new[@]}"; do
-      [[ -n $n && -z ${seen[$n]:-} ]] || continue
+      [[ -n $n && -n ${isinst[$n]:-} && -z ${seen[$n]:-} ]] || continue
       seen[$n]=1; todo+=("$n")
     done
   done
@@ -3141,7 +3144,7 @@ _rd_packages() {
                      | awk -v a=":$native" '$2 == "ii" { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
   set_list=" ${rd_pkgs[*]} "
   for name in "${all[@]}"; do if [[ $set_list != *" $name "* ]]; then others+=("$name"); fi; done
-  if (( ${#base[@]} + ${#others[@]} )); then mapfile -t need < <(_rd_needed "$native" "${base[@]}" "${others[@]}"); fi
+  if (( ${#base[@]} + ${#others[@]} )); then mapfile -t need < <(_rd_needed "$native" "${all[*]}" "${base[@]}" "${others[@]}"); fi
   set_list=" ${base[*]} ${need[*]} "
   for name in "${rd_pkgs[@]}"; do if [[ $set_list != *" $name "* ]]; then keep_set+=("$name"); fi; done
   if (( ${#keep_set[@]} < ${#rd_pkgs[@]} )); then

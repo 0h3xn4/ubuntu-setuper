@@ -201,9 +201,10 @@ replayed (a reset's undo would undo the reset; found by t_reset_defaults); then 
 (a package already on the machine never appears there); still installed per dpkg-query; `apt-get -s purge` must show only those (Purg/Remv),
 else NOTHING is removed and a note names the extra ones; apt_run purge; undo = apt-get ${APT_NET[*]} -o DPkg::Lock::Timeout=300 install
 --no-remove --no-upgrade + apt-mark auto (the t_resilient_net lint allows a direct apt-get only in such a record_undo line with APT_NET);
-Ubuntu's base system AND whatever any package that stays needs (Essential/Protected/priority required|important, plus apt-cache depends --recurse --installed
-over base + ALL installed packages not on the list, _rd_needed follows PROVIDERS of virtual deps (indented lines; systemd-resolved needs <dbus-system-bus> = dbus;
-run #44 containers) and repeats until nothing new: run #43 containers, Ubuntu's systemd-resolved needed a setup package, the guard refused everything) stay; a container
+Ubuntu's base system AND whatever any package that stays needs (Essential/Protected/priority required|important, plus _rd_needed: its OWN walk, one level per round, plain
+`apt-cache depends` (NO --recurse, NO --installed: with --installed the real apt-cache DROPS virtual lines and their providers; run #45 found that #44's fake printed them)
+keeping only installed names, over base + ALL installed packages not on the list, following PROVIDERS of virtual deps (indented lines; systemd-resolved needs <dbus-system-bus> = dbus;
+run #44/#45 containers) and repeats until nothing new: run #43 containers, Ubuntu's systemd-resolved needed a setup package, the guard refused everything) stay; a container
 has no systemd until the setup pulls it in: run #42 removed it on 24.04, apt refused on 26.04); RESET_APP_PATHS moves the settings folders of removed apps; (6) the Nerd Font LAST (mv + fc-cache). Earlier, narrower version (same day):
 DECIDED by the user: "a complete reset to ubuntu default only, meaning not setting up but rather just resetting"; scope (asked)
 "System settings" (NOT tools, fonts, editors, home files) — SUPERSEDED by the complete reset above. reset_defaults_mode (setup.sh) installs nothing, lists ONLY what differs

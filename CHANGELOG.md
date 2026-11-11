@@ -41,6 +41,11 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   software needs them; all reinstalled by `--undo`). The containers still refused, and the reason was mine: `systemd-resolved` needs a *virtual*
   package (`<dbus-system-bus>`), which `dbus` provides, and `apt-cache depends` prints that provider on an indented line the reset did not read.
   Providers are now followed too, and the walk repeats until nothing new turns up.
+- **Fifth run (#45): all eight jobs green, the containers still refused, for the same reason.** The fix of #44 never took effect on a real
+  machine: with `--installed`, the real `apt-cache depends` leaves the virtual lines out altogether (my test's stand-in for apt-cache printed
+  them, so the test passed). The reset now walks the dependencies itself, one level at a time, with plain `apt-cache depends`, and keeps only
+  installed names (checked against this machine's real apt: `dbus` and its parts now stay for `systemd-resolved`). The test's stand-in now
+  behaves like the real apt-cache, and the old code fails it.
 - `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
   (with apt's retries and a lock wait, marking the dependencies automatic again).
 - **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the
