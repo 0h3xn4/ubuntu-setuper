@@ -197,18 +197,29 @@ t_reset_shell() {
   [[ -e $h/.zshrc && -e $h/.oh-my-zsh/x && ! -e $h/.bashrc && -e $h/.bash_aliases ]] || return 1
   grep -q 'usermod -s /usr/bin/zsh tester' "$d/sudo.log"
 }
-# --reset-defaults: system settings back to Ubuntu's own default, installing nothing, then --undo puts them back.
-# Fakes stand in for systemctl, pro, debconf, gsettings, the groups and /etc (RESET_ETC_DIR); git is real (scratch HOME).
+# --reset-defaults: a COMPLETE reset to Ubuntu's own default (old undo files replayed, system settings, the shell from
+# /etc/skel, everything the setup put in ~ moved to a backup folder, the Nerd Font last), installing nothing; then --undo
+# puts it back. Fakes stand in for systemctl, pro, debconf, gsettings, groups, getent/usermod, fc-cache, /etc
+# (RESET_ETC_DIR) and /etc/skel (RESET_SKEL_DIR); git is real (scratch HOME).
 t_reset_defaults() {
-  local d="$TMP/rd" h out bad=0; rm -rf "$d"; h="$d/home"
-  mkdir -p "$h" "$d/bin" "$d/units" "$d/gs" "$d/etc/NetworkManager/conf.d" "$d/etc/sysctl.d" "$d/etc/firefox/policies"
+  local d="$TMP/rd" h out bad=0 x; rm -rf "$d"; h="$d/home"
+  mkdir -p "$h" "$d/bin" "$d/units" "$d/gs" "$d/out" "$d/skel" "$d/etc/NetworkManager/conf.d" "$d/etc/sysctl.d" "$d/etc/firefox/policies"
   echo disabled > "$d/units/motd-news.timer"; echo masked > "$d/units/fwupd-refresh.timer"; echo enabled > "$d/units/kerneloops.service"
-  echo False > "$d/aptnews"; echo true > "$d/ws"; echo "tester adm sudo plugdev dialout wireshark" > "$d/groups"
+  echo False > "$d/aptnews"; echo true > "$d/ws"; echo "tester adm sudo plugdev dialout wireshark" > "$d/groups"; echo /usr/bin/zsh > "$d/shell"
   echo "'JetBrainsMono Nerd Font Mono 11'" > "$d/gs/org.gnome.desktop.interface.monospace-font-name"
   printf '[connectivity]\nenabled=false\n' > "$d/etc/NetworkManager/conf.d/99-no-connectivity-check.conf"
   printf 'fs.inotify.max_user_watches = 1\n' > "$d/etc/sysctl.d/60-dev-inotify.conf"      # changed by the admin: not ours
   cp modules/desktop/files/system/firefox-policies.json "$d/etc/firefox/policies/policies.json"
-  printf '# mine\n\n# >>> workstation-setup: load ~/.bashrc.d/*.sh >>>\nx\n# <<< workstation-setup <<<\n# also mine\n' > "$h/.bashrc"
+  printf 'SKEL BASHRC\n' > "$d/skel/.bashrc"; printf 'SKEL PROFILE\n' > "$d/skel/.profile"; cp "$d/skel/.profile" "$h/.profile"   # .profile already Ubuntu's
+  # shellcheck disable=SC2016  # the loader line must keep its $f literally
+  printf 'SKEL BASHRC\n# mine\nfor f in ~/.bashrc.d/*.sh; do . "$f"; done\n' > "$h/.bashrc"   # an UNMARKED loader line, as the old manual added it
+  mkdir -p "$h/.bashrc.d" "$h/.config/helix" "$h/.local/opt/node-v1/bin" "$h/.local/bin" "$h/.local/share/fonts/JetBrainsMonoNerdFont"
+  echo x > "$h/.bashrc.d/10-workstation.sh"; echo x > "$h/.inputrc"; echo x > "$h/.config/helix/config.toml"; echo x > "$h/.local/opt/node-v1/bin/node"
+  ln -s ../opt/node-v1/bin/node "$h/.local/bin/node"; echo mine > "$h/.local/bin/mytool"; echo f > "$h/.local/share/fonts/JetBrainsMonoNerdFont/a.ttf"
+  echo old > "$h/old-marker"
+  mkdir -p "$d/pkgs" "$d/apthist"; touch "$d/pkgs/qemu-system-arm" "$d/pkgs/libfoo" "$d/pkgs/vim"
+  printf 'Start-Date: x\nCommandline: apt-get -o Acquire::Retries=3 install -y --no-remove --no-upgrade qemu-system-arm\nInstall: qemu-system-arm:amd64 (1.0), libfoo:amd64 (2.0, automatic)\nEnd-Date: x\n\nStart-Date: y\nCommandline: apt-get install vim\nInstall: vim:amd64 (1)\nEnd-Date: y\n' > "$d/apthist/history.log"
+  printf '#!/usr/bin/env bash\nrm -f ~/old-marker\nrm -rf ~/.local/share/fonts/JetBrainsMonoNerdFont && fc-cache -f\n' > "$d/out/workstation-undo-20200101-000000.sh"
   HOME="$h" git config --global init.defaultBranch main; HOME="$h" git config --global fetch.prune true
   HOME="$h" git config --global pull.rebase false                                        # the user's own value: stays
   # shellcheck disable=SC2016  # the fake commands must keep their $1 / $* literally
@@ -216,11 +227,23 @@ t_reset_defaults() {
     printf '#!/bin/sh\n[ "$1" = -v ] && exit 0\necho "$*" >> %s/sudo.log\nexec "$@"\n' "$d" > "$d/bin/sudo"
     printf '#!/bin/sh\nf=%s/units/$2\ncase "$1" in is-enabled) [ -f "$f" ] && cat "$f" || exit 1;; enable) echo enabled > "$f";; disable) echo disabled > "$f";; esac\nexit 0\n' "$d" > "$d/bin/systemctl"
     printf '#!/bin/sh\ncase "$2" in show) echo "apt_news $(cat %s/aptnews)";; set) case "$3" in *=true) echo True;; *) echo False;; esac > %s/aptnews;; esac\n' "$d" "$d" > "$d/bin/pro"
-    printf '#!/bin/sh\nexit 0\n' > "$d/bin/dpkg"; printf '#!/bin/sh\nexit 0\n' > "$d/bin/dpkg-reconfigure"
+    printf '#!/bin/sh\n[ "$1" = --print-architecture ] && echo amd64\nexit 0\n' > "$d/bin/dpkg"; printf '#!/bin/sh\nexit 0\n' > "$d/bin/dpkg-reconfigure"; printf '#!/bin/sh\nexit 0\n' > "$d/bin/fc-cache"
     printf '#!/bin/sh\necho "* wireshark-common/install-setuid: $(cat %s/ws)"\n' "$d" > "$d/bin/debconf-show"
     printf '#!/bin/sh\nread -r l; echo "${l##* }" > %s/ws\n' "$d" > "$d/bin/debconf-set-selections"
     printf '#!/bin/sh\ng=$(cat %s/groups); echo "$g" | tr " " "\\n" | grep -vx "$3" | tr "\\n" " " > %s/groups\n' "$d" "$d" > "$d/bin/gpasswd"
-    printf '#!/bin/sh\necho "$(cat %s/groups) ${2#-aG }" > %s/groups\n' "$d" "$d" > "$d/bin/usermod"
+    printf '#!/bin/sh\nif [ "$1" = -s ]; then echo "$2" > %s/shell; exit 0; fi\necho "$(cat %s/groups) ${2#-aG }" > %s/groups\n' "$d" "$d" "$d" > "$d/bin/usermod"
+    printf '#!/bin/sh\necho "tester:x:1000:1000::%s:$(cat %s/shell)"\n' "$h" "$d" > "$d/bin/getent"
+    # packages: one file per installed package in $d/pkgs
+    printf '#!/bin/sh\nshift 2\nfor p in "$@"; do [ -e %s/pkgs/$p ] && echo "$p ii"; done; exit 0\n' "$d" > "$d/bin/dpkg-query"
+    printf '#!/bin/sh\necho "$*" >> %s/aptmark.log\n' "$d" > "$d/bin/apt-mark"
+    cat > "$d/bin/apt-get" <<AG
+#!/bin/sh
+sim=0; op=""; pk=""
+for a in "\$@"; do case "\$a" in -s) sim=1;; purge|install) op=\$a;; -*|*=*|Acquire*|DPkg*) ;; *) [ -n "\$op" ] && pk="\$pk \$a";; esac; done
+if [ \$sim = 1 ]; then for p in \$pk; do echo "Purg \$p [1]"; done; [ -f $d/extra ] && echo "Remv \$(cat $d/extra) [1]"; exit 0; fi
+for p in \$pk; do if [ "\$op" = purge ]; then rm -f $d/pkgs/\$p; else touch $d/pkgs/\$p; fi; done
+exit 0
+AG
     printf '#!/bin/sh\ncase "$1" in -u) echo 1000;; -un) echo tester;; -nG) cat %s/groups;; *) /usr/bin/id "$@";; esac\n' "$d" > "$d/bin/id"
     cat > "$d/bin/gsettings" <<GS
 #!/bin/sh
@@ -235,18 +258,29 @@ esac
 GS
   }
   chmod +x "$d"/bin/*
-  local -a e=(HOME="$h" USER=tester PATH="$d/bin:$PATH" RESET_ETC_DIR="$d/etc" WS_OUT_DIR="$d/out" DBUS_SESSION_BUS_ADDRESS=fake)
+  local -a e=(HOME="$h" USER=tester PATH="$d/bin:$PATH" RESET_ETC_DIR="$d/etc" RESET_SKEL_DIR="$d/skel" WS_OUT_DIR="$d/out" DBUS_SESSION_BUS_ADDRESS=fake RESET_APT_HISTORY_DIR="$d/apthist")
+  # the guard: a removal that would take a package the setup did not install is refused (and nothing is listed for removal)
+  echo ubuntu-desktop > "$d/extra"
+  out="$(env "${e[@]}" ./setup.sh --reset-defaults --dry-run 2>&1)"
+  [[ $out == *'would ALSO remove: ubuntu-desktop'* && $out != *'Ubuntu package(s) the setup installed'* ]] || { echo "the package guard did not refuse"; bad=1; }
+  rm -f "$d/extra"
   out="$(env "${e[@]}" ./setup.sh --reset-defaults --dry-run 2>&1)" || { echo "dry run failed: $out"; return 1; }
-  for x in 'motd-news.timer on again' 'APT news on again' '99-no-connectivity-check.conf' 'firefox/policies/policies.json' \
-           'capture needs root' "leave group 'dialout'" "leave group 'wireshark'" 'monospace-font-name' 'init.defaultBranch' \
-           'fetch.prune' "setup's block from" 'fwupd-refresh.timer is MASKED' '60-dev-inotify.conf exists but is not' 'Dry run'; do
+  # shellcheck disable=SC2088  # these are texts the script prints, with a literal ~
+  for x in 'undo files of earlier runs are replayed' 'workstation-undo-20200101-000000.sh' 'motd-news.timer on again' 'APT news on again' \
+           '99-no-connectivity-check.conf' 'firefox/policies/policies.json' 'capture needs root' "leave group 'dialout'" "leave group 'wireshark'" \
+           'monospace-font-name' 'init.defaultBranch' 'fetch.prune' "~/.bashrc: replace with Ubuntu's own copy" 'move ~/.bashrc.d' 'move ~/.inputrc' \
+           'move ~/.config/helix' 'move ~/.local/opt/node-v1' 'move ~/.local/bin/node' 'login shell: /usr/bin/zsh -> /bin/bash' 'Nerd Font' \
+           'fwupd-refresh.timer is MASKED' '60-dev-inotify.conf exists but is not' 'remove the 2 Ubuntu package(s)' 'qemu-system-arm libfoo' 'Dry run'; do
     [[ $out == *"$x"* ]] || { echo "dry run misses: $x"; bad=1; }
   done
-  for x in kerneloops "leave group 'plugdev'" pull.rebase 'location enabled'; do
+  # shellcheck disable=SC2088
+  for x in kerneloops "leave group 'plugdev'" pull.rebase 'location enabled' mytool '~/.profile' vim; do
     [[ $out != *"$x"* ]] || { echo "dry run lists what is already Ubuntu's default (or the user's own): $x"; bad=1; }
   done
-  [[ $(cat "$d/units/motd-news.timer") == disabled && -e $d/etc/firefox/policies/policies.json ]] || { echo "dry run changed something"; bad=1; }
+  [[ -e $h/old-marker && -d $h/.bashrc.d && $(cat "$d/units/motd-news.timer") == disabled ]] || { echo "dry run changed something"; bad=1; }
   env "${e[@]}" ./setup.sh --reset-defaults --yes >/dev/null 2>&1 || { echo "reset failed"; return 1; }
+  compgen -G "$d/out/workstation-undo-20200101-000000.sh.done-reset-*" >/dev/null || { echo "old undo file not renamed after the replay"; bad=1; }
+  [[ ! -e $h/old-marker ]] || { echo "old undo file not replayed"; bad=1; }
   [[ $(cat "$d/units/motd-news.timer") == enabled && $(cat "$d/units/fwupd-refresh.timer") == masked ]] || { echo "units wrong"; bad=1; }
   [[ $(cat "$d/aptnews") == True && $(cat "$d/ws") == false ]] || { echo "APT news / wireshark not reset"; bad=1; }
   [[ ! -e $d/etc/NetworkManager/conf.d/99-no-connectivity-check.conf && -d $d/etc/NetworkManager/conf.d ]] || { echo "NM file not removed, or its package folder removed"; bad=1; }
@@ -254,7 +288,15 @@ GS
   [[ " $(cat "$d/groups") " != *" dialout "* && " $(cat "$d/groups") " == *" plugdev "* ]] || { echo "groups wrong: $(cat "$d/groups")"; bad=1; }
   [[ ! -e $d/gs/org.gnome.desktop.interface.monospace-font-name ]] || { echo "GNOME font not reset"; bad=1; }
   [[ -z $(HOME="$h" git config --global --get init.defaultBranch) && $(HOME="$h" git config --global --get pull.rebase) == false ]] || { echo "git wrong"; bad=1; }
-  [[ $(cat "$h/.bashrc") == $'# mine\n\n# also mine' ]] || { echo "bashrc wrong: $(cat "$h/.bashrc")"; bad=1; }
+  [[ $(cat "$h/.bashrc") == 'SKEL BASHRC' && $(cat "$h/.profile") == 'SKEL PROFILE' ]] || { echo "the .bashrc is not Ubuntu's copy: $(cat "$h/.bashrc")"; bad=1; }
+  [[ $(cat "$d/shell") == /bin/bash ]] || { echo "login shell not bash"; bad=1; }
+  for x in .bashrc.d .inputrc .config/helix .local/opt/node-v1 .local/bin/node .local/share/fonts/JetBrainsMonoNerdFont; do
+    if [[ -e $h/$x || -L $h/$x ]]; then echo "still in ~: $x"; bad=1; fi
+    compgen -G "$d/out/reset-backup-*/home/$x" >/dev/null || { echo "not in the backup folder: $x"; bad=1; }
+  done
+  [[ -e $h/.local/bin/mytool ]] || { echo "the user's own ~/.local/bin/mytool was moved"; bad=1; }
+  [[ ! -e $d/pkgs/qemu-system-arm && ! -e $d/pkgs/libfoo && -e $d/pkgs/vim ]] || { echo "packages wrong after the reset: $(ls "$d/pkgs")"; bad=1; }
+  compgen -G "$d/out/reset-backup-*/home/.bashrc" >/dev/null || { echo "the old ~/.bashrc is not in the backup"; bad=1; }
   out="$(env "${e[@]}" ./setup.sh --reset-defaults --dry-run 2>&1)"
   [[ $out == *'Nothing to do'* ]] || { echo "a second run still finds something: $out"; bad=1; }
   env "${e[@]}" ./setup.sh --undo --yes >/dev/null 2>&1 || { echo "undo failed"; return 1; }
@@ -262,7 +304,13 @@ GS
   cmp -s "$d/etc/firefox/policies/policies.json" modules/desktop/files/system/firefox-policies.json || { echo "undo: firefox policy not back"; bad=1; }
   [[ -f $d/etc/NetworkManager/conf.d/99-no-connectivity-check.conf ]] || { echo "undo: NM file not back"; bad=1; }
   [[ " $(cat "$d/groups") " == *" dialout "* && $(cat "$d/gs/org.gnome.desktop.interface.monospace-font-name") == "'JetBrainsMono Nerd Font Mono 11'" ]] || { echo "undo: groups/GNOME not back"; bad=1; }
-  if [[ $(HOME="$h" git config --global --get init.defaultBranch) != main ]] || ! grep -q '# >>> workstation-setup' "$h/.bashrc"; then echo "undo: git/bashrc not back"; bad=1; fi
+  if [[ $(HOME="$h" git config --global --get init.defaultBranch) != main ]] || ! grep -q '# mine' "$h/.bashrc"; then echo "undo: git/bashrc not back"; bad=1; fi
+  [[ $(cat "$d/shell") == /usr/bin/zsh ]] || { echo "undo: login shell not back"; bad=1; }
+  [[ -e $d/pkgs/qemu-system-arm && -e $d/pkgs/libfoo ]] || { echo "undo: packages not reinstalled"; bad=1; }
+  grep -qx 'auto libfoo' "$d/aptmark.log" 2>/dev/null || { echo "undo: libfoo not marked automatic again"; bad=1; }
+  for x in .bashrc.d/10-workstation.sh .inputrc .config/helix/config.toml .local/opt/node-v1/bin/node .local/bin/node .local/share/fonts/JetBrainsMonoNerdFont/a.ttf; do
+    [[ -e $h/$x ]] || { echo "undo: $x not back"; bad=1; }
+  done
   return $bad
 }
 # The release logic: which Ubuntu releases are supported (24.04 and 26.04 are; nobody has to upgrade), and which
@@ -426,7 +474,9 @@ DRV
   # lint: no download or apt install may skip the shared options
   out="$(grep -n 'curl -fsSL' setup.sh | grep -v 'CURL_DL\|--max-time' || true)"
   [[ -z $out ]] || { echo "curl download without CURL_DL:"; echo "$out"; bad=1; }
-  out="$(grep -nE 'sudo .*apt-get .*(install|update)' setup.sh || true)"
+  # a recorded UNDO line runs in a plain shell, where apt_run does not exist: it may call apt-get, but only with APT_NET (next check)
+  # shellcheck disable=SC2016  # the pattern matches a literal ${APT_NET[*]} in setup.sh
+  out="$(grep -nE 'sudo .*apt-get .*(install|update)' setup.sh | grep -v 'record_undo "sudo env DEBIAN_FRONTEND=noninteractive apt-get \${APT_NET\[\*\]}' || true)"
   [[ -z $out ]] || { echo "direct sudo apt-get install/update (use apt_run: retries, timeouts, waits for a busy lock):"; echo "$out"; bad=1; }
   out="$(grep -n 'apt-get ' setup.sh | grep -E 'sudo' | grep -v 'APT_NET' || true)"
   [[ -z $out ]] || { echo "sudo apt-get without APT_NET:"; echo "$out"; bad=1; }
@@ -791,7 +841,7 @@ check "settings of an older install: missing defaults are added, yours stay, bac
 check "uv/Helix/starship: newest upstream release first, archive only as fallback, installed tools left alone" t_upstream_first
 check "Ubuntu releases: 24.04 and 26.04 supported, 22.04/non-LTS/other refused, per-release packages" t_os_check
 check "--reset-shell: zsh files moved (not deleted), bash restored, login shell changed, --undo restores" t_reset_shell
-check "--reset-defaults: system settings back to Ubuntu's default (only what differs), nothing installed, --undo restores" t_reset_defaults
+check "--reset-defaults: COMPLETE reset to Ubuntu's default (old undo files, system, shell, home), nothing installed, --undo restores" t_reset_defaults
 
 t_manifest_diff() {
   printf '## Key tools\ngcc 13\n## APT packages\ngit\t1\tamd64\n' > "$TMP/ma"

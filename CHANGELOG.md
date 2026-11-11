@@ -8,6 +8,30 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Changed (`--reset-defaults` is now a COMPLETE reset; report: "the reset did not reset bash although I clearly asked to reset EVERYTHING")
+- **What went wrong:** asked for "a complete reset to ubuntu default", I offered three scopes and built the one picked, "system settings". That
+  version removed only the marked loader block from `~/.bashrc` and left `~/.bashrc.d`, `~/.inputrc`, the prompt, Oh My Bash, the tools and the
+  packages in place, and a loader line an older manual told you to add without the marker was not even found. The question narrowed what you
+  had asked for; it should not have.
+- **Now, in this order:** (1) every undo file of earlier runs is replayed, newest first, which takes back precisely what those runs recorded
+  (undo files of the reset modes themselves are never replayed: replaying a reset's undo would undo the reset); (2) the system settings, as
+  before; (3) `~/.bashrc`, `~/.profile`, `~/.bash_logout` become Ubuntu's own copies from `/etc/skel` (yours go to the backup), bash the login
+  shell; (4) everything the setup can put in your home folder is MOVED to `~/workstation-setup/reset-backup-<time>/home/`: `~/.bashrc.d`,
+  `~/.inputrc`, starship's config, Oh My Bash, `.gdbinit`, `.npmrc`, the editors' and tools' configs, the releases in `~/.local/opt` and the
+  setup's entries in `~/.local/bin` (your own scripts there stay), `~/.cargo`, `~/.rustup`, uv's and npm's folders, the caches the tools filled,
+  podman's storage, record files older versions left in `~`; (5) the Ubuntu packages the setup installed (your decision, "remove them,
+  safely"): read from apt's own history (entries with the setup's `--no-remove --no-upgrade`, so nothing that was already on the machine),
+  purged only after `apt-get -s purge` shows that nothing else would go (otherwise none is removed and the plan names what would go), and the
+  settings folders of their apps (Kate, GIMP, VLC, KeePassXC, Inkscape, Wireshark) moved too; (6) the Nerd Font, last.
+- `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
+  (with apt's retries and a lock wait, marking the dependencies automatic again).
+- **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the
+  default-app pins stay (those files are yours; only the undo files know what was added). A terminal profile where you named a font yourself.
+- Tests: `t_reset_defaults` rewritten (old undo file replayed and renamed, unmarked loader line, skel copies, `~/.bashrc.d`, a Node release and
+  its link moved while your own `~/.local/bin/mytool` stays, zsh to bash, the font last, packages from a fake apt history: the setup's two go, your
+  `vim` stays, the guard refuses when the removal would take `ubuntu-desktop`; a second run finds nothing; `--undo` restores everything and
+  reinstalls the packages). Broken on purpose six ways, each caught. The E2E's 13th phase checks the shell part and the package part for real.
+
 ### Changed (Ubuntu's own telemetry and services are never switched off; the user's decision)
 - **Request:** "the script should not stop any ubuntu default telemetry"; asked for the scope, the answer was "all of Ubuntu's own
   services". Removed the switches `DISABLE_REPORTING_SERVICES` (apport, whoopsie, kerneloops), `DISABLE_MOTD_NEWS`, `DISABLE_FWUPD_REFRESH`,

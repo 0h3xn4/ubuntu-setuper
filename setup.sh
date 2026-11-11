@@ -42,14 +42,17 @@
 #                                  works. Shows every command first and asks (--dry-run only
 #                                  lists, --yes skips the question). Undo: ./setup.sh --undo.
 #                                  The zsh package itself is never removed.
-#    ./setup.sh --reset-defaults   Put the SYSTEM settings this setup can change back to Ubuntu's own
-#                                  default, installing nothing: Ubuntu's services (crash reports,
-#                                  MOTD news, firmware refresh) on again, APT news on, the setup's
-#                                  files below /etc removed, GNOME settings reset, the setup's global
-#                                  git defaults and its ~/.bashrc block removed, the groups it adds
-#                                  left. Tools, fonts, editors and your files stay. Shows every
+#    ./setup.sh --reset-defaults   COMPLETE reset to Ubuntu's own default, installing nothing: replays
+#                                  the undo files of earlier runs; puts back Ubuntu's services, APT
+#                                  news, GNOME settings, groups, git config; removes the setup's /etc
+#                                  files; makes ~/.bashrc, ~/.profile, ~/.bash_logout Ubuntu's own
+#                                  copies (/etc/skel) and bash the login shell; MOVES everything the
+#                                  setup put in your home folder (~/.bashrc.d, tools, editor configs,
+#                                  ~/.cargo, caches, the Nerd Font, ...) to a backup folder; removes
+#                                  the Ubuntu packages apt's history shows the setup installed
+#                                  (simulated first; refused if anything else would go). Shows every
 #                                  change first and asks (--dry-run only lists, --yes skips the
-#                                  question). Undo: ./setup.sh --undo.
+#                                  question). Undo: ./setup.sh --undo (reinstalls the packages too).
 #    ./setup.sh --list-profiles    Show the available profiles and modules.
 #    ./setup.sh --help
 #
@@ -2974,6 +2977,7 @@ reset_shell_mode() {
   fi
 
   init_undo_file
+  record_undo "# mode: reset-shell (--reset-defaults never replays this file)"
   if (( ${#found[@]} )); then
     mkdir -p "$backup"
     record_undo "rmdir --ignore-fail-on-non-empty $(printf %q "$backup")"   # recorded first, so undone last
@@ -3000,15 +3004,20 @@ reset_shell_mode() {
   if (( ${#found[@]} )); then echo "Your zsh files are in $backup (delete that folder yourself when you are sure you do not need them)."; fi
 }
 
-# --reset-defaults: put the SYSTEM settings this setup can change back to UBUNTU'S OWN DEFAULT, and install
-# nothing (decided by the user: "a complete reset to ubuntu default only, ... not setting up but rather just
-# resetting"; scope: system settings). It covers everything any version of this setup could change outside
-# your own files, also what the removed switches did (older versions could switch off Ubuntu's crash reports,
-# MOTD news, firmware refresh, APT news, the connectivity probe and GNOME's privacy settings; the user decided
-# the setup must never stop Ubuntu's own telemetry or services). Only what differs from Ubuntu's default is
-# listed; every change is shown first, asked for, and recorded for --undo. Installed packages and tools, fonts,
-# editors and their settings, ~/.bashrc.d and your own files stay. Like --reset-shell and --undo it is an
-# explicit one-off command: it is not part of an install and --full never runs it.
+# --reset-defaults: a COMPLETE reset to UBUNTU'S OWN DEFAULT, installing nothing (decided by the user: "a complete reset
+# to ubuntu default only, meaning not setting up but rather just resetting", and, after a first version that kept the
+# shell: "I clearly asked to reset EVERYTHING"). In this order:
+#   1. every undo file of earlier runs is replayed (newest first): that precisely takes back what those runs recorded
+#      (tools, app settings from their backups, Kate's plugin keys, default-app pins, groups, ...);
+#   2. Ubuntu's system settings: what any version could change outside your files, also what the removed switches did
+#      (older versions could switch off Ubuntu's crash reports, MOTD news, firmware refresh, APT news, the connectivity
+#      probe and GNOME's privacy settings; the user decided the setup must never stop Ubuntu's telemetry or services);
+#   3. the shell: ~/.bashrc, ~/.profile, ~/.bash_logout become Ubuntu's own copies from /etc/skel, the login shell bash;
+#   4. everything the setup can put in your home folder that is still there is MOVED to a backup folder (nothing is
+#      deleted), the Nerd Font last (a terminal using it turns into empty boxes).
+# Only what differs from Ubuntu's default is listed; everything is shown first and asked for, and parts 2-4 are
+# recorded for --undo. Installed APT packages stay (this setup never removes packages). Like --reset-shell and --undo
+# it is an explicit one-off command: not part of an install, and --full never runs it.
 #
 # Units Ubuntu's packages ENABLE when they are installed ('deb-systemd-helper enable' in their postinst; read in
 # the 24.04 and 26.04 archives: apport, whoopsie, kerneloops (24.04 only), base-files, fwupd). Not in the list:
@@ -3024,6 +3033,85 @@ RESET_GSETTINGS=("org.gnome.desktop.interface monospace-font-name" "org.gnome.sy
 # user in plugdev itself.
 RESET_GROUPS=(dialout wireshark docker)
 NM_CONNECTIVITY_TEXT=$'[connectivity]\nenabled=false\n'
+# Ubuntu's own copies of these come from /etc/skel; the reset puts them back.
+RESET_SKEL_FILES=(.bashrc .profile .bash_logout)
+# What the setup (any version) can put in your home folder, relative to ~. Fresh Ubuntu has none of it, so the complete
+# reset moves what is still there into the backup folder. The Nerd Font is handled separately, last.
+RESET_HOME_PATHS=(.bashrc.d .inputrc .config/starship.toml .local/share/oh-my-bash .gdbinit .npmrc
+  .config/helix .config/nvim .config/lazygit .config/tealdeer .config/uv .config/containers/containers.conf
+  .config/kate/lspclient/settings.json .config/kate/formatting/settings.json .config/keepassxc/keepassxc.ini
+  .config/vlc/vlcrc .config/workstation .local/share/workstation .local/share/uv .local/lib/node_modules
+  .cargo .rustup WORKSTATION-CHEATSHEET.md workstation-manifest-latest.txt .local/share/containers
+  .npm .cache/uv .cache/pip .cache/pre-commit .cache/ccache .cache/tealdeer .cache/helix .cache/starship)
+# Commands the setup puts in ~/.local/bin (links into ~/.local/opt, ~/.local/share/uv or the npm prefix are found too).
+RESET_LOCAL_BIN=(ws-init ws-doctor ws-devname ws-pyformat uv uvx hx nvim starship lazygit node npm npx corepack
+                 probe-rs cargo-flash cargo-embed)
+RESET_FONT_DIR=.local/share/fonts/JetBrainsMonoNerdFont
+# The settings folders of apps whose package the reset removes (package|paths below ~).
+RESET_APP_PATHS=("kate|.config/katerc .config/kate .local/share/kate .config/katevirc .config/kateschemarc .config/katemetainfos"
+                 "gimp|.config/GIMP" "vlc|.config/vlc .local/share/vlc" "keepassxc|.config/keepassxc .cache/keepassxc"
+                 "inkscape|.config/inkscape" "wireshark-common|.config/wireshark")
+# The packages this setup installed (decided by the user: the complete reset removes them too, "safely"): read from apt's
+# OWN history, the entries whose command line carries the setup's --no-remove --no-upgrade (its apt_install, its preflight,
+# and the README manual). Prints "name auto|manual" for every package those entries installed. A package that was already
+# on the machine never appears in an Install: line, so it is never listed.
+APT_SETUP_PKGS_PY='
+import gzip, os, re, sys
+d = sys.argv[1]
+seen = {}
+for name in sorted(os.listdir(d)):
+    if not name.startswith("history.log"):
+        continue
+    path = os.path.join(d, name)
+    try:
+        raw = (gzip.open if name.endswith(".gz") else open)(path, "rt", errors="replace").read()
+    except OSError:
+        continue
+    for rec in raw.split("\n\n"):
+        cmd = next((l for l in rec.splitlines() if l.startswith("Commandline:")), "")
+        if "--no-remove" not in cmd or "--no-upgrade" not in cmd or " install" not in cmd:
+            continue
+        for l in rec.splitlines():
+            if l.startswith("Install:"):
+                for pkg, inside in re.findall(r"([^\s,]+) \(([^)]*)\)", l[len("Install:"):]):
+                    seen[pkg] = "auto" if "automatic" in inside else seen.get(pkg, "manual")
+for pkg, kind in seen.items():
+    print(pkg, kind)
+'
+
+# Fill rd_pkgs (still installed) and rd_autos (of those, marked automatic) from apt's history; then simulate the purge:
+# when it would take ANY package outside that list with it (Ubuntu's own meta packages, something you installed later),
+# nothing is removed and a note says what would go.
+_rd_packages() {
+  local line name kind arch native set_list sim extra i
+  local -a names=() kinds=() inst=()
+  rd_pkgs=(); rd_autos=()
+  have dpkg-query || return 0
+  native="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+  while read -r name kind; do
+    [[ -n $name ]] || continue
+    arch="${name##*:}"; if [[ $name == *:* && ( $arch == "$native" || $arch == all ) ]]; then name="${name%:*}"; fi
+    names+=("$name"); kinds+=("$kind")
+  done < <(python3 -I -c "$APT_SETUP_PKGS_PY" "${RESET_APT_HISTORY_DIR:-/var/log/apt}" 2>/dev/null || true)
+  (( ${#names[@]} )) || return 0
+  mapfile -t inst < <(dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev}\n' "${names[@]}" 2>/dev/null | awk '$2 == "ii" { print $1 }' || true)
+  set_list=" ${inst[*]} "
+  for (( i = 0; i < ${#names[@]}; i++ )); do
+    if [[ $set_list == *" ${names[i]} "* ]]; then rd_pkgs+=("${names[i]}"); if [[ ${kinds[i]} == auto ]]; then rd_autos+=("${names[i]}"); fi; fi
+  done
+  (( ${#rd_pkgs[@]} )) || return 0
+  set_list=" ${rd_pkgs[*]} "
+  sim="$(apt-get -s purge "${rd_pkgs[@]}" 2>&1 || true)"
+  extra="$(awk '$1 == "Purg" || $1 == "Remv" { print $2 }' <<<"$sim" | while read -r name; do
+             [[ $set_list == *" ${name%:*} "* || $set_list == *" $name "* ]] || echo "$name"; done | sort -u | paste -sd' ' || true)"
+  if [[ -n $extra ]]; then
+    notes+=("Packages: removing the ${#rd_pkgs[@]} the setup installed would ALSO remove: $extra (not installed by the setup). Nothing is removed; remove those yourself first if you really want to")
+    rd_pkgs=(); rd_autos=()
+  elif ! grep -qE '^(Purg|Remv) ' <<<"$sim"; then
+    notes+=("Packages: apt could not simulate removing the ${#rd_pkgs[@]} the setup installed; nothing is removed: $(grep -m1 '^E:' <<<"$sim" || echo 'see apt-get -s purge')")
+    rd_pkgs=(); rd_autos=()
+  fi
+}
 
 # Switches that older versions had: say once that they are gone instead of silently ignoring them.
 removed_switches_note() {
@@ -3049,13 +3137,11 @@ etc_is_ours() {
   esac
 }
 
-reset_defaults_mode() {
-  local user="${USER:-$(id -un)}" etc="${RESET_ETC_DIR:-/etc}" n=0 answer u state v s k cur def g mygroups kv f
-  local backup="$OUT_DIR/reset-backup-$TIMESTAMP" need_sudo=0 done_n=0 n_skip=0
-  local -a text=() act=() notes=() keys=()
-  if [[ "$(id -u)" == 0 ]]; then die "Run this as your normal user, not as root"; fi
-  _rd_add() { text+=("$1"); act+=("$2"); case "$2" in unit\|*|aptnews|etc\|*|wireshark|group\|*) need_sudo=1 ;; esac; }
-
+# Collect what differs from Ubuntu's default into the caller's arrays text/act/notes (and need_sudo).
+_rd_collect() {
+  local u state v s k cur def g mygroups kv f rel n_own
+  local -a keys=()
+  text=(); act=(); notes=(); need_sudo=0
   # 1. Ubuntu's services
   if have systemctl; then
     for u in "${UNITS_UBUNTU[@]}"; do
@@ -3112,34 +3198,141 @@ reset_defaults_mode() {
       _rd_add "git: remove the global Git LFS filter ('git lfs uninstall --skip-repo')" gitlfs
     fi
   fi
-  # 8. The block in ~/.bashrc that loads ~/.bashrc.d
-  if grep -qF '# >>> workstation-setup' "$HOME/.bashrc" 2>/dev/null; then
+  # 8. The block in ~/.bashrc that loads ~/.bashrc.d (only without an /etc/skel/.bashrc; otherwise the shell part below
+  #    replaces the whole file with Ubuntu's own)
+  if [[ ! -r $skel/.bashrc ]] && grep -qF '# >>> workstation-setup' "$HOME/.bashrc" 2>/dev/null; then
     _rd_add "remove the setup's block from ~/.bashrc (new terminals stop loading ~/.bashrc.d: no aliases, prompt or PATH additions from it; a backup is kept)" bashrc
   fi
 
-  section "Reset to Ubuntu's defaults (system settings; nothing is installed)"
+  # 9. The shell: Ubuntu's own ~/.bashrc, ~/.profile, ~/.bash_logout (from /etc/skel), and bash as the login shell
+  for f in "${RESET_SKEL_FILES[@]}"; do
+    [[ -r $skel/$f ]] || continue
+    if [[ ! -e $HOME/$f ]]; then _rd_add "~/$f: put back Ubuntu's own copy from $skel (it is missing)" "skel|$f"
+    elif ! cmp -s "$HOME/$f" "$skel/$f"; then
+      n_own="$(diff "$skel/$f" "$HOME/$f" 2>/dev/null | grep -c '^>' || true)"
+      _rd_add "~/$f: replace with Ubuntu's own copy from $skel (yours, with $n_own line(s) Ubuntu's has not, goes to the backup)" "skel|$f"
+    fi
+  done
+  cur="$(getent passwd "$user" 2>/dev/null | cut -d: -f7 || true)"
+  if [[ -n $cur && $cur != /bin/bash && $cur != /usr/bin/bash ]]; then
+    _rd_add "login shell: $cur -> /bin/bash (Ubuntu's default; from your next login; the $cur package stays installed)" "login|$cur"
+  fi
+  # 10. Everything the setup can put in your home folder: moved to the backup folder, nothing is deleted
+  for rel in "${RESET_HOME_PATHS[@]}"; do
+    if [[ -e $HOME/$rel || -L $HOME/$rel ]]; then _rd_add "move ~/$rel to the backup folder (fresh Ubuntu has none)" "move|$rel"; fi
+  done
+  shopt -s nullglob
+  # record files that earlier versions left loose in ~ (and old undo files, renamed by a replay)
+  for f in "$HOME"/workstation-setup-*.log "$HOME"/workstation-manifest-*.txt "$HOME"/workstation-undo-*.sh*; do
+    _rd_add "move ~/${f#"$HOME"/} to the backup folder (a record file an earlier version left in ~)" "move|${f#"$HOME"/}"
+  done
+  for f in "$HOME"/.local/opt/node-* "$HOME"/.local/opt/helix-* "$HOME"/.local/opt/nvim-*; do
+    _rd_add "move ~/${f#"$HOME"/} to the backup folder" "move|${f#"$HOME"/}"
+  done
+  for f in "$HOME"/.local/bin/*; do
+    [[ -e $f || -L $f ]] || continue
+    k="$(readlink "$f" 2>/dev/null || true)"
+    if [[ " ${RESET_LOCAL_BIN[*]} " == *" ${f##*/} "* || $k == *.local/opt/* || $k == ../opt/* || $k == *.local/share/uv/* \
+          || $k == *lib/node_modules/* || $k == *.cargo/* ]]; then
+      _rd_add "move ~/${f#"$HOME"/} to the backup folder (put there by the setup)" "move|${f#"$HOME"/}"
+    fi
+  done
+  shopt -u nullglob
+  # 11. The Ubuntu packages the setup installed (from apt's history, simulated first), and the settings of their apps
+  _rd_packages
+  if (( ${#rd_pkgs[@]} )); then
+    _rd_add "remove the ${#rd_pkgs[@]} Ubuntu package(s) the setup installed (purge; read from apt's history; simulated: nothing else goes; listed below)" packages
+    for kv in "${RESET_APP_PATHS[@]}"; do
+      [[ " ${rd_pkgs[*]} " == *" ${kv%%|*} "* ]] || continue
+      for rel in ${kv#*|}; do
+        if [[ -e $HOME/$rel ]]; then _rd_add "move ~/$rel to the backup folder (settings of ${kv%%|*}, which is removed)" "move|$rel"; fi
+      done
+    done
+  fi
+  # 12. The Nerd Font, LAST: a terminal that uses it shows empty boxes once it is gone
+  if [[ -d $HOME/$RESET_FONT_DIR ]]; then
+    _rd_add "move the JetBrains Mono Nerd Font (~/$RESET_FONT_DIR) to the backup folder, LAST: a terminal using it shows empty boxes until you open a new one" font
+  fi
+}
+
+reset_defaults_mode() {
+  local user="${USER:-$(id -un)}" etc="${RESET_ETC_DIR:-/etc}" skel="${RESET_SKEL_DIR:-/etc/skel}" n=0 answer v f line
+  local backup="$OUT_DIR/reset-backup-$TIMESTAMP" need_sudo=0 done_n=0 n_skip=0 replay_sudo=0
+  local -a text=() act=() notes=() undo_files=() replay=() rd_pkgs=() rd_autos=()
+  if [[ "$(id -u)" == 0 ]]; then die "Run this as your normal user, not as root"; fi
+  _rd_add() { text+=("$1"); act+=("$2"); case "$2" in unit\|*|aptnews|etc\|*|wireshark|group\|*|login\|*|packages) need_sudo=1 ;; esac; }
+
+  # 1. The undo files of earlier runs (the records folder and ~, where earlier versions left them), newest first.
+  #    The Nerd Font lines are left out: the sweep below moves the font, last.
+  mapfile -t undo_files < <(find "$OUT_DIR" "$HOME" -maxdepth 1 -name 'workstation-undo-*.sh' -printf '%T@ %p\n' 2>/dev/null | sort -nr | cut -d' ' -f2- || true)
+  # Undo files of the reset modes themselves (this one and --reset-shell) take back a RESET, not an install: never replayed.
+  local -a installs=()
+  for f in "${undo_files[@]}"; do
+    if ! grep -q '^# mode: reset-' "$f" 2>/dev/null; then installs+=("$f"); fi
+  done
+  undo_files=("${installs[@]}")
+  for f in "${undo_files[@]}"; do
+    local -a lines=()
+    while IFS= read -r line; do
+      case $line in ''|'#'*|'set -x') continue ;; esac
+      [[ $line == *fonts/JetBrainsMonoNerdFont* ]] && continue
+      lines+=("$line")
+    done < "$f"
+    for (( n = ${#lines[@]} - 1; n >= 0; n-- )); do replay+=("${lines[n]}"); done
+  done
+  if printf '%s\n' "${replay[@]}" | grep -q 'sudo '; then replay_sudo=1; fi
+  _rd_collect
+
+  section "Reset to Ubuntu's defaults (complete; nothing is installed)"
+  if (( ${#replay[@]} )); then
+    echo "First, the undo files of earlier runs are replayed, newest first (${#replay[@]} commands; see them with --undo FILE --dry-run):"
+    printf '     %s\n' "${undo_files[@]}"
+    echo "   They take back what those runs recorded (tools, app settings from their backups, plugin keys, ...). This part"
+    echo "   cannot itself be undone; ./setup.sh installs it all again."
+    echo
+  fi
+  n=0
   if (( ${#text[@]} )); then
-    echo "These settings differ from Ubuntu's default and will be put back:"
+    echo "Then these differ from Ubuntu's default and are put back (anything the replay already fixed is skipped):"
     for v in "${text[@]}"; do n=$((n + 1)); printf '  %d. %s\n' "$n" "$v"; done
-  else
-    ok "Nothing to do: every system setting this setup can change is at Ubuntu's default"
+    if (( ${#rd_pkgs[@]} )); then
+      echo; echo "  The packages (installed by the setup's earlier runs; reinstalled by --undo):"
+      printf '%s\n' "${rd_pkgs[*]}" | fold -s -w 104 | sed 's/^/    /'
+    fi
+  elif (( ! ${#replay[@]} )); then
+    ok "Nothing to do: everything this setup can change is at Ubuntu's default"
   fi
   for v in "${notes[@]}"; do warn "$v"; done
   echo
-  echo "Not touched: installed packages and tools, the Nerd Font, editors and their settings, ~/.bashrc.d,"
-  echo "your login shell (see --reset-shell), file-type defaults in ~/.config/mimeapps.list, udev rules you"
-  echo "wrote with ws-devname, group plugdev (Ubuntu's own default for the first user). To take back an"
-  echo "install completely, use ./setup.sh --undo."
+  echo "Nothing is deleted: files and folders are MOVED to $backup, and ./setup.sh --undo puts them back."
+  echo "Packages: only those apt's history shows the setup installed are removed (anything that was already on the"
+  echo "machine, and Ubuntu's own packages, stay). Your zsh backup folders and $OUT_DIR stay."
   echo
-  (( ${#text[@]} )) || return 0
+  (( ${#text[@]} + ${#replay[@]} )) || return 0
   if (( DRY_RUN )); then ok "Dry run: nothing was changed"; return 0; fi
   if (( ! ASSUME_YES )); then
     [[ -t 0 && -t 1 ]] || die "Not a terminal: add --yes to run without asking"
-    read -rp "Put these back to Ubuntu's default? [y/N] " answer
+    read -rp "Reset everything listed to Ubuntu's default? [y/N] " answer
     [[ $answer == [yY] ]] || { echo "Nothing was changed."; return 1; }
   fi
-  if (( need_sudo )); then sudo -v || die "sudo is needed for the system settings"; fi
+  if (( need_sudo || replay_sudo )); then sudo -v || die "sudo is needed for the system settings"; fi
+
+  if (( ${#replay[@]} )); then
+    section "Replaying the undo files of earlier runs"
+    local failed=0
+    for (( n = 0; n < ${#replay[@]}; n++ )); do
+      printf '%s[%d/%d]%s %s\n' "$c_blue" "$((n + 1))" "${#replay[@]}" "$c_off" "${replay[n]}"
+      if ! PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" bash -c "${replay[n]}" </dev/null; then failed=$((failed + 1)); fi
+    done
+    # A command that fails here usually takes back something already gone (an earlier --undo); the sweep catches the rest.
+    if (( failed )); then log "$failed of ${#replay[@]} replayed command(s) failed (mostly: already undone); the next part catches what is left"; fi
+    for f in "${undo_files[@]}"; do mv -- "$f" "$f.done-reset-$TIMESTAMP"; done
+    _rd_collect      # the state has changed: put back only what still differs
+  fi
+
+  section "Putting back Ubuntu's defaults"
   init_undo_file
+  record_undo "# mode: reset-defaults (a later --reset-defaults never replays this file)"
   local a rest x
   for (( x = 0; x < ${#act[@]}; x++ )); do
     a="${act[x]}"; rest="${a#*|}"
@@ -3193,12 +3386,47 @@ reset_defaults_mode() {
         if sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' "$HOME/.bashrc"; then
           ok "Removed the setup's block from ~/.bashrc (new terminals)"; done_n=$((done_n + 1))
         else warn "Could not edit ~/.bashrc"; n_skip=$((n_skip + 1)); fi ;;
+      skel\|*)
+        if [[ -e $HOME/$rest ]]; then
+          mkdir -p "$backup/home"; cp -p -- "$HOME/$rest" "$backup/home/$rest"
+          record_undo "cp -p $(printf %q "$backup/home/$rest") ~/$rest"
+        else
+          record_undo "rm -f ~/$rest"
+        fi
+        if cp -- "$skel/$rest" "$HOME/$rest"; then ok "~/$rest is Ubuntu's own copy again"; done_n=$((done_n + 1))
+        else warn "Could not copy $skel/$rest"; n_skip=$((n_skip + 1)); fi ;;
+      login\|*)
+        record_undo "sudo usermod -s $(printf %q "$rest") $(printf %q "$user")"
+        if sudo usermod -s /bin/bash "$user" >/dev/null 2>&1; then ok "Login shell is /bin/bash again (from your next login)"; done_n=$((done_n + 1))
+        else warn "Could not change the login shell"; n_skip=$((n_skip + 1)); fi ;;
+      move\|*)
+        [[ -e $HOME/$rest || -L $HOME/$rest ]] || continue          # the replay already took it back
+        mkdir -p "$(dirname "$backup/home/$rest")"
+        record_undo "mkdir -p $(printf %q "$(dirname "$HOME/$rest")") && mv -n $(printf %q "$backup/home/$rest") $(printf %q "$HOME/$rest")"
+        if mv -- "$HOME/$rest" "$backup/home/$rest"; then ok "Moved ~/$rest to the backup folder"; done_n=$((done_n + 1))
+        else warn "Could not move ~/$rest"; n_skip=$((n_skip + 1)); fi ;;
+      packages)
+        (( ${#rd_pkgs[@]} )) || continue
+        # an undo line runs in a plain shell (no apt_run there): apt's own retries/timeouts and a dpkg lock wait instead
+        record_undo "sudo env DEBIAN_FRONTEND=noninteractive apt-get ${APT_NET[*]} -o DPkg::Lock::Timeout=300 install -y --no-remove --no-upgrade ${rd_pkgs[*]}${rd_autos[*]:+ && sudo apt-mark auto ${rd_autos[*]} >/dev/null}"
+        log "Removing ${#rd_pkgs[@]} package(s) (this takes a while)"
+        if apt_run purge -y "${rd_pkgs[@]}"; then ok "Removed the ${#rd_pkgs[@]} package(s) the setup installed"; done_n=$((done_n + 1))
+        else warn "Removing the packages failed (see apt's message above)"; n_skip=$((n_skip + 1)); fi ;;
+      font)
+        [[ -d $HOME/$RESET_FONT_DIR ]] || continue
+        echo; warn "Moving the Nerd Font now: if this window turns into empty boxes, close it and open a new one."
+        mkdir -p "$backup/home/.local/share/fonts"
+        record_undo "mkdir -p ~/.local/share/fonts && mv -n $(printf %q "$backup/home/$RESET_FONT_DIR") ~/$RESET_FONT_DIR && fc-cache -f >/dev/null 2>&1"
+        if mv -- "$HOME/$RESET_FONT_DIR" "$backup/home/$RESET_FONT_DIR"; then
+          fc-cache -f >/dev/null 2>&1 || true
+          ok "Moved the Nerd Font to the backup folder"; done_n=$((done_n + 1))
+        else warn "Could not move the Nerd Font"; n_skip=$((n_skip + 1)); fi ;;
     esac
   done
   echo
   if (( n_skip )); then warn "$n_skip change(s) could not be made (see above)"; fi
-  ok "Done: $done_n setting(s) are Ubuntu's default again."
-  echo "Take it back any time with: ./setup.sh --undo $UNDO_FILE"
+  ok "Done: $done_n change(s) back to Ubuntu's default. Open a NEW terminal to see the plain Ubuntu shell."
+  echo "Your files are in $backup. Take the reset back (except the replayed undo files) with: ./setup.sh --undo $UNDO_FILE"
 }
 
 # --undo: replay an undo file newest-first. The commands are the ones this setup

@@ -49,7 +49,8 @@ conversation; this file carries that context over.
    step: updating the system is Ubuntu's business, not this setup's); never edit
    package-owned config files (conffile prompts block unattended security
    updates); only NEW drop-in files in /etc (never overwrite an existing
-   one: install_system_file); never disable or mask a service (Ubuntu's own stay as shipped); no changes to
+   one: install_system_file); never disable or mask a service (Ubuntu's own stay as shipped); never remove a package EXCEPT in the
+   explicit complete reset (--reset-defaults, the user's decision: only what apt's history shows the setup installed, simulated first); no changes to
    kernel, boot, coreutils, architecture variants, APT sources.
    SYSTEM CHANGES ARE OPT-IN (the user decided): by default the setup only
    runs apt installs and writes NEW files under the home directory. Every
@@ -188,8 +189,21 @@ belong only inside the embedded module.
   not a failure) if an account exists.
 
 ### Reset to Ubuntu's defaults (`--reset-defaults`)
+COMPLETE RESET (the user, after the first version kept the shell: "the reset did not reset bash although I clearly asked to reset EVERYTHING";
+LESSON: do not narrow an explicit "complete"/"everything" with a scope question). Order: (1) replay every undo file of earlier runs, newest
+first, font lines skipped, files renamed .done-reset-<ts>; files marked '# mode: reset-' (written by --reset-defaults and --reset-shell) are NEVER
+replayed (a reset's undo would undo the reset; found by t_reset_defaults); then _rd_collect runs AGAIN (the replay changed the state);
+(2) system settings (below); (3) ~/.bashrc, ~/.profile, ~/.bash_logout = /etc/skel copies (RESET_SKEL_DIR in tests), login shell /bin/bash;
+(4) RESET_HOME_PATHS, ~/.local/opt/{node,helix,nvim}-*, the setup's ~/.local/bin entries (RESET_LOCAL_BIN + links into .local/opt,
+.local/share/uv, lib/node_modules, .cargo; the user's own scripts stay) and loose record files MOVED to ~/workstation-setup/reset-backup-<ts>/home/;
+(5) PACKAGES (DECIDED by the user: "Remove them, safely" = the ONE exception to "never remove packages"): APT_SETUP_PKGS_PY reads
+/var/log/apt/history.log* (RESET_APT_HISTORY_DIR), entries whose Commandline has --no-remove AND --no-upgrade AND install, their Install: lines
+(a package already on the machine never appears there); still installed per dpkg-query; `apt-get -s purge` must show only those (Purg/Remv),
+else NOTHING is removed and a note names the extra ones; apt_run purge; undo = apt-get ${APT_NET[*]} -o DPkg::Lock::Timeout=300 install
+--no-remove --no-upgrade + apt-mark auto (the t_resilient_net lint allows a direct apt-get only in such a record_undo line with APT_NET);
+RESET_APP_PATHS moves the settings folders of removed apps; (6) the Nerd Font LAST (mv + fc-cache). Earlier, narrower version (same day):
 DECIDED by the user: "a complete reset to ubuntu default only, meaning not setting up but rather just resetting"; scope (asked)
-"System settings" (NOT tools, fonts, editors, home files). reset_defaults_mode (setup.sh) installs nothing, lists ONLY what differs
+"System settings" (NOT tools, fonts, editors, home files) — SUPERSEDED by the complete reset above. reset_defaults_mode (setup.sh) installs nothing, lists ONLY what differs
 from Ubuntu's default, asks (--dry-run, --yes), records undo lines (so `--undo` takes the reset back), keeps removed files and
 ~/.bashrc in ~/workstation-setup/reset-backup-<ts>/. Covers what ANY version could change: UNITS_UBUNTU (the units Ubuntu's packages
 enable, read from the postinst 'deb-systemd-helper enable' lines of apport, whoopsie, kerneloops (24.04 only, gone in 26.04),

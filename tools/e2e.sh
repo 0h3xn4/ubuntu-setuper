@@ -416,15 +416,27 @@ ph_reset_defaults() {
   if git config --global --get init.defaultBranch >/dev/null; then echo "init.defaultBranch is set before the test (undo should have removed it)"; bad=1; fi
   git config --global init.defaultBranch main
   printf '\n# >>> workstation-setup: load ~/.bashrc.d/*.sh >>>\n# <<< workstation-setup <<<\n' >> "$HOME/.bashrc"
+  mkdir -p "$HOME/.bashrc.d"; echo '# e2e' > "$HOME/.bashrc.d/99-e2e.sh"
   if [[ -e $f ]]; then echo "$f exists before the test (undo should have removed it)"; bad=1; fi
   printf 'fs.inotify.max_user_watches = 524288\nfs.inotify.max_user_instances = 1024\n' | sudo tee "$f" >/dev/null
+  # packages: one the setup surely installed (the embedded part is in both profiles), and Ubuntu's base meta package
+  local probe="" base_before base_now pkg_part=0
+  for x in gdb-multiarch qemu-system-arm binutils-arm-none-eabi; do
+    if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$x" 2>/dev/null)" == "ii " ]]; then probe=$x; break; fi
+  done
+  base_before="$(dpkg-query -W -f='${db:Status-Abbrev}' ubuntu-minimal 2>/dev/null || true)"
 
   ./setup.sh --reset-defaults --dry-run </dev/null > "$LOG/reset-defaults-dry.log" 2>&1 || { echo "--reset-defaults --dry-run failed"; strip < "$LOG/reset-defaults-dry.log" | tail -n 15; bad=1; }
   out="$(strip < "$LOG/reset-defaults-dry.log")"
-  for x in 60-dev-inotify.conf init.defaultBranch "setup's block from ~/.bashrc" 'Dry run'; do
+  # shellcheck disable=SC2088  # texts with a literal ~
+  for x in 60-dev-inotify.conf init.defaultBranch "~/.bashrc: replace with Ubuntu's own copy" "move ~/.bashrc.d" 'Dry run'; do
     [[ $out == *"$x"* ]] || { echo "the dry run does not list: $x"; bad=1; }
   done
   if (( sim_unit )) && [[ $out != *"$u on again"* ]]; then echo "the dry run does not list $u"; bad=1; fi
+  if [[ $out == *"Ubuntu package(s) the setup installed"* ]]; then pkg_part=1; printf '%s\n' "$out" | grep -m1 'Ubuntu package(s) the setup installed'
+  elif [[ $out == *"would ALSO remove"* ]]; then echo "package removal refused by the guard (not exercised): $(grep -m1 'would ALSO remove' <<<"$out")"
+  else echo "the dry run lists no packages to remove (the setup's apt history was not found?)"; bad=1; fi
+  if (( pkg_part )) && [[ -n $probe && $out != *" $probe "* && $out != *" $probe"$'\n'* ]]; then echo "the package list does not contain $probe"; bad=1; fi
   [[ -e $f ]] || { echo "the dry run removed $f"; bad=1; }
   printf '%s\n' "$out" | sed -n '/These settings differ/,/^$/p' | head -n 20
 
@@ -432,18 +444,28 @@ ph_reset_defaults() {
   [[ ! -e $f ]] || { echo "$f is still there after the reset"; bad=1; }
   [[ -z "$(git config --global --get init.defaultBranch || true)" ]] || { echo "init.defaultBranch is still set after the reset"; bad=1; }
   if grep -q '# >>> workstation-setup' "$HOME/.bashrc"; then echo "the ~/.bashrc block is still there after the reset"; bad=1; fi
+  # shellcheck disable=SC2088  # texts with a literal ~
+  cmp -s "$HOME/.bashrc" /etc/skel/.bashrc || { echo "~/.bashrc is not Ubuntu's own copy after the reset"; bad=1; }
+  # shellcheck disable=SC2088  # texts with a literal ~
+  [[ ! -e $HOME/.bashrc.d ]] || { echo "~/.bashrc.d is still there after the reset"; bad=1; }
   if (( sim_unit )) && [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" != enabled ]]; then echo "$u is not enabled after the reset"; bad=1; fi
+  if (( pkg_part )) && [[ -n $probe && "$(dpkg-query -W -f='${db:Status-Abbrev}' "$probe" 2>/dev/null || true)" == "ii " ]]; then echo "$probe is still installed after the reset"; bad=1; fi
+  base_now="$(dpkg-query -W -f='${db:Status-Abbrev}' ubuntu-minimal 2>/dev/null || true)"
+  [[ $base_now == "$base_before" ]] || { echo "ubuntu-minimal changed from '$base_before' to '$base_now': the reset must never touch Ubuntu's own packages"; bad=1; }
 
   ./setup.sh --undo --yes </dev/null > "$LOG/reset-defaults-undo.log" 2>&1 || { echo "--undo of the reset failed"; strip < "$LOG/reset-defaults-undo.log" | tail -n 15; bad=1; }
   [[ -e $f ]] || { echo "undo did not bring $f back"; bad=1; }
   [[ "$(git config --global --get init.defaultBranch || true)" == main ]] || { echo "undo did not bring init.defaultBranch back"; bad=1; }
   grep -q '# >>> workstation-setup' "$HOME/.bashrc" || { echo "undo did not bring the ~/.bashrc block back"; bad=1; }
+  [[ -d $HOME/.bashrc.d ]] || { echo "undo did not bring ~/.bashrc.d back"; bad=1; }
+  if (( pkg_part )) && [[ -n $probe && "$(dpkg-query -W -f='${db:Status-Abbrev}' "$probe" 2>/dev/null || true)" != "ii " ]]; then echo "undo did not reinstall $probe"; bad=1; fi
   if (( sim_unit )) && [[ "$(systemctl is-enabled "$u" 2>/dev/null || true)" != disabled ]]; then echo "undo did not disable $u again"; bad=1; fi
 
   # leave the machine as it was
   if (( sim_unit )); then sudo systemctl enable "$u" >/dev/null 2>&1 || true; fi
   git config --global --unset init.defaultBranch || true
   sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' "$HOME/.bashrc"
+  rm -f "$HOME/.bashrc.d/99-e2e.sh"; rmdir "$HOME/.bashrc.d" 2>/dev/null || true
   sudo rm -f "$f"
   for u in "${UBUNTU_UNITS[@]}"; do
     if ! unit_as_before "$u"; then echo "after the test $u is '$(unit_state "$u")', it was '${E2E_PRE_UNITS[$u]}'"; bad=1; fi

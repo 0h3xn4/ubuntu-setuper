@@ -316,6 +316,9 @@ machine ends up in the same state.
      (packages that are already installed are not upgraded). This guide
      never runs `apt upgrade`: keeping the system up to date is Ubuntu's own
      business (Software Updater, unattended-upgrades), not part of this setup.
+   - Packages are never removed, with one exception you asked for: the complete reset
+     (`--reset-defaults`) removes the packages apt's own history shows the setup installed,
+     after a simulation proves nothing else goes (otherwise it removes none).
    - Downloads are made resilient with command-line options only (`APT_NET`, `CURL_DL` in A2): apt retries a failed
      fetch 3 times and drops a connection that is silent for 60 s; curl retries transient errors and counts a transfer
      below 4 KB/s for 60 s as stalled. A busy apt lock (Ubuntu's own updater) is waited for, for up to 5 minutes (`apt_wait` in A2). No APT source and no package configuration is touched for this.
@@ -1899,62 +1902,85 @@ the pins), run Part E, then record a new manifest.
 
 ## Reset to Ubuntu's defaults (without installing anything)
 
-*Mirrors `./setup.sh --reset-defaults`, function `reset_defaults_mode`.* Puts every **system setting** that
-this setup (any version of it) can change back to Ubuntu's own default, and installs nothing. Installed packages
-and tools, the Nerd Font, the editors and their settings, `~/.bashrc.d` and your own files stay; to take back an
-install completely, use [Undo](#undo). The script lists only what differs from Ubuntu's default, asks first
-(`--dry-run` only lists, `--yes` skips the question) and records every change, so `./setup.sh --undo` takes the
-reset back. It is a one-off command like `--undo`: an install never runs it, and `--full` does not either.
+*Mirrors `./setup.sh --reset-defaults`, function `reset_defaults_mode`.* A **complete** reset: everything this setup
+(any version of it) changed goes back to Ubuntu's own default, and nothing is installed. Your files are never deleted:
+whatever is in the way is **moved** to `~/workstation-setup/reset-backup-<time>/`. The script lists only what differs
+from Ubuntu's default, asks first (`--dry-run` only lists, `--yes` skips the question) and records every change, so
+`./setup.sh --undo` takes the reset back (it reinstalls the packages too; what step 1 replays cannot be undone, but
+`./setup.sh` installs it again). It is a one-off command like `--undo`: an install never runs it, and `--full` does not either.
 
 ```bash
 ./setup.sh --reset-defaults --dry-run   # the list, nothing changed
 ./setup.sh --reset-defaults             # the list, then the question
 ```
 
-What it puts back, and the same by hand (each line only if it applies to you):
+What it does, in this order, and the same by hand (each line only if it applies to you):
 
 ```bash
-# 1. Ubuntu's services that an older version could switch off: these are the ones Ubuntu's packages enable
+# 1. Every undo file of earlier runs, newest first: takes back precisely what those runs recorded (tools, app settings
+#    from their backups, Kate's plugin keys, default-app pins, ...). Undo files of the reset modes are never replayed.
+./setup.sh --undo ~/workstation-setup/workstation-undo-<time>.sh     # for each file, newest first
+# 2. Ubuntu's services that an older version could switch off: these are the ones Ubuntu's packages enable
 #    (read in the 24.04 and 26.04 archives; kerneloops exists on 24.04 only). Only "disabled" ones; a "masked"
 #    one was masked by someone else (this setup never masks): it is reported, not touched.
 for u in apport-autoreport.path apport-autoreport.timer whoopsie.path kerneloops.service motd-news.timer fwupd-refresh.timer; do
   [ "$(systemctl is-enabled "$u" 2>/dev/null)" = disabled ] && sudo systemctl enable --now "$u"
 done
-# 2. APT news (Ubuntu's default: on)
-pro config show apt_news                  # "apt_news False" means it was switched off
+pro config show apt_news                  # "apt_news False" means it was switched off; Ubuntu's default is on:
 sudo pro config set apt_news=true
 # 3. Files below /etc that the setup wrote (only if they still hold exactly the setup's content)
 sudo rm -f /etc/NetworkManager/conf.d/99-no-connectivity-check.conf && sudo systemctl reload NetworkManager
 sudo rm -f /etc/sysctl.d/60-dev-inotify.conf                          # Ubuntu's limits again from the next boot
 sudo rm -f /etc/firefox/policies/policies.json /etc/thunderbird/policies/policies.json
-# 4. Wireshark capture needs root again (Ubuntu's default)
+# 4. Wireshark capture needs root again, and the groups Ubuntu does not give a user (plugdev stays: Ubuntu's own)
 echo 'wireshark-common wireshark-common/install-setuid boolean false' | sudo debconf-set-selections
 sudo dpkg-reconfigure -f noninteractive wireshark-common
-# 5. Groups the setup can add you to that Ubuntu does not (plugdev stays: Ubuntu gives it to the first user)
 id -nG                                     # then, for dialout, wireshark, docker if listed and not your own choice:
 sudo gpasswd -d "$USER" dialout
-# 6. GNOME settings any version could change, back to Ubuntu's default (in your desktop session)
+# 5. GNOME settings any version could change (in your desktop session) and the setup's global git defaults
 for k in "org.gnome.desktop.interface monospace-font-name" "org.gnome.system.location enabled" \
          "org.gnome.desktop.datetime automatic-timezone" "org.gnome.desktop.privacy report-technical-problems" \
          "org.gnome.desktop.privacy send-software-usage-stats" "org.gnome.desktop.search-providers disable-external" \
          "org.gnome.DejaDup backend"; do
   gsettings reset $k
 done
-# 7. The global git defaults of B11, only where the value is still the setup's (git config --global --list shows them)
 git config --global --unset init.defaultBranch      # ... and pull.rebase, rerere.enabled, fetch.prune, push.autoSetupRemote,
                                                     # merge.conflictStyle, diff.colorMoved, core.pager, interactive.diffFilter,
                                                     # delta.navigate, delta.line-numbers; Git LFS: git lfs uninstall --skip-repo
-# 8. The block in ~/.bashrc that loads ~/.bashrc.d (new terminals then load none of the setup's shell files)
-cp ~/.bashrc ~/.bashrc.before-reset
-sed -i '/# >>> workstation-setup/,/# <<< workstation-setup <<</d' ~/.bashrc
+# 6. The shell: Ubuntu's own ~/.bashrc, ~/.profile, ~/.bash_logout, and bash as the login shell
+b=~/workstation-setup/reset-backup-$(date +%Y%m%d-%H%M%S); mkdir -p "$b/home"
+for f in .bashrc .profile .bash_logout; do
+  cmp -s ~/$f /etc/skel/$f || { cp -p ~/$f "$b/home/" 2>/dev/null; cp /etc/skel/$f ~/$f; }
+done
+[ "$(getent passwd "$USER" | cut -d: -f7)" = /bin/bash ] || sudo usermod -s /bin/bash "$USER"
+# 7. Everything the setup put in your home folder: MOVE it to the backup (fresh Ubuntu has none of it)
+cd ~ && for p in .bashrc.d .inputrc .config/starship.toml .local/share/oh-my-bash .gdbinit .npmrc .config/helix .config/nvim \
+    .config/lazygit .config/tealdeer .config/uv .config/containers/containers.conf .config/kate/lspclient/settings.json \
+    .config/kate/formatting/settings.json .config/keepassxc/keepassxc.ini .config/vlc/vlcrc .config/workstation \
+    .local/share/workstation .local/share/uv .local/lib/node_modules .cargo .rustup WORKSTATION-CHEATSHEET.md \
+    workstation-manifest-latest.txt .local/share/containers .npm .cache/uv .cache/pip .cache/pre-commit .cache/ccache \
+    .cache/tealdeer .cache/helix .cache/starship .local/opt/node-* .local/opt/helix-* .local/opt/nvim-*; do
+  [ -e "$p" ] || continue; mkdir -p "$b/home/$(dirname "$p")"; mv "$p" "$b/home/$p"
+done
+ls -l ~/.local/bin      # move what the setup put there: ws-*, uv, uvx, hx, nvim, starship, lazygit, node, npm, npx, corepack,
+                        # probe-rs, cargo-flash, cargo-embed, and links into ~/.local/opt, ~/.local/share/uv or lib/node_modules
+# 8. The Ubuntu packages the setup installed: apt's own history, entries with the setup's --no-remove --no-upgrade.
+#    Anything already on the machine never appears there. SIMULATE first: if anything else would go, stop.
+zgrep -h -A4 -- '--no-remove --no-upgrade' /var/log/apt/history.log* | grep '^Install:'
+apt-get -s purge <those packages>        # every "Purg"/"Remv" line must be one of them; then:
+sudo apt-get purge <those packages>      # their apps' settings (~/.config/kate, ~/.config/GIMP, ~/.config/vlc, ...) go to "$b/home" too
+# 9. LAST, the Nerd Font: a terminal that uses it shows empty boxes until you open a new one
+mkdir -p "$b/home/.local/share/fonts" && mv ~/.local/share/fonts/JetBrainsMonoNerdFont "$b/home/.local/share/fonts/" && fc-cache -f
 ```
 
-Things the script decides for you and the manual leaves to you: it removes a file below `/etc` only when it still
-holds exactly the setup's content (a changed file is reported and left alone), it removes a git setting only when its
-value is still the setup's (your own value of the same key stays), and GNOME settings are listed only when they differ
-from Ubuntu's default. Not touched at all: your login shell ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh),
-`--reset-shell`), file-type defaults in `~/.config/mimeapps.list` ([B18](#b18-keep-default-apps-keep_default_apps-default-on)), and udev rules you
-wrote yourself with `ws-devname`.
+Things the script decides for you: it removes a file below `/etc` only when it still holds exactly the setup's content
+(a changed file is reported and left alone), a git setting only when its value is still the setup's (your own value of
+the same key stays), and the packages only when the simulation shows that nothing else goes (otherwise it names what
+would go and removes none). Not touched: your zsh backup folders, `~/workstation-setup` itself (it holds the backups),
+udev rules you wrote yourself with `ws-devname`, and a terminal profile in which you named the Nerd Font yourself (pick
+*Use the system fixed width font* there again). Without the undo files of the earlier runs, a few app settings the setup
+only added to (LibreOffice's and GIMP's update check, Kate's plugin selection, the default-app pins in
+`~/.config/mimeapps.list`) stay as they are: those files are yours, and only the undo files know exactly what was added.
 
 ## Undo
 
@@ -2012,6 +2038,7 @@ misconfigured. The full verification is `./setup.sh --self-test` (or Part E).
 | The computer is slow or laggy while the script runs (or right after) | During a run the compiles are the cause: by default the script already runs at low priority and caps parallel builds by cores and free RAM (`LOW_PRIORITY=1`). If you still see swapping, lower it further: `CARGO_BUILD_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 ./setup.sh`. If it is slow **after** the run, find what is busy: `ps -eo pid,ni,pcpu,pmem,etime,comm --sort=-pcpu | head -12`; typical culprits are the desktop's file indexer working through the new files in your home folder, or a language server scanning a very large folder. Send the output and the cause can be named. |
 | Neovim starts but there is no completion, hover or error list | Inside Neovim, `:checkhealth vim.lsp` shows which servers are attached to the file. The usual cause is a language server that is not on `PATH` (`ws-doctor` names the missing ones) or a `~/.config/nvim` of your own that replaced `init.lua`. Completion that pops up by itself needs Neovim 0.11 or newer (the upstream release has it; Ubuntu 24.04's 0.9.5 does not: use `Ctrl-x Ctrl-o`). |
 | Helix cannot copy to or paste from the system clipboard | `wl-clipboard` (Wayland) or `xclip` (X11) is missing: `apt_install wl-clipboard xclip`. |
+| After `--reset-defaults` the terminal still has the old aliases, prompt or icons | A terminal that was already open keeps what it loaded when it started. Close it and open a new one: it reads Ubuntu's own `~/.bashrc`. If it still looks different, run `./setup.sh --reset-defaults --dry-run` again: it lists anything that still differs. A terminal profile in which you picked a font yourself is not reset: choose *Use the system fixed width font* there. |
 | Crash reports, the login news or GNOME's problem reporting are switched off and you did not do it | An older version of this setup did it (its `DISABLE_*` and `SET_GNOME_PRIVACY` switches, turned on by `--full`). This version never touches Ubuntu's own services ([A6](#a6-ubuntus-own-services-and-telemetry-left-alone)). Put them back: `./setup.sh --reset-defaults --dry-run` shows what differs from Ubuntu's default, `./setup.sh --reset-defaults` puts it back ([Reset to Ubuntu's defaults](#reset-to-ubuntus-defaults-without-installing-anything)). An undo file from that older run also works, but it may restore the GNOME settings to the values you had before instead of Ubuntu's default. |
 | I use zsh / Oh My Zsh and the aliases or the prompt are missing | This setup is for bash ([A7](#a7-coming-from-zsh-or-oh-my-zsh-only-if-you-use-zsh)). `./setup.sh --reset-shell` moves your zsh files into a backup folder, makes bash your login shell again and is fully undoable. |
 | Self-test: "No-cloud policy ... yaml-language-server (or vscode-json-languageserver) is installed" | That language server fetches JSON/YAML schemas from the internet and Kate would use it. This setup never installs it, so it was already on your machine; the message says where it comes from. Remove it with the tool that installed it ([B16](#b16-kate-editor-optional-install_kate-default-on)), or keep it knowingly. |
