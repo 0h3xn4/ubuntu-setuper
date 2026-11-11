@@ -49,7 +49,8 @@ conversation; this file carries that context over.
    step: updating the system is Ubuntu's business, not this setup's); never edit
    package-owned config files (conffile prompts block unattended security
    updates); only NEW drop-in files in /etc (never overwrite an existing
-   one: install_system_file); never disable or mask a service (Ubuntu's own stay as shipped); no changes to
+   one: install_system_file); never disable or mask a service (Ubuntu's own stay as shipped); never remove a package EXCEPT in the
+   explicit complete reset (--reset-defaults, the user's decision: only what apt's history shows the setup installed, simulated first); no changes to
    kernel, boot, coreutils, architecture variants, APT sources.
    SYSTEM CHANGES ARE OPT-IN (the user decided): by default the setup only
    runs apt installs and writes NEW files under the home directory. Every
@@ -188,8 +189,25 @@ belong only inside the embedded module.
   not a failure) if an account exists.
 
 ### Reset to Ubuntu's defaults (`--reset-defaults`)
+COMPLETE RESET (the user, after the first version kept the shell: "the reset did not reset bash although I clearly asked to reset EVERYTHING";
+LESSON: do not narrow an explicit "complete"/"everything" with a scope question). Order: (1) replay every undo file of earlier runs, newest
+first, font lines skipped, files renamed .done-reset-<ts>; files marked '# mode: reset-' (written by --reset-defaults and --reset-shell) are NEVER
+replayed (a reset's undo would undo the reset; found by t_reset_defaults); then _rd_collect runs AGAIN (the replay changed the state);
+(2) system settings (below); (3) ~/.bashrc, ~/.profile, ~/.bash_logout = /etc/skel copies (RESET_SKEL_DIR in tests), login shell /bin/bash;
+(4) RESET_HOME_PATHS, ~/.local/opt/{node,helix,nvim}-*, the setup's ~/.local/bin entries (RESET_LOCAL_BIN + links into .local/opt,
+.local/share/uv, lib/node_modules, .cargo; the user's own scripts stay) and loose record files MOVED to ~/workstation-setup/reset-backup-<ts>/home/;
+(5) PACKAGES (DECIDED by the user: "Remove them, safely" = the ONE exception to "never remove packages"): APT_SETUP_PKGS_PY reads
+/var/log/apt/history.log* (RESET_APT_HISTORY_DIR), entries whose Commandline has --no-remove AND --no-upgrade AND install, their Install: lines
+(a package already on the machine never appears there); still installed per dpkg-query; `apt-get -s purge` must show only those (Purg/Remv),
+else NOTHING is removed and a note names the extra ones; apt_run purge; undo = apt-get ${APT_NET[*]} -o DPkg::Lock::Timeout=300 install
+--no-remove --no-upgrade + apt-mark auto (the t_resilient_net lint allows a direct apt-get only in such a record_undo line with APT_NET);
+Ubuntu's base system AND whatever any package that stays needs (Essential/Protected/priority required|important, plus _rd_needed: its OWN walk, one level per round, plain
+`apt-cache depends` (NO --recurse, NO --installed: with --installed the real apt-cache DROPS virtual lines and their providers; run #45 found that #44's fake printed them)
+keeping only installed names, over base + ALL installed packages not on the list, following PROVIDERS of virtual deps (indented lines; systemd-resolved needs <dbus-system-bus> = dbus;
+run #44/#45 containers) and repeats until nothing new: run #43 containers, Ubuntu's systemd-resolved needed a setup package, the guard refused everything) stay; a container
+has no systemd until the setup pulls it in: run #42 removed it on 24.04, apt refused on 26.04); RESET_APP_PATHS moves the settings folders of removed apps; (6) the Nerd Font LAST (mv + fc-cache). Earlier, narrower version (same day):
 DECIDED by the user: "a complete reset to ubuntu default only, meaning not setting up but rather just resetting"; scope (asked)
-"System settings" (NOT tools, fonts, editors, home files). reset_defaults_mode (setup.sh) installs nothing, lists ONLY what differs
+"System settings" (NOT tools, fonts, editors, home files) — SUPERSEDED by the complete reset above. reset_defaults_mode (setup.sh) installs nothing, lists ONLY what differs
 from Ubuntu's default, asks (--dry-run, --yes), records undo lines (so `--undo` takes the reset back), keeps removed files and
 ~/.bashrc in ~/workstation-setup/reset-backup-<ts>/. Covers what ANY version could change: UNITS_UBUNTU (the units Ubuntu's packages
 enable, read from the postinst 'deb-systemd-helper enable' lines of apport, whoopsie, kerneloops (24.04 only, gone in 26.04),
@@ -411,7 +429,13 @@ removals. The Helix tarball name pattern exists on GitHub (HEAD 200); Helix publ
 checksum file, so trust-on-first-use stays. Downloads checked for real against the
 projects' published checksums: uv, rustup-init, starship, lazygit, Nerd Font, probe-rs
 (also a tamper test). Oh My Bash and the Nerd Font install into a scratch HOME for real.
-LATEST E2E (GitHub run #39, workflow_dispatch on the branch, head b5a3f19 = Ubuntu's services left alone + --reset-defaults + the Wireshark/Git LFS undo fixes):
+LATEST E2E (GitHub run #46, workflow_dispatch, head 6b3d86a = the COMPLETE reset with packages): 'Full lifecycle' PASSED in 8/8 jobs, 13/13 phases, self-test 0 failed
+(34-38 passed). Phase 13 package part ran in ALL 8 (no guard refusal): removed 620/839 (VM 24.04 work/personal), 638/858 (VM 26.04), 1074/1379 (container 24.04),
+1129/1408 (container 26.04), 9-34 kept; probe package gone and back via --undo everywhere (container 24.04 work: 1074 newly installed). 5 jobs are marked failure ONLY
+because actions/upload-artifact failed in a GitHub outage (~20:17-20:35Z, "Unexpected token '<'"; artifact zips/job logs also 500/502 for ~40 min): read the step
+conclusions (jobs API, steps[]) and the job logs before calling a run red. History of the reset runs: #41 Multi-Arch names (:amd64), #42 container systemd purged
+(base system stays), #43 systemd-resolved needed a setup package (closure), #44 virtual deps (<dbus-system-bus>), #45 apt-cache --installed drops virtual lines.
+EARLIER E2E (GitHub run #39, workflow_dispatch on the branch, head b5a3f19 = Ubuntu's services left alone + --reset-defaults + the Wireshark/Git LFS undo fixes):
 8/8 GREEN, 13/13 phases in every job (checked in the downloaded artifacts); self-test 34/37 (container work/personal) and 35/38 (VM), 0 failed, 0 warnings, only
 the usual skips. Phase 13: UNITS_UBUNTU unchanged by the full install on every VM (containers: none disabled/masked, no systemctl before the install); the reset
 dry run listed only what the test planted (+ the runner's own docker group on VMs), NO wireshark/LFS; fwupd-refresh.timer is MASKED on the GitHub VM images
@@ -574,7 +598,7 @@ run of each app) and anything needing a desktop session.
    same for personal, review, commit locks/. (The lock now also pins NODE_LTS_VERSION.)
 5. (DONE: the E2E covered Node.js upstream LTS and personal = core+embedded+desktop, see Status.)
    An E2E can be started WITHOUT a PR: actions_run_trigger(run_workflow, workflow_id e2e.yml, ref = the branch);
-   a docs push to that branch then does not cancel it (only pull_request runs share the cancel group per ref).
+   a docs push to that branch then does not cancel it, but a NEW dispatch on the same branch DOES (concurrency group e2e-<ref>, cancel-in-progress; run #45's last job was cancelled that way): wait for the old run, or accept losing it.
 
 ## Safety rules for Claude Code in this repo
 - Do not run `./setup.sh` (install mode) on the development machine: it uses

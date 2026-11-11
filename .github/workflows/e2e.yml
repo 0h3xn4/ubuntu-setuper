@@ -73,6 +73,9 @@ jobs:
         run: |
           # The minimal image strips /usr/share/doc and man pages; a real install keeps them.
           rm -f /etc/dpkg/dpkg.cfg.d/excludes
+          # Docker's image deletes downloaded packages after each install; a real Ubuntu keeps them, and phase 13
+          # (--reset-defaults removes the setup's packages, --undo reinstalls them) should not download them all again.
+          rm -f /etc/apt/apt.conf.d/docker-clean
           apt-get update
           apt-get install -y sudo git curl ca-certificates python3 jq xz-utils
       - uses: actions/checkout@v4

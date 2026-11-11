@@ -8,6 +8,59 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
 
 ## Unreleased
 
+### Changed (`--reset-defaults` is now a COMPLETE reset; report: "the reset did not reset bash although I clearly asked to reset EVERYTHING")
+- **What went wrong:** asked for "a complete reset to ubuntu default", I offered three scopes and built the one picked, "system settings". That
+  version removed only the marked loader block from `~/.bashrc` and left `~/.bashrc.d`, `~/.inputrc`, the prompt, Oh My Bash, the tools and the
+  packages in place, and a loader line an older manual told you to add without the marker was not even found. The question narrowed what you
+  had asked for; it should not have.
+- **Now, in this order:** (1) every undo file of earlier runs is replayed, newest first, which takes back precisely what those runs recorded
+  (undo files of the reset modes themselves are never replayed: replaying a reset's undo would undo the reset); (2) the system settings, as
+  before; (3) `~/.bashrc`, `~/.profile`, `~/.bash_logout` become Ubuntu's own copies from `/etc/skel` (yours go to the backup), bash the login
+  shell; (4) everything the setup can put in your home folder is MOVED to `~/workstation-setup/reset-backup-<time>/home/`: `~/.bashrc.d`,
+  `~/.inputrc`, starship's config, Oh My Bash, `.gdbinit`, `.npmrc`, the editors' and tools' configs, the releases in `~/.local/opt` and the
+  setup's entries in `~/.local/bin` (your own scripts there stay), `~/.cargo`, `~/.rustup`, uv's and npm's folders, the caches the tools filled,
+  podman's storage, record files older versions left in `~`; (5) the Ubuntu packages the setup installed (your decision, "remove them,
+  safely"): read from apt's own history (entries with the setup's `--no-remove --no-upgrade`, so nothing that was already on the machine),
+  purged only after `apt-get -s purge` shows that nothing else would go (otherwise none is removed and the plan names what would go), and the
+  settings folders of their apps (Kate, GIMP, VLC, KeePassXC, Inkscape, Wireshark) moved too; (6) the Nerd Font, last.
+- **Found by the first E2E run of this (#41), fixed:** the package list lost every library. `dpkg-query` names a Multi-Arch library with its
+  architecture (`libc6:amd64`) and the comparison used the name without it, so about two thirds of the setup's packages fell out of the list.
+  The guard did its job: the simulation showed those libraries going too, and in all eight jobs nothing was removed (on two runner VMs apt
+  could not even resolve the partial removal). The check-all fake now prints library names the way the real `dpkg-query` does.
+- **Found by the second run (#42), fixed:** Ubuntu's base system now stays even where the setup installed it. A container has no systemd until
+  the install pulls it in, so systemd was on the list: on 26.04 apt refused (essential `systemd-sysv`) and removed nothing, on 24.04 it removed
+  systemd. Packages marked Essential or Protected, of priority required or important, and everything they need stay installed. On the real
+  runner VMs, where systemd was there before, the removal worked as intended: 620 and 668 packages removed, `--undo` reinstalled all of them in
+  about two minutes.
+- **Third run (#43): all eight jobs green.** On the four runner VMs (the case of a real machine) the reset removed 620 to 894 packages and
+  `--undo` reinstalled every one of them (`gdb-multiarch`, `qemu-system-arm` gone and back), in about two to three minutes. In the four containers
+  the guard still refused the package step, rightly: Ubuntu's own `systemd-resolved` needed one of the packages. Refusing everything for one
+  shared package was too blunt, so now **a package stays when anything that stays still needs it** (Ubuntu's base, software you installed
+  yourself, ...), and the plan names those; only the rest is removed.
+- **Fourth run (#44): all eight jobs green, the VMs as wanted** (858, 620, 876 and 654 packages removed; 9 to 18 kept because the runner's own
+  software needs them; all reinstalled by `--undo`). The containers still refused, and the reason was mine: `systemd-resolved` needs a *virtual*
+  package (`<dbus-system-bus>`), which `dbus` provides, and `apt-cache depends` prints that provider on an indented line the reset did not read.
+  Providers are now followed too, and the walk repeats until nothing new turns up.
+- **Fifth run (#45): all eight jobs green, the containers still refused, for the same reason.** The fix of #44 never took effect on a real
+  machine: with `--installed`, the real `apt-cache depends` leaves the virtual lines out altogether (my test's stand-in for apt-cache printed
+  them, so the test passed). The reset now walks the dependencies itself, one level at a time, with plain `apt-cache depends`, and keeps only
+  installed names (checked against this machine's real apt: `dbus` and its parts now stay for `systemd-resolved`). The test's stand-in now
+  behaves like the real apt-cache, and the old code fails it.
+- **Verified (run #46, head 6b3d86a): all eight jobs passed the whole test**, 13 of 13 phases, self-test 0 failed (34 to 38 passed), and
+  **the package step ran everywhere, containers included**: 620 / 839 packages removed on the 24.04 VMs (work / personal), 638 / 858 on the
+  26.04 VMs, 1074 / 1379 in the 24.04 containers, 1129 / 1408 in the 26.04 containers; the guard refused nothing; `--undo` reinstalled them (the
+  test checks a probe package is gone and back; the full counts were read in three jobs, e.g. 1074 of 1074 reinstalled in a container). Five
+  jobs show "failure" on GitHub only because GitHub's own artifact upload broke during an outage (HTML instead of JSON); their test step
+  passed, and the numbers above come from their logs.
+- `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
+  (with apt's retries and a lock wait, marking the dependencies automatic again).
+- **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the
+  default-app pins stay (those files are yours; only the undo files know what was added). A terminal profile where you named a font yourself.
+- Tests: `t_reset_defaults` rewritten (old undo file replayed and renamed, unmarked loader line, skel copies, `~/.bashrc.d`, a Node release and
+  its link moved while your own `~/.local/bin/mytool` stays, zsh to bash, the font last, packages from a fake apt history: the setup's two go, your
+  `vim` stays, the guard refuses when the removal would take `ubuntu-desktop`; a second run finds nothing; `--undo` restores everything and
+  reinstalls the packages). Broken on purpose six ways, each caught. The E2E's 13th phase checks the shell part and the package part for real.
+
 ### Changed (Ubuntu's own telemetry and services are never switched off; the user's decision)
 - **Request:** "the script should not stop any ubuntu default telemetry"; asked for the scope, the answer was "all of Ubuntu's own
   services". Removed the switches `DISABLE_REPORTING_SERVICES` (apport, whoopsie, kerneloops), `DISABLE_MOTD_NEWS`, `DISABLE_FWUPD_REFRESH`,
