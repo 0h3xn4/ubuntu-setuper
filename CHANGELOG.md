@@ -37,6 +37,10 @@ in a desktop session. See `CLAUDE.md` for the open tasks.
   the guard still refused the package step, rightly: Ubuntu's own `systemd-resolved` needed one of the packages. Refusing everything for one
   shared package was too blunt, so now **a package stays when anything that stays still needs it** (Ubuntu's base, software you installed
   yourself, ...), and the plan names those; only the rest is removed.
+- **Fourth run (#44): all eight jobs green, the VMs as wanted** (858, 620, 876 and 654 packages removed; 9 to 18 kept because the runner's own
+  software needs them; all reinstalled by `--undo`). The containers still refused, and the reason was mine: `systemd-resolved` needs a *virtual*
+  package (`<dbus-system-bus>`), which `dbus` provides, and `apt-cache depends` prints that provider on an indented line the reset did not read.
+  Providers are now followed too, and the walk repeats until nothing new turns up.
 - `--undo` takes all of it back except step 1 (that is what `./setup.sh` reinstalls): it moves everything back and reinstalls the packages
   (with apt's retries and a lock wait, marking the dependencies automatic again).
 - **Not covered without the old undo files:** the lines the setup added to LibreOffice's and GIMP's settings, Kate's plugin selection and the

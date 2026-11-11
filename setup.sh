@@ -3079,6 +3079,32 @@ for pkg, kind in seen.items():
     print(pkg, kind)
 '
 
+# Every installed package that the given packages need, recursively (Depends and Pre-Depends). A virtual dependency
+# (systemd-resolved needs <dbus-system-bus>) is fulfilled by a package that apt-cache prints on an INDENTED line and does not
+# follow further, so those names are collected too and the walk repeats until nothing new turns up (found by the E2E: in the
+# containers dbus looked removable and systemd-resolved would have gone with it).
+_rd_needed() {
+  local native="$1" round=0 new
+  shift
+  local -A seen=()
+  local -a todo=("$@")
+  while (( ${#todo[@]} )) && (( round++ < 10 )); do
+    mapfile -t new < <(apt-cache depends --recurse --installed --no-recommends --no-suggests --no-conflicts --no-breaks \
+                         --no-replaces --no-enhances "${todo[@]}" 2>/dev/null \
+                       | awk -v a=":$native" '
+                           /^[^ <]/                       { n = $1 }                      # a package header
+                           /^ [ |]?[A-Za-z-]*Depends: [^<]/ { n = $2 }                    # a real dependency
+                           /^    [^ <]/                   { n = $1 }                      # a provider of a virtual one
+                           n != "" { sub(a "$", "", n); sub(/:all$/, "", n); print n; n = "" }' | sort -u || true)
+    todo=()
+    for n in "${new[@]}"; do
+      [[ -n $n && -z ${seen[$n]:-} ]] || continue
+      seen[$n]=1; todo+=("$n")
+    done
+  done
+  printf '%s\n' "${!seen[@]}"
+}
+
 # Fill rd_pkgs (still installed) and rd_autos (of those, marked automatic) from apt's history; then simulate the purge:
 # when it would take ANY package outside that list with it (Ubuntu's own meta packages, something you installed later),
 # nothing is removed and a note says what would go.
@@ -3115,10 +3141,7 @@ _rd_packages() {
                      | awk -v a=":$native" '$2 == "ii" { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
   set_list=" ${rd_pkgs[*]} "
   for name in "${all[@]}"; do if [[ $set_list != *" $name "* ]]; then others+=("$name"); fi; done
-  if (( ${#base[@]} + ${#others[@]} )); then
-    mapfile -t need < <(apt-cache depends --recurse --installed --no-recommends --no-suggests --no-conflicts --no-breaks \
-                          --no-replaces --no-enhances "${base[@]}" "${others[@]}" 2>/dev/null | awk -v a=":$native" '!/^ / && !/^</ { n = $1; sub(a "$", "", n); sub(/:all$/, "", n); print n }' || true)
-  fi
+  if (( ${#base[@]} + ${#others[@]} )); then mapfile -t need < <(_rd_needed "$native" "${base[@]}" "${others[@]}"); fi
   set_list=" ${base[*]} ${need[*]} "
   for name in "${rd_pkgs[@]}"; do if [[ $set_list != *" $name "* ]]; then keep_set+=("$name"); fi; done
   if (( ${#keep_set[@]} < ${#rd_pkgs[@]} )); then

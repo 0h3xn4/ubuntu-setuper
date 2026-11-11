@@ -217,8 +217,8 @@ t_reset_defaults() {
   echo x > "$h/.bashrc.d/10-workstation.sh"; echo x > "$h/.inputrc"; echo x > "$h/.config/helix/config.toml"; echo x > "$h/.local/opt/node-v1/bin/node"
   ln -s ../opt/node-v1/bin/node "$h/.local/bin/node"; echo mine > "$h/.local/bin/mytool"; echo f > "$h/.local/share/fonts/JetBrainsMonoNerdFont/a.ttf"
   echo old > "$h/old-marker"
-  mkdir -p "$d/pkgs" "$d/apthist"; touch "$d/pkgs/qemu-system-arm" "$d/pkgs/libfoo" "$d/pkgs/vim" "$d/pkgs/basepkg" "$d/pkgs/libbase" "$d/pkgs/libshared" "$d/pkgs/userapp"
-  printf 'Start-Date: x\nCommandline: apt-get -o Acquire::Retries=3 install -y --no-remove --no-upgrade qemu-system-arm\nInstall: qemu-system-arm:amd64 (1.0), libfoo:amd64 (2.0, automatic), basepkg:amd64 (3), libbase:amd64 (4, automatic), libshared:amd64 (5, automatic)\nEnd-Date: x\n\nStart-Date: y\nCommandline: apt-get install vim\nInstall: vim:amd64 (1)\nEnd-Date: y\n' > "$d/apthist/history.log"
+  mkdir -p "$d/pkgs" "$d/apthist"; touch "$d/pkgs/qemu-system-arm" "$d/pkgs/libfoo" "$d/pkgs/vim" "$d/pkgs/basepkg" "$d/pkgs/libbase" "$d/pkgs/libshared" "$d/pkgs/userapp" "$d/pkgs/resolvd" "$d/pkgs/busd" "$d/pkgs/libbus"
+  printf 'Start-Date: x\nCommandline: apt-get -o Acquire::Retries=3 install -y --no-remove --no-upgrade qemu-system-arm\nInstall: qemu-system-arm:amd64 (1.0), libfoo:amd64 (2.0, automatic), basepkg:amd64 (3), libbase:amd64 (4, automatic), libshared:amd64 (5, automatic), busd:amd64 (6, automatic), libbus:amd64 (7, automatic)\nEnd-Date: x\n\nStart-Date: y\nCommandline: apt-get install vim\nInstall: vim:amd64 (1)\nEnd-Date: y\n' > "$d/apthist/history.log"
   printf '#!/usr/bin/env bash\nrm -f ~/old-marker\nrm -rf ~/.local/share/fonts/JetBrainsMonoNerdFont && fc-cache -f\n' > "$d/out/workstation-undo-20200101-000000.sh"
   HOME="$h" git config --global init.defaultBranch main; HOME="$h" git config --global fetch.prune true
   HOME="$h" git config --global pull.rebase false                                        # the user's own value: stays
@@ -238,7 +238,7 @@ t_reset_defaults() {
     # (with the Essential/Protected/Priority format it reports basepkg as priority required, everything else optional)
     printf '#!/bin/sh\nf="$2"; shift 2\n[ $# -eq 0 ] && set -- $(ls %s/pkgs)\nfor p in "$@"; do [ -e %s/pkgs/$p ] || continue; n=$p; case $p in lib*) n="$p:amd64";; esac\n  case "$f" in *Essential*) if [ $p = basepkg ]; then echo "$n|no|no|required"; else echo "$n|no|no|optional"; fi;; *) echo "$n ii";; esac; done; exit 0\n' "$d" "$d" > "$d/bin/dpkg-query"
     # apt-cache depends --recurse: basepkg needs libbase; the user's own userapp needs libshared (which the setup installed)
-    printf '#!/bin/sh\nfor a in "$@"; do case $a in -*|depends) ;; basepkg) printf "basepkg\\n  Depends: libbase\\nlibbase\\n";; userapp) printf "userapp\\n  Depends: libshared\\nlibshared\\n";; *) echo "$a";; esac; done\n' > "$d/bin/apt-cache"
+    printf '#!/bin/sh\nfor a in "$@"; do case $a in -*|depends) ;; basepkg) printf "basepkg\\n  Depends: libbase\\nlibbase\\n";; userapp) printf "userapp\\n  Depends: libshared\\nlibshared\\n";; resolvd) printf "resolvd\\n  Depends: <bus>\\n    busd\\n<bus>\\n";; busd) printf "busd\\n  Depends: libbus\\n";; *) echo "$a";; esac; done\n' > "$d/bin/apt-cache"
     printf '#!/bin/sh\necho "$*" >> %s/aptmark.log\n' "$d" > "$d/bin/apt-mark"
     cat > "$d/bin/apt-get" <<AG
 #!/bin/sh
@@ -274,7 +274,7 @@ GS
            '99-no-connectivity-check.conf' 'firefox/policies/policies.json' 'capture needs root' "leave group 'dialout'" "leave group 'wireshark'" \
            'monospace-font-name' 'init.defaultBranch' 'fetch.prune' "~/.bashrc: replace with Ubuntu's own copy" 'move ~/.bashrc.d' 'move ~/.inputrc' \
            'move ~/.config/helix' 'move ~/.local/opt/node-v1' 'move ~/.local/bin/node' 'login shell: /usr/bin/zsh -> /bin/bash' 'Nerd Font' \
-           'fwupd-refresh.timer is MASKED' '60-dev-inotify.conf exists but is not' 'remove the 2 Ubuntu package(s)' 'qemu-system-arm libfoo' "3 of the 5 the setup installed stay, because Ubuntu's base system or other installed software needs them" 'Dry run'; do
+           'fwupd-refresh.timer is MASKED' '60-dev-inotify.conf exists but is not' 'remove the 2 Ubuntu package(s)' 'qemu-system-arm libfoo' "5 of the 7 the setup installed stay, because Ubuntu's base system or other installed software needs them" 'Dry run'; do
     [[ $out == *"$x"* ]] || { echo "dry run misses: $x"; bad=1; }
   done
   # shellcheck disable=SC2088
@@ -299,7 +299,7 @@ GS
     compgen -G "$d/out/reset-backup-*/home/$x" >/dev/null || { echo "not in the backup folder: $x"; bad=1; }
   done
   [[ -e $h/.local/bin/mytool ]] || { echo "the user's own ~/.local/bin/mytool was moved"; bad=1; }
-  [[ ! -e $d/pkgs/qemu-system-arm && ! -e $d/pkgs/libfoo && -e $d/pkgs/vim && -e $d/pkgs/basepkg && -e $d/pkgs/libbase && -e $d/pkgs/libshared && -e $d/pkgs/userapp ]] || { echo "packages wrong after the reset: $(ls "$d/pkgs")"; bad=1; }
+  [[ ! -e $d/pkgs/qemu-system-arm && ! -e $d/pkgs/libfoo && -e $d/pkgs/vim && -e $d/pkgs/basepkg && -e $d/pkgs/libbase && -e $d/pkgs/libshared && -e $d/pkgs/userapp && -e $d/pkgs/busd && -e $d/pkgs/libbus ]] || { echo "packages wrong after the reset: $(ls "$d/pkgs")"; bad=1; }
   compgen -G "$d/out/reset-backup-*/home/.bashrc" >/dev/null || { echo "the old ~/.bashrc is not in the backup"; bad=1; }
   out="$(env "${e[@]}" ./setup.sh --reset-defaults --dry-run 2>&1)"
   [[ $out == *'Nothing to do'* ]] || { echo "a second run still finds something: $out"; bad=1; }
