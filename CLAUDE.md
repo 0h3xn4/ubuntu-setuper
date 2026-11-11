@@ -592,7 +592,7 @@ run of each app) and anything needing a desktop session.
    same for personal, review, commit locks/. (The lock now also pins NODE_LTS_VERSION.)
 5. (DONE: the E2E covered Node.js upstream LTS and personal = core+embedded+desktop, see Status.)
    An E2E can be started WITHOUT a PR: actions_run_trigger(run_workflow, workflow_id e2e.yml, ref = the branch);
-   a docs push to that branch then does not cancel it (only pull_request runs share the cancel group per ref).
+   a docs push to that branch then does not cancel it, but a NEW dispatch on the same branch DOES (concurrency group e2e-<ref>, cancel-in-progress; run #45's last job was cancelled that way): wait for the old run, or accept losing it.
 
 ## Safety rules for Claude Code in this repo
 - Do not run `./setup.sh` (install mode) on the development machine: it uses
