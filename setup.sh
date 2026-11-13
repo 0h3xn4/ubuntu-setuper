@@ -1454,7 +1454,7 @@ containers() {
 
 # Monospace font for GNOME and its terminal: the Nerd Font if we install it.
 gnome_mono_font() {
-  if on "$INSTALL_NERD_FONT"; then echo 'JetBrainsMono Nerd Font Mono 11'; else echo 'JetBrains Mono 11'; fi
+  if on "$INSTALL_NERD_FONT"; then echo 'JetBrainsMono Nerd Font Mono 13'; else echo 'JetBrains Mono 13'; fi
 }
 
 # ----------------------------------------------------------------------------
@@ -1883,7 +1883,7 @@ check_mode() {
     if id -nG "$USER" | grep -qw "$g"; then echo "    group $g: already a member"
     else echo "    group $g: add $USER"; fi
   done
-  if on "$SET_GNOME_FONT"; then echo "    GNOME: monospace font JetBrains Mono 11"; fi
+  if on "$SET_GNOME_FONT"; then echo "    GNOME: monospace font JetBrains Mono 13"; fi
   if on "$ENABLE_SHELL_LOADER"; then echo "    ~/.bashrc: one marked block that loads ~/.bashrc.d"; fi
   if on "$SET_GIT_DEFAULTS"; then echo "    ~/.gitconfig: global git defaults (only options you have not set)"; fi
   module_collect check
@@ -2713,7 +2713,7 @@ EOF
 # ============================================================================
 OPT_IN_CORE=(
   "TUNE_INOTIFY|raise the inotify limits (NEW file /etc/sysctl.d/60-dev-inotify.conf)"
-  "SET_GNOME_FONT|set the GNOME monospace font (JetBrainsMono Nerd Font Mono 11; JetBrains Mono 11 without the Nerd Font)"
+  "SET_GNOME_FONT|set the GNOME monospace font (JetBrainsMono Nerd Font Mono 11; JetBrains Mono 13 without the Nerd Font)"
   "JOIN_DOCKER_GROUP|add your user to group 'docker' (only with INSTALL_DOCKER=1; equivalent to root)"
   "ENABLE_SHELL_LOADER|append ONE marked block to ~/.bashrc that loads ~/.bashrc.d (aliases, PATH, prompt)"
   "SET_GIT_DEFAULTS|set global git defaults (only options you have not set yourself)"
